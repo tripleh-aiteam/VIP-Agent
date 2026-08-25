@@ -375,6 +375,151 @@ class SafeBox extends React.Component<{ children?: React.ReactNode; label?: stri
   }
 }
 
+// 🔬 THE INSPECTION ROOM (boss 2026-08-25: "an interactive table including the
+// 100 checklist — the agent checking each one and calculating the score in
+// real time, then choosing the stock — we need more proof"). Every row is a
+// REAL recorded check: base items from the latest 5-minute checklist pass
+// (timestamped), the live adjustment from the true 4-second pulse. The sweep
+// cursor replays the latest pass item by item — presentation of real data,
+// never invented numbers.
+function InspectionRoom({ t }: { t: (ko: string, en: string) => string }) {
+  type Item = { no?: number | string; q: string; v?: string; ok?: boolean | null;
+    s?: number; w?: number; grp: string };
+  type PRow = { code: string; name: string; by_score?: boolean;
+    cats?: { market?: number; issue?: number; stock_sel?: number; exec?: number; avg?: number };
+    detail?: Record<string, { k: string; v: string; s: number; w: number }[]>;
+    exec_items?: { no: number; q: string; ok: boolean | null; d: string }[] };
+  const [dp9, setDp9] = useState<{ rows?: PRow[]; market_items?: { no: number; q: string;
+    q_en?: string; ok: boolean | null; d: string; w?: number }[] } | null>(null);
+  const [pl9, setPl9] = useState<{ t?: string; checks?: number;
+    top?: { code: string; name: string; avg?: number }[] } | null>(null);
+  const [topN9, setTopN9] = useState(5);
+  const [sel9, setSel9] = useState("");
+  const [cur9, setCur9] = useState(0);
+  const [open9, setOpen9] = useState(false);
+  useEffect(() => {
+    let live = true;
+    const loadBase = () => api<{ rows?: PRow[] }>("/paper-desk/daily-pick")
+      .then((d) => { if (live) setDp9(d as never); }).catch(() => {});
+    const loadPulse = () => api<{ ok: boolean; top_n?: number }>("/paper-desk/live/reco-rank-log?n=10")
+      .then((d) => { if (live && d?.ok) { setTopN9(d.top_n || 5);
+        setPl9((d as unknown as { live?: { t?: string; checks?: number;
+          top?: { code: string; name: string; avg?: number }[] } }).live || null); } })
+      .catch(() => {});
+    loadBase(); loadPulse();
+    const h1 = setInterval(loadBase, 60000);
+    const h2 = setInterval(loadPulse, 5000);
+    return () => { live = false; clearInterval(h1); clearInterval(h2); };
+  }, []);
+  const rows9 = (dp9?.rows || []).filter((r) => r.detail);
+  const tabs9 = (pl9?.top || []).slice(0, 8).filter((x) => rows9.some((r) => r.code === x.code));
+  const code9 = sel9 || tabs9[0]?.code || rows9[0]?.code || "";
+  const row9 = rows9.find((r) => r.code === code9);
+  // assemble the REAL item list, column order ① market ② issue ③ selection ④ exec
+  const items9: Item[] = [];
+  (dp9?.market_items || []).forEach((m) => items9.push({ no: m.no, q: m.q, v: m.d,
+    ok: m.ok, w: m.w, grp: t("① 시장", "① Market") }));
+  const det9 = row9?.detail || {};
+  (det9.flows || []).forEach((x) => items9.push({ q: x.k, v: x.v, s: x.s, w: x.w,
+    grp: t("② 이슈·수급", "② Issue/Supply") }));
+  ([["liquidity", "유동성"], ["flexibility", "탄력"], ["trend", "추세"],
+    ["levels", "레벨"], ["momentum", "모멘텀"]] as const).forEach(([k9]) => {
+    (det9[k9] || []).forEach((x) => items9.push({ q: x.k, v: x.v, s: x.s, w: x.w,
+      grp: t("③ 종목선정", "③ Selection") }));
+  });
+  (row9?.exec_items || []).forEach((e) => items9.push({ no: e.no, q: e.q, v: e.d,
+    ok: e.ok, grp: t("④ 실행·관리", "④ Execution") }));
+  // the sweep cursor: replays the latest real pass, one item every ~140ms
+  useEffect(() => {
+    if (!open9 || !items9.length) return;
+    const h = setInterval(() => setCur9((c) => (c + 1) % (items9.length + 6)), 140);
+    return () => clearInterval(h);
+  }, [open9, items9.length, code9]);
+  if (!rows9.length) return null;
+  const cats9 = row9?.cats;
+  const live9 = (pl9?.top || []).find((x) => x.code === code9)?.avg;
+  const adj9 = live9 != null && cats9?.avg != null ? Math.round((live9 - cats9.avg) * 10) / 10 : null;
+  const inTop9 = (pl9?.top || []).slice(0, topN9).some((x) => x.code === code9);
+  const done9 = cur9 >= items9.length;
+  return (
+    <div className="mt-2 px-3 py-2 rounded-xl border text-[11px]"
+      style={{ borderColor: "#6a1b9a", background: "rgba(106,27,154,0.04)" }}>
+      <div className="flex items-center gap-2 flex-wrap cursor-pointer select-none"
+        onClick={() => setOpen9((o) => !o)}>
+        <b style={{ color: "#6a1b9a" }}>🔬 {t("검사실 — 100문항 실사 중계", "Inspection Room — the 100 items, live")}</b>
+        <span className="text-[var(--text-muted)]">
+          {t(`기초검사 5분마다 · 실시간 보정 4초마다 (마지막 ${pl9?.t ?? "?"}) · 오늘 ${pl9?.checks ?? "?"}회`,
+             `base pass every 5min · live adj every 4s (last ${pl9?.t ?? "?"}) · ${pl9?.checks ?? "?"} checks today`)}</span>
+        <span className="ml-auto" style={{ color: "#6a1b9a" }}>{open9 ? "▲" : t("▼ 펼치기", "▼ open")}</span>
+      </div>
+      {open9 && (
+        <>
+          <div className="mt-1.5 flex gap-1 flex-wrap">
+            {tabs9.map((x) => (
+              <button key={x.code} onClick={() => { setSel9(x.code); setCur9(0); }}
+                className="px-2 py-0.5 rounded border text-[10.5px]"
+                style={x.code === code9
+                  ? { borderColor: "#6a1b9a", background: "#6a1b9a", color: "#fff", fontWeight: 700 }
+                  : { borderColor: "rgba(106,27,154,0.4)", color: "#6a1b9a" }}>
+                {x.name} {x.avg ?? ""}</button>
+            ))}
+          </div>
+          <div className="mt-1 tabular-nums" style={{ color: "#6a1b9a", fontWeight: 700 }}>
+            {done9
+              ? t(`합산 완료 → 아래 점수줄 확인`, `sum complete → see the score line below`)
+              : t(`검사 중: ${Math.min(cur9 + 1, items9.length)} / ${items9.length}번째 자동 항목 — ${items9[cur9]?.q ?? ""}`,
+                  `checking item ${Math.min(cur9 + 1, items9.length)} / ${items9.length} — ${items9[cur9]?.q ?? ""}`)}
+            <span className="ml-2 inline-block align-middle flex-1 h-1 rounded" style={{ background: "rgba(106,27,154,0.15)", width: 120 }}>
+              <span className="block h-1 rounded" style={{ width: `${Math.round(Math.min(1, cur9 / Math.max(1, items9.length)) * 100)}%`, background: "#6a1b9a", transition: "width 0.14s linear" }} />
+            </span>
+          </div>
+          <div className="mt-1 max-h-[300px] overflow-y-auto rounded border" style={{ borderColor: "rgba(106,27,154,0.25)" }}>
+            <table className="w-full text-[10.5px] tabular-nums">
+              <tbody>
+                {items9.map((it, i) => {
+                  const active = i === cur9;
+                  const passed = i < cur9 || done9;
+                  const good = it.ok === true || (it.s != null && it.s >= 50);
+                  return (
+                    <tr key={`${it.grp}-${i}`}
+                      ref={active ? ((el) => { el?.scrollIntoView({ block: "nearest" }); }) : undefined}
+                      style={{
+                        background: active ? "rgba(106,27,154,0.18)" : undefined,
+                        opacity: passed || active ? 1 : 0.35,
+                        borderBottom: "1px solid rgba(128,128,128,0.08)" }}>
+                      <td className="px-1.5 py-0.5 whitespace-nowrap" style={{ color: "#6a1b9a" }}>{it.grp}</td>
+                      <td className="px-1.5 py-0.5 whitespace-nowrap opacity-60">{it.no != null ? `#${it.no}` : ""}</td>
+                      <td className="px-1.5 py-0.5">{it.q}</td>
+                      <td className="px-1.5 py-0.5 whitespace-nowrap opacity-80">{it.v ?? ""}</td>
+                      <td className="px-1.5 py-0.5 whitespace-nowrap text-right">
+                        {(passed || active) ? (it.s != null
+                          ? <b style={{ color: good ? "#2e7d32" : "#c62828" }}>{it.s}</b>
+                          : it.ok == null ? <span className="opacity-50">—</span>
+                          : <b style={{ color: it.ok ? "#2e7d32" : "#c62828" }}>{it.ok ? "✓" : "✗"}</b>) : "·"}
+                      </td>
+                      <td className="px-1.5 py-0.5 whitespace-nowrap text-right opacity-60">{it.w != null ? `×${it.w}` : ""}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {cats9 && (
+            <div className="mt-1 tabular-nums font-bold" style={{ color: "#6a1b9a" }}>
+              {t("점수", "score")}: ① {cats9.market ?? "—"} + ② {cats9.issue != null ? Math.round(cats9.issue) : "—"} + ③ {cats9.stock_sel ?? "—"} + ④ {cats9.exec ?? "—"} ÷ 4 = {cats9.avg ?? "—"}
+              {adj9 != null && <> {adj9 >= 0 ? "+" : "−"} {t("실시간", "live")} {Math.abs(adj9)} = <span style={{ fontSize: "1.1em" }}>{live9}</span></>}
+              {" · "}
+              {inTop9
+                ? <span style={{ color: "#2e7d32" }}>✅ {t(`톱${topN9} 선정 — 매수 후보`, `in the top-${topN9} — buy candidate`)}</span>
+                : <span style={{ color: "#c62828" }}>{t(`톱${topN9} 밖 — 매수 금지`, `outside top-${topN9} — no buying`)}</span>}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // 🔄 THE VISIBLE HEARTBEAT (boss 2026-08-25: "show the process that every 20
 // sec is rechecking — real-time, interactive"): a live monitor of the rank
 // logger — countdown to the next re-check, and a feed where every completed
@@ -1976,6 +2121,7 @@ export default function LiveDeskPage() {
           100-checklist recommendation; in Semi-auto it suggests and the final click is
           human"). SELLs/stops always execute; the six always auto-trade. */}
       {deskView === "reco" && <SafeBox label="live-check"><RecoLiveCheckPanel t={t} lang={lang} /></SafeBox>}
+      {deskView === "reco" && <SafeBox label="inspection-room"><InspectionRoom t={t} /></SafeBox>}
       {deskView === "reco" && <SafeBox label="auto/semi"><RecoTradeModePanel t={t} /></SafeBox>}
       {/* GO/NO-GO board removed at the boss's order (2026-08-25) — code preserved. */}
       {/* THE ALGORITHM CHOICE, its own bar above the panel (boss 2026-08-11: it was
