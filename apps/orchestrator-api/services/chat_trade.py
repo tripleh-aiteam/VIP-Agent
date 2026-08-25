@@ -212,6 +212,14 @@ def finish(db, word: str) -> Optional[str]:
         return (f"⚠️ 주문 실패: {err}" if not en else f"⚠️ Order failed: {err}")
     fill = res.get("fill_price") or res.get("live_price") or p.get("px")
     pos = _position_qty(db, p["code"])
+    # VERIFY button (boss 2026-08-25, right after his first live chat order: "below
+    # you should put button then I can go to the second menu and see is it actually
+    # bought or not") — the six live on the Live Kiwoom Desk, everything else on the
+    # Checklist Reco Desk
+    _six = p["code"] in _SIX
+    _dest = "/testing/live" if _six else "/testing/reco"
+    _dest_ko = "Live Kiwoom Desk" if _six else "체크리스트 추천 데스크"
+    _dest_en = "Live Kiwoom Desk" if _six else "Checklist Reco Desk"
     L = []
     if en:
         L.append(f"✅ **Filled — {p['side']} {p['name']} {p['qty']:,} shares @ ₩{fill:,.0f}** "
@@ -219,10 +227,18 @@ def finish(db, word: str) -> Optional[str]:
         if res.get("realized_pnl") is not None:
             L.append(f"💰 Realized P&L: ₩{res['realized_pnl']:,.0f} ({res.get('realized_pnl_pct', 0):+.2f}%)")
         L.append(f"📒 Position now: {pos:,} shares · recorded as a 🧑 chat order in the desk history.")
+        L.append("")
+        L.append(f"[📡 Verify it on the desk → {_dest_en}](nav:{_dest})")
     else:
         L.append(f"✅ **체결 — {side_ko} {p['name']} {p['qty']:,}주 @ ₩{fill:,.0f}** "
                  f"(총 ~₩{fill * p['qty']:,.0f})")
         if res.get("realized_pnl") is not None:
             L.append(f"💰 실현 손익: ₩{res['realized_pnl']:,.0f} ({res.get('realized_pnl_pct', 0):+.2f}%)")
         L.append(f"📒 현재 보유: {pos:,}주 · 데스크 기록에 🧑 chat 주문으로 남았습니다.")
+        L.append("")
+        L.append(f"[📡 실제로 샀는지 확인하기 → {_dest_ko}](nav:{_dest})")
     return "\n".join(L)
+
+
+# the boss's pinned six — they trade (and are verified) on the Live Kiwoom Desk
+_SIX = frozenset(("000660", "005930", "035420", "017670", "042660", "034020"))
