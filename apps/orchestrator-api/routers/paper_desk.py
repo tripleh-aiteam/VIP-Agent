@@ -1390,9 +1390,20 @@ def _enrich_pick(res: dict, db) -> None:
         pass
     try:
         from services.checklist_engine import market_preflight
-        res["market_pct"] = (market_preflight(db) or {}).get("pct")
+        _mp9 = market_preflight(db) or {}
+        res["market_pct"] = _mp9.get("pct")
+        # the market column's own calculation, item by item (boss 2026-08-25:
+        # "each column must show its calculation") - market-wide, so once per
+        # response, not per stock
+        res["market_items"] = [
+            {"no": it.get("no"), "q": it.get("q"), "q_en": it.get("q_en"),
+             "ok": it.get("ok"), "d": str(it.get("detail") or "")[:70],
+             "w": it.get("weight")}
+            for it in sorted(_mp9.get("items") or [],
+                             key=lambda x: x.get("no") or 0)]
     except Exception:
         res["market_pct"] = None
+        res["market_items"] = []
     _W = {"trend": 25, "liquidity": 20, "flexibility": 20, "levels": 15, "momentum": 10}
     # THE FOUR-CATEGORY AVERAGE (boss 2026-08-25: "use market / issue-supply /
     # stock-selection / execution-management, calculate each column and divide

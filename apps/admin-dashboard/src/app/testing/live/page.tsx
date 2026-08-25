@@ -1520,7 +1520,7 @@ export default function LiveDeskPage() {
                       const W9: [string, string, string, number][] = [
                         ["trend", "추세", "trend", 25], ["liquidity", "유동성", "liquidity", 20],
                         ["flexibility", "유연성", "flexibility", 20], ["levels", "위치", "levels", 15],
-                        ["momentum", "모멘텀", "momentum", 10], ["flows", "수급", "flows", 10]];
+                        ["momentum", "모멘텀", "momentum", 10]];
                       const det9 = (r as unknown as { detail?: Record<string,
                         { k: string; v: string; s: number; w: number }[]> }).detail;
                       return (
@@ -1559,21 +1559,48 @@ export default function LiveDeskPage() {
                                   <span className="ml-2 opacity-70">{t("= O의 비율", "= share of O answers")}</span>
                                 </div>
                               )}
+                              {(() => {
+                                const fl9 = (r as unknown as { detail?: Record<string,
+                                  { k: string; v: string; s: number; w: number }[]> }).detail?.flows;
+                                return fl9 ? (
+                                  <div className="mt-0.5">
+                                    <b style={{ color: "#1565c0" }}>{t("이슈·수급의 계산", "issue/supply calculation")}</b>:
+                                    {fl9.map((d9, i9) => (
+                                      <span key={i9} className="ml-2 whitespace-nowrap">
+                                        {d9.k}: <b className="text-[var(--text-primary)]">{d9.v}</b>
+                                        <span style={{ color: d9.s >= 70 ? "#0f5132" : d9.s >= 40 ? "var(--text-secondary)" : "#b02a2a" }}> →{d9.s}</span>
+                                        <span className="opacity-50">×{d9.w}%</span></span>
+                                    ))}
+                                  </div>) : null; })()}
+                              {(dpick as unknown as { market_items?: { no: number; q: string;
+                                q_en?: string; ok: boolean | null; d: string }[] } | null)?.market_items
+                                && (dpick as unknown as { market_items?: { no: number; q: string;
+                                q_en?: string; ok: boolean | null; d: string }[] }).market_items!.length > 0 && (
+                                <div className="mt-0.5">
+                                  <b style={{ color: "#1565c0" }}>{t("시장의 계산 (오늘 시장 전체 — 모든 종목 공통)", "market calculation (today's whole market - same for every stock)")}</b>:
+                                  {(dpick as unknown as { market_items: { no: number; q: string;
+                                    q_en?: string; ok: boolean | null; d: string }[] }).market_items.map((m9, i9) => (
+                                    <span key={i9} className="ml-2 whitespace-nowrap">
+                                      #{m9.no} <b style={{ color: m9.ok === true ? "#0f5132" : m9.ok === false ? "#b02a2a" : "var(--text-muted)" }}>
+                                        {m9.ok === true ? "O" : m9.ok === false ? "X" : "—"}</b>
+                                      <span className="opacity-60" title={m9.d}>{(lang === "ko" ? m9.q : (m9.q_en || m9.q)).slice(0, 22)}</span>
+                                    </span>
+                                  ))}
+                                  <span className="ml-2 opacity-70">{t("= O 가중 비율", "= weighted share of O")}</span>
+                                </div>
+                              )}
                               <div className="mt-0.5 opacity-70">
-                                {t("아래는 종목선정 칸(90문항 자동분)의 내부 구성 — 아침 가중식:",
-                                   "below: the stock-selection column's internals (the automated 90) - the morning weighted formula:")}
+                                {t("아래는 종목선정 칸(90문항 자동분)의 내부 구성:",
+                                   "below: the stock-selection column's internals (the automated 90):")}
                               </div>
                             </>);
                           })()}
                           <div className="mt-1 tabular-nums">
-                            {t("총점", "total")} = {W9.map(([k9, ko9, en9, w9], i9) => (
+                            <b style={{ color: "#1565c0" }}>{t("종목선정의 계산", "stock-selection calculation")}</b> = ({W9.map(([k9, ko9, en9, w9], i9) => (
                               <span key={k9}>{i9 > 0 ? " + " : ""}
-                                <b className="text-[var(--text-primary)]">{lang === "ko" ? ko9 : en9} {r.groups?.[k9 as keyof typeof r.groups] ?? 0}</b>
-                                <span className="opacity-60">×{w9}%</span></span>
-                            ))} = <b style={{ color: "#1565c0" }}>{r.score}</b>
-                            {r.live_adj !== undefined && (
-                              <span className="ml-2">{t(`+ 실시간 보정 ${r.live_adj >= 0 ? "+" : ""}${r.live_adj} = `, `+ live adjust ${r.live_adj >= 0 ? "+" : ""}${r.live_adj} = `)}
-                                <b style={{ color: "#0f5132" }}>{r.live_total}</b></span>)}
+                                {lang === "ko" ? ko9 : en9} <b className="text-[var(--text-primary)]">{r.groups?.[k9 as keyof typeof r.groups] ?? 0}</b>
+                                <span className="opacity-60">×{w9}</span></span>
+                            ))}) ÷ 90 = <b style={{ color: "#1565c0" }}>{(r.cats as { stock_sel?: number } | undefined)?.stock_sel ?? "—"}</b>
                           </div>
                           <div className="mt-0.5 opacity-70">
                             {t("각 그룹 점수는 아래 소항목의 가중 합입니다 (항목 번호 = 100문항 체크리스트 번호):",
@@ -1593,8 +1620,8 @@ export default function LiveDeskPage() {
                             </div>
                           ))}
                           <div className="mt-1 opacity-60">
-                            {t("시장(#11~25)·이슈 항목은 종목이 아닌 오늘 시장 전체에 매겨져 4분류 보기의 '시장' 칸에 있습니다 — 챗봇에 \"체크리스트\"라고 물으면 항목별 오늘 판독이 나옵니다.",
-                               "market items (#11-25) score TODAY's market, not this stock - see the 'Market' column in the 4-category view; ask the chatbot \"checklist\" for each item's live reading.")}
+                            {t("각 시장 항목의 자세한 오늘 판독 문장은 챗봇에 \"체크리스트\"라고 물으면 나옵니다 (항목 위에 마우스를 올려도 요약이 보입니다).",
+                               "hover any market item for its one-line reading; ask the chatbot \"checklist\" for the full sentences.")}
                           </div>
                         </td></tr>
                       );
