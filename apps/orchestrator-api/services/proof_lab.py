@@ -202,6 +202,10 @@ VARIANTS: list[dict] = [
              "bot_take": 2.0, "bot_take_blues": 1,
              "sell_top": 0.85, "top_blues": 3, "top_all": True,
              "news_n": 2, "news_size": 0.5}, "surrender": 2,
+     # THE SURRENDER PARDON (boss 2026-08-25 evening, deployed on his explicit
+     # order, all 3 algos): after surrender, one re-entry at the 3rd rising
+     # candle BELOW the lowest stop fill - the 한화에어로 09:17 rescue
+     "surrender_pardon": True,
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
      # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
@@ -251,6 +255,10 @@ VARIANTS: list[dict] = [
              "bot_take": 2.0, "bot_take_blues": 1,
              "sell_top": 0.85, "top_blues": 3, "top_all": True,
              "news_n": 2, "news_size": 0.5}, "surrender": 2,
+     # THE SURRENDER PARDON (boss 2026-08-25 evening, deployed on his explicit
+     # order, all 3 algos): after surrender, one re-entry at the 3rd rising
+     # candle BELOW the lowest stop fill - the 한화에어로 09:17 rescue
+     "surrender_pardon": True,
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
      # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
@@ -313,6 +321,10 @@ VARIANTS: list[dict] = [
              "sell_bot": 0.20, "bot_blues": 3,
              "sell_top": 0.85, "top_blues": 3, "top_all": True,
              "news_n": 2, "news_size": 0.5}, "surrender": 2,
+     # THE SURRENDER PARDON (boss 2026-08-25 evening, deployed on his explicit
+     # order, all 3 algos): after surrender, one re-entry at the 3rd rising
+     # candle BELOW the lowest stop fill - the 한화에어로 09:17 rescue
+     "surrender_pardon": True,
      "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      "trend": {"climb": 1.05, "dd": 0.4, "win": 30},
@@ -1259,6 +1271,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     cut_px = [None] * n        # court 2026-08-25: last red full-exit price per stock
                                # (v["reenter_below_cut"]: re-enter only cheaper)
     red_seen = 0               # how many `out` rows the decay-law sweep has read
+    stop_low = [None] * n      # lowest stop-fill per stock (the surrender pardon's line)
+    pardon_used = [False] * n  # THE SURRENDER PARDON (boss 2026-08-25 evening,
+                               # deployed on his explicit order after the 한화에어로
+                               # 09:17 case: surrendered at 09:12, bottom at 09:17,
+                               # +4.2% rally unseen): after surrender, ONE re-entry
+                               # is permitted - only when price stands BELOW the
+                               # lowest stop fill and a green bar confirms the turn.
+                               # The churn case (same fade, same price) stays banned.
 
     def _secs(t: str) -> int:
         try:
@@ -1428,9 +1448,17 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 pass       # retired rules replay their past and take nothing new
             elif s.get("gate_ok") is False and not v.get("ignore_gate"):
                 pass
-            elif v.get("surrender") and stop_ct[si] >= v["surrender"]:
+            elif (v.get("surrender") and stop_ct[si] >= v["surrender"]
+                  and not (v.get("surrender_pardon") and not pardon_used[si]
+                           and stop_low[si] is not None and c < stop_low[si]
+                           and up[si] >= 3)):
                 pass       # this stock's day is broken - doors stay shut until
-                           # tomorrow (exits above run untouched)
+                           # tomorrow (exits above run untouched). EXCEPT the
+                           # pardon (boss 2026-08-25 evening, verbatim: "if we
+                           # sell and we wait and the decrease stops, after 3
+                           # red - in the 3rd - we buy again"): price below the
+                           # lowest stop fill + the 3rd rising candle = the
+                           # REAL bottom formed lower - one more try, all 3 algos
             elif (v.get("reenter_below_cut") and cut_px[si] is not None
                   and c >= cut_px[si]):
                 pass       # court 2026-08-25 (알고3's 두산/하이닉스 churn):
@@ -1477,6 +1505,11 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                   and not (v.get("family_door")
                            and bool((s.get("fam_sig") or [])[i:i + 1]
                                     and s["fam_sig"][i]))
+                  and not (v.get("surrender_pardon") and not pardon_used[si]
+                           and v.get("surrender")
+                           and stop_ct[si] >= v["surrender"]
+                           and stop_low[si] is not None and c < stop_low[si]
+                           and up[si] >= 3)
                   and not (v.get("drip", {}).get("reboard")
                            and reb_pk[si] and up[si] >= 3)):
                 pass
@@ -1632,6 +1665,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                    or bool(v.get("family_door")
                                            and (s.get("fam_sig") or [])[i:i + 1]
                                            and s["fam_sig"][i])
+                                   or bool(v.get("surrender_pardon")
+                                           and not pardon_used[si]
+                                           and v.get("surrender")
+                                           and stop_ct[si] >= v["surrender"]
+                                           and stop_low[si] is not None
+                                           and c < stop_low[si]
+                                           and up[si] >= 3)
                                    or bool(v.get("drip", {}).get("reboard")
                                            and reb_pk[si]
                                            and up[si] >= 3)))
@@ -1659,6 +1699,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _g = (c - _base) / _base * 100 if _base else 0.0
                     _tp = _st["typ"][i] / c * 100 if c else 0.0
                     _sharp = bool(_tp and _g >= v["ride"].get("sharp_rise", 2.0) * _tp)
+                if (v.get("surrender") and v.get("surrender_pardon")
+                        and stop_ct[si] >= v["surrender"]):
+                    pardon_used[si] = True     # this entry IS the one pardon
                 if v.get("exec") == "limit":
                     _px, _wall = (_wall_offer(s, i, c, s["tick"])
                                   if (v.get("family") == "new" or v.get("wall_price"))
@@ -1816,6 +1859,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _fill9 = (float(int(_stpl9 // tk) * tk)
                               if prev >= _stpl9 else c)
                     stop_ct[si] += 1
+                    stop_low[si] = (_fill9 if stop_low[si] is None
+                                    else min(stop_low[si], _fill9))
                     if dp.get("reset_rebuy"):
                         # the old law, kept one switch away: sell all AND
                         # instantly re-buy the same shares at the lower price
