@@ -46,8 +46,14 @@ def advise_qty(price) -> int:
 
 
 _CMD_EN = re.compile(r"^\s*(?:please\s+|pls\s+|now\s+|then\s+|ok\s+|and\s+)*(buy|sell)\b", re.I)
-_KO_BUY = ("사줘", "사 줘", "사자", "매수해", "매수 해", "매수해줘", "매수하자", "매수")
-_KO_SELL = ("팔아줘", "팔아 줘", "팔아", "팔자", "매도해", "매도해줘", "매도하자", "매도", "전량매도")
+# "I wanna buy X" / "can you buy X for me" are ORDERS too (boss 2026-08-26: "if we say
+# Please buy or I wanna buy... it should not buy automatically, must ask one more time")
+_CMD_EN2 = re.compile(r"\b(?:i\s+wanna|i\s+want\s+to|i'?d\s+like\s+to|i\s+would\s+like\s+to"
+                      r"|can\s+you|could\s+you|please)\s+(buy|sell)\b", re.I)
+_KO_BUY = ("사줘", "사 줘", "사자", "매수해", "매수 해", "매수해줘", "매수하자", "매수",
+           "사고 싶", "사고싶", "매수하고 싶")
+_KO_SELL = ("팔아줘", "팔아 줘", "팔아", "팔자", "매도해", "매도해줘", "매도하자", "매도",
+            "전량매도", "팔고 싶", "팔고싶", "매도하고 싶")
 # question/advice phrasings are NEVER a command ("매수해도 돼?", "should I buy...")
 _ADVICE_BLOCK = ("should", "할까", "살까", "팔까", "괜찮", "어때", "can i", "may i", "could i",
                  "worth", "좋을까", "어떨까", "할지", "해도", "될까", "돼?", "돼요", "됩니까",
@@ -62,7 +68,7 @@ def parse(transcript: Optional[str]) -> Optional[dict]:
     if not t or len(t) > 120 or any(w in tl for w in _ADVICE_BLOCK):
         return None
     side = None
-    m = _CMD_EN.match(tl)
+    m = _CMD_EN.match(tl) or _CMD_EN2.search(tl)
     if m:
         side = "BUY" if m.group(1).lower() == "buy" else "SELL"
     elif any(k in t for k in _KO_SELL):
@@ -161,6 +167,33 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
                    (f"보유 전량" if side == "SELL" else f"예산 ₩{b:,.0f} 기준 자동"))
     qty_note_en = ("as you specified" if cmd["qty"] else
                    ("the whole position" if side == "SELL" else f"auto from the ₩{b:,.0f} budget"))
+    # the SCORE in the confirmation (boss 2026-08-26: "must ask one more time, like do
+    # you really wanna buy, like score like this, then after final approve")
+    score_ko = score_en = None
+    warn_ko = warn_en = None
+    try:
+        from services.checklist_reco import _ranking, _year_zone
+        row = next((r for r in (_ranking() or {}).get("rows", []) if r.get("code") == code), None)
+        zz = _year_zone(code)
+        pk, pe = [], []
+        if row and row.get("score") is not None:
+            pk.append(f"체크리스트 점수 {row['score']}점")
+            pe.append(f"checklist score {row['score']}")
+        if zz:
+            _zl = {"buy": ("🟢 매수구간", "🟢 buying zone"), "sell": ("🔴 매도구간", "🔴 selling zone"),
+                   "mid": ("중간 구간", "mid-range")}[zz["zone"]]
+            pk.append(f"연중 {zz['pos']}% ({_zl[0]})")
+            pe.append(f"{zz['pos']}% of year ({_zl[1]})")
+            if side == "BUY" and zz["zone"] == "sell":
+                warn_ko = "⚠️ 지금은 매도구간(연중 ≥85%)입니다 — 체크리스트 법칙은 여기서 신규 매수를 권하지 않습니다."
+                warn_en = "⚠️ It sits in the SELLING zone (≥85% of year) — the checklist law advises against new buys here."
+            if side == "SELL" and zz["zone"] == "buy":
+                warn_ko = "⚠️ 지금은 매수구간(연중 ≤15%)입니다 — 법칙상 바닥권에서는 팔지 않습니다."
+                warn_en = "⚠️ It sits in the BUYING zone (≤15% of year) — the law never sells the bottom."
+        score_ko = " · ".join(pk) if pk else None
+        score_en = " · ".join(pe) if pe else None
+    except Exception:
+        pass
     side_ko = "매수" if side == "BUY" else "매도"
     if en:
         L = [f"🧾 **Order confirmation — {side} {name} ({code})**",
@@ -169,8 +202,13 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
              f"· Live price: ₩{px:,.0f} → total ~₩{total:,.0f} (fee {fee}%)"]
         if side == "SELL":
             L.append(f"· Position: {pos:,} shares held")
-        L += ["", "Reply **yes** to execute · **no** to cancel (valid 5 min). "
-              "Fills as a 🧑 chat order on the paper desk at the real live price."]
+        if score_en:
+            L.append(f"· {score_en}")
+        if warn_en:
+            L.append(warn_en)
+        L += ["", f"**Do you really want to {side.lower()}?** Reply **yes** to execute · "
+              "**no** to cancel (valid 5 min). Fills as a 🧑 chat order on the paper "
+              "desk at the real live price."]
     else:
         L = [f"🧾 **주문 확인 — {side_ko} {name} ({code})**",
              f"· 수량: **{qty:,}주** ({qty_note_ko})"
@@ -178,8 +216,12 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
              f"· 현재가: ₩{px:,.0f} → 예상 금액 ~₩{total:,.0f} (수수료 {fee}%)"]
         if side == "SELL":
             L.append(f"· 보유: {pos:,}주")
-        L += ["", "실행하려면 **네**, 취소는 **아니요** 라고 답해 주세요 (5분간 유효). "
-              "실제 실시간 가격으로 페이퍼 데스크에 🧑 chat 주문으로 기록됩니다."]
+        if score_ko:
+            L.append(f"· {score_ko}")
+        if warn_ko:
+            L.append(warn_ko)
+        L += ["", f"**정말 {side_ko}할까요?** 실행하려면 **네**, 취소는 **아니요** 라고 답해 주세요 "
+              "(5분간 유효). 실제 실시간 가격으로 페이퍼 데스크에 🧑 chat 주문으로 기록됩니다."]
     return "\n".join(L)
 
 
