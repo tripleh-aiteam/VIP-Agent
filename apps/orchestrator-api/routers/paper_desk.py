@@ -875,9 +875,11 @@ def live_reco_rank_log(n: int = Query(30), day: str = Query("")):
     20 sec is rechecking, like a real-time interactive check"): the rank
     logger's recent snapshots, newest last, for the reco desk's live-check
     panel - each one is a completed 40-stock re-examination."""
-    from services.reco_rank_log import TOP_N, snapshots
+    from services.kiwoom_tape import WATCH
+    from services.reco_rank_log import snapshots, top_n
     sn = snapshots(day or None)
-    return {"ok": True, "top_n": TOP_N, "count": len(sn),
+    return {"ok": True, "top_n": top_n(), "universe": len(WATCH),
+            "count": len(sn),
             "snaps": sn[-max(1, min(int(n or 30), 200)):]}
 
 

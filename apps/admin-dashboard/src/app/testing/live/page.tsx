@@ -383,12 +383,16 @@ function RecoLiveCheckPanel({ t, lang }: { t: (ko: string, en: string) => string
   type Snap = { t: string; rows: { code: string; name: string; avg?: number }[] };
   const [snaps, setSnaps] = useState<Snap[]>([]);
   const [topN, setTopN] = useState(3);
+  const [uni9, setUni9] = useState(0);
+  const [count9, setCount9] = useState(0);
   const [nowS, setNowS] = useState(Date.now());
   useEffect(() => {
     let live = true;
-    const load = () => api<{ ok: boolean; top_n: number; snaps: Snap[] }>(
+    const load = () => api<{ ok: boolean; top_n: number; universe?: number;
+      count?: number; snaps: Snap[] }>(
       "/paper-desk/live/reco-rank-log?n=15")
-      .then((d) => { if (live && d?.ok) { setSnaps(d.snaps || []); setTopN(d.top_n || 3); } })
+      .then((d) => { if (live && d?.ok) { setSnaps(d.snaps || []); setTopN(d.top_n || 3);
+                                          setUni9(d.universe || 0); setCount9(d.count || 0); } })
       .catch(() => {});
     load();
     const h = setInterval(load, 5000);
@@ -416,8 +420,8 @@ function RecoLiveCheckPanel({ t, lang }: { t: (ko: string, en: string) => string
           <span className="block h-1.5 rounded" style={{ width: `${Math.round(frac * 100)}%`, background: "#e65100", transition: "width 1s linear" }} />
         </span>
         <span className="text-[var(--text-muted)]">
-          {t(`40종목 × 100문항 → 톱${topN} 결정 · 오늘 ${snaps.length}회+ 기록`,
-             `40 stocks × 100 items → top-${topN} decided · ${snaps.length}+ checks logged today`)}</span>
+          {t(`${uni9 || "?"}종목 × 100문항, 4초마다 재검사 → 톱${topN} 결정 · 오늘 기록 ${count9}회`,
+             `${uni9 || "?"} stocks × 100 items, re-checked every 4s → top-${topN} decided · ${count9} records today`)}</span>
       </div>
       <div className="mt-1 max-h-[92px] overflow-y-auto leading-relaxed">
         {snaps.slice().reverse().map((s9, i9) => {

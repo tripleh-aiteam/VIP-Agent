@@ -25,7 +25,18 @@ from pathlib import Path
 
 KST = timezone(timedelta(hours=9))
 DIR = Path(__file__).resolve().parent.parent / "data" / "reco_rank"
-TOP_N = 3
+TOP_N = 3       # fallback; the live value follows the board's N picker
+
+
+def top_n() -> int:
+    """The boss's chosen N (the top-3/top-5 picker) - the gate, the panel and
+    the snapshots all follow it (2026-08-25: 'I cannot see changes in the
+    top 5' - the machinery was pinned to 3 while his board showed 5)."""
+    try:
+        from services.daily_pick import reco_n
+        return max(1, min(int(reco_n()), 10))
+    except Exception:
+        return TOP_N
 _state = {"on": False}
 
 
@@ -59,10 +70,10 @@ def rank_at(code: str, hhmmss: str, day: str | None = None) -> dict | None:
     for i, r in enumerate(rows, 1):
         if r.get("code") == code:
             return {"t": best["t"], "rank": i, "of": len(rows),
-                    "avg": r.get("avg"), "top": rows[:TOP_N],
-                    "in_top": i <= TOP_N}
+                    "avg": r.get("avg"), "top": rows[:top_n()],
+                    "in_top": i <= top_n()}
     return {"t": best["t"], "rank": None, "of": len(rows),
-            "avg": None, "top": rows[:TOP_N], "in_top": False}
+            "avg": None, "top": rows[:top_n()], "in_top": False}
 
 
 def windows_for(code: str, day: str | None = None) -> list | None:
@@ -74,7 +85,7 @@ def windows_for(code: str, day: str | None = None) -> list | None:
     out: list = []
     open_from = None
     for s in snaps:
-        tops = {r.get("code") for r in (s.get("rows") or [])[:TOP_N]}
+        tops = {r.get("code") for r in (s.get("rows") or [])[:top_n()]}
         if code in tops and open_from is None:
             open_from = s.get("t")
         elif code not in tops and open_from is not None:
@@ -153,8 +164,8 @@ def _write_snapshot(slim: list) -> None:
             last = json.loads(lines[-1])
     except Exception:
         pass
-    tops_new = [x["code"] for x in slim[:TOP_N]]
-    tops_old = [x.get("code") for x in (last.get("rows") or [])[:TOP_N]] \
+    tops_new = [x["code"] for x in slim[:top_n()]]
+    tops_old = [x.get("code") for x in (last.get("rows") or [])[:top_n()]] \
         if last else None
     aged = (not last) or (last.get("t", "") < (
         datetime.now(KST) - timedelta(seconds=60)).strftime("%H:%M:%S"))
@@ -185,8 +196,8 @@ def _cycle() -> None:
             last = json.loads(lines[-1])
     except Exception:
         pass
-    tops_new = [x["code"] for x in slim[:TOP_N]]
-    tops_old = [x.get("code") for x in (last.get("rows") or [])[:TOP_N]] \
+    tops_new = [x["code"] for x in slim[:top_n()]]
+    tops_old = [x.get("code") for x in (last.get("rows") or [])[:top_n()]] \
         if last else None
     aged = (not last) or (last.get("t", "") < (
         datetime.now(KST) - timedelta(seconds=60)).strftime("%H:%M:%S"))
