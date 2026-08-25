@@ -1524,7 +1524,7 @@ export default function LiveDeskPage() {
                       const ex9 = (r as unknown as { exec_items?: { no: number; q: string;
                         ok: boolean | null; d: string }[] }).exec_items;
                       const mi9 = (dpick as unknown as { market_items?: { no: number; q: string;
-                        q_en?: string; ok: boolean | null; d: string }[] } | null)?.market_items || [];
+                        q_en?: string; ok: boolean | null; d: string; w?: number }[] } | null)?.market_items || [];
                       const W9: [string, string, string, number][] = [
                         ["trend", "추세 (50·51·52·58)", "trend (50·51·52·58)", 25],
                         ["liquidity", "유동성 (46·47·69)", "liquidity (46·47·69)", 20],
@@ -1555,16 +1555,30 @@ export default function LiveDeskPage() {
                           {mi9.length > 0 && (
                             <div className="mt-1.5">
                               <b style={{ color: "#1565c0" }}>{t("① 시장의 계산 — 체크리스트 #11~25 + 시장급 항목 (모든 종목 공통)", "1) MARKET — checklist #11-25 + market-grade items (same for every stock)")}</b>
+                              <div className="mt-0.5 opacity-80">
+                                {t("계산법: 시장 = 통과(O)한 항목 가중치 합 ÷ 판정 가능한 항목 가중치 합 × 100. 가중치는 대부분 ×1이고, 위험한 것일수록 무겁습니다: #11 지수 방향 ×2 · #22 시장 악재 ×2 · #95 급락일 ×3. '—'(데이터 없음) 항목은 분모에서 제외됩니다.",
+                                   "how: market = (weights of O items) ÷ (weights of answerable items) × 100. Most items are ×1; the dangerous ones weigh more: #11 index direction ×2, #22 market-wide bad news ×2, #95 plunge day ×3. '—' (no data) items are excluded from the denominator.")}
+                              </div>
                               <div className="mt-0.5 grid gap-x-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))" }}>
                                 {mi9.map((m9, i9) => (
                                   <div key={i9} className="whitespace-nowrap overflow-hidden text-ellipsis">
                                     <span className="opacity-60">#{m9.no}</span><OX ok={m9.ok} />
                                     {lang === "ko" ? m9.q : (m9.q_en || m9.q)}
+                                    <span className="opacity-40 font-bold"> ×{m9.w ?? 1}</span>
                                     {m9.d && <span className="opacity-50"> — {m9.d}</span>}
                                   </div>
                                 ))}
                               </div>
-                              <div>{t("→ O의 가중 비율 = 시장 ", "→ weighted share of O = market ")}<b style={{ color: "#1565c0" }}>{c9?.market ?? "—"}</b></div>
+                              <div>
+                                {(() => {
+                                  const ans9 = mi9.filter((m9) => m9.ok !== null);
+                                  const den9 = ans9.reduce((a9, m9) => a9 + (m9.w ?? 1), 0);
+                                  const num9 = ans9.filter((m9) => m9.ok === true).reduce((a9, m9) => a9 + (m9.w ?? 1), 0);
+                                  return t(`→ 시장 = 통과 ${num9} ÷ 판정가능 ${den9} × 100 = `,
+                                           `→ market = passed ${num9} ÷ answerable ${den9} × 100 = `);
+                                })()}
+                                <b style={{ color: "#1565c0" }}>{c9?.market ?? "—"}</b>
+                              </div>
                             </div>
                           )}
                           {det9?.flows && (
