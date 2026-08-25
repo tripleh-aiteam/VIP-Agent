@@ -337,8 +337,58 @@ def pick(day: str, n: int | None = None, refresh_character: bool = False) -> dic
                 nm = display_name(c) or c
             except Exception:
                 pass
+        # THE OPEN CALCULATION (boss 2026-08-25: "when I click a column it
+        # should show all sub-checks with the actual calculation and score"):
+        # every group carries its checklist items, the measured raw value,
+        # and the 0-100 sub-score the weighted sum was built from.
+        detail = {
+            "liquidity": [
+                {"k": "거래대금 회전 (46·47)", "v": f"{a['turnover']:,.0f}",
+                 "s": round(_pct(A["turnover"], a["turnover"])), "w": 60},
+                {"k": "거래량 급증 빈도 (69)", "v": f"{a['surge_rate']:.2f}",
+                 "s": round(_pct(A["surge_rate"], a["surge_rate"])), "w": 40}],
+            "flexibility": [
+                {"k": "호가 1틱 비용 (48)", "v": f"{a['tick_pct']:.3f}%",
+                 "s": round(_pct(A["tick_pct"], a["tick_pct"], hi=False)),
+                 "w": 100}],
+            "trend": [
+                {"k": "이평 정배열 5>20>60 (50)",
+                 "v": ("정배열" if b["aligned"] == 2
+                       else "부분" if b["aligned"] == 1 else "역배열"),
+                 "s": round(b["aligned"] / 2 * 100), "w": 35},
+                {"k": "추세성 · 1년 (52)", "v": f"{a['trendiness']:.2f}",
+                 "s": round(_pct(A["trendiness"], a["trendiness"])), "w": 25},
+                {"k": "20일 신고가 (51)", "v": "예" if b["new_high"] else "아니오",
+                 "s": 100 if b["new_high"] else 0, "w": 20},
+                {"k": "20일선 위 거리 (58)", "v": f"{b['above_s20']:+.2f}%",
+                 "s": round(_pct(B["above_s20"], b["above_s20"])), "w": 20}],
+            "levels": [
+                {"k": "볼린저 위치 (62·63)", "v": f"{b['bb_pos']:+.2f}",
+                 "s": round(max(0.0, min(100.0, (b["bb_pos"] + 1) * 50))),
+                 "w": 50},
+                {"k": "전일 종가 대비 (67)", "v": f"{b['vs_close']:+.2f}%",
+                 "s": round(_pct(B["vs_close"], b["vs_close"])), "w": 50}],
+            "momentum": [
+                {"k": "RSI 55 근접 (60)", "v": f"{b['rsi']:.0f}",
+                 "s": round(max(0.0, 100 - abs(b["rsi"] - 55) * 2.2)), "w": 50},
+                {"k": "MACD 골든크로스 (61)",
+                 "v": "예" if b["macd_cross"] == 1 else "아니오",
+                 "s": 100 if b["macd_cross"] == 1 else 0, "w": 50}],
+            "flows": [
+                {"k": "외국인 3일 순매수 (31)", "v": f"{b['foreign3']:+,.0f}",
+                 "s": round(_pct(B["foreign3"], b["foreign3"])), "w": 45},
+                {"k": "기관 3일 순매수 (32)", "v": f"{b['inst3']:+,.0f}",
+                 "s": round(_pct(B["inst3"], b["inst3"])), "w": 30},
+                {"k": "개인 과열 여부 (34)",
+                 "v": "과열" if b["retail_crowd"] else "정상",
+                 "s": 0 if b["retail_crowd"] else 100, "w": 15},
+                {"k": "공매도 비중 (43)", "v": f"{b['short_ratio']:.1f}%",
+                 "s": round(_pct(B["short_ratio"], b["short_ratio"], hi=False)),
+                 "w": 10}],
+        }
         rows.append({"code": c, "name": nm, "score": round(score, 1),
                      "groups": {k: round(v) for k, v in g.items()},
+                     "detail": detail,
                      "tick_pct": round(a["tick_pct"], 3), "rsi": round(b["rsi"]),
                      "aligned": b["aligned"], "new_high": b["new_high"],
                      "foreign3": b["foreign3"], "why": why})

@@ -1495,6 +1495,34 @@ export default function LiveDeskPage() {
                         </td>
                       ))}
                     </tr>
+                    {/* THE OPEN CALCULATION (boss 2026-08-25: "clicking each
+                        column shows the sub-checks with the actual calculation
+                        and score") - a clicked group unfolds its checklist
+                        items with the measured value, sub-score, and weight,
+                        under EVERY row */}
+                    {pickCol && (r as unknown as { detail?: Record<string,
+                        { k: string; v: string; s: number; w: number }[]> })
+                        .detail?.[pickCol] && (
+                      <tr><td colSpan={pickDetail ? 10 : 7}
+                        className="px-6 py-1 text-[10.5px] border-b"
+                        style={{ background: "rgba(21,101,192,0.04)",
+                                 borderColor: "var(--border-default)",
+                                 color: "var(--text-secondary)" }}>
+                        <b style={{ color: "#1565c0" }}>{r.name}</b>
+                        {((r as unknown as { detail: Record<string,
+                            { k: string; v: string; s: number; w: number }[]> })
+                            .detail[pickCol]).map((d9, i9) => (
+                          <span key={i9} className="ml-3 whitespace-nowrap">
+                            {d9.k}: <b className="text-[var(--text-primary)]">{d9.v}</b>
+                            <span className="ml-0.5" style={{ color: d9.s >= 70
+                              ? "#0f5132" : d9.s >= 40
+                              ? "var(--text-secondary)" : "#b02a2a" }}>
+                              → {d9.s}{t("점", "pt")}</span>
+                            <span className="opacity-60"> ×{d9.w}%</span>
+                          </span>
+                        ))}
+                      </td></tr>
+                    )}
                     </React.Fragment>
                   ))}
                 </tbody>

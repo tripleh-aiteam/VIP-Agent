@@ -667,11 +667,16 @@ def live_rules(tick: int = Query(5), period: int = Query(0), day: str = Query(""
     # yesterday must be unreachable today (boss 2026-08-20 09:0x: "Algo 1
     # still shows yesterday's result")
     from services.kiwoom_tape import _day as _kd9
+    # the key normalizes the codes list (sorted) so the warm can prefill it
+    # server-side without knowing the page's join order, and VITAL so the
+    # page's backbone can't be starved behind family refreshers (2026-08-25:
+    # the reco menu's whole section hid behind this key computing)
+    _nc = ",".join(sorted(c for c in (codes or "").split(",") if c))
     return _swr(("rank", tick, _p, day or _kd9(), frm, to, bool(gate),
-                 bool(auto), codes), 3.0,
+                 bool(auto), _nc), 3.0,
                 lambda: rank(tick=tick, period=_p, day=day, frm=frm, to=to,
                              use_gate=bool(gate), allow_fallback=bool(auto), codes=codes),
-                placeholder={"ok": False, "computing": True})
+                placeholder={"ok": False, "computing": True}, vital=True)
 
 
 @router.get("/live/rules/trades")
@@ -1537,9 +1542,24 @@ def live_warm():
             pass
     try:
         from services.kiwoom_rules import rank as _rank2
-        _SWR[("rank", 5, 0, _kd9(), "", "", True, True)] = (
-            _t2.time(), _rank2(tick=5, period=0, day="", frm="", to="",
-                               use_gate=True, allow_fallback=True))
+        # both desks' rank keys, in the endpoint's normalized (sorted-codes)
+        # shape - the old codes-less prefill matched nothing the page asks
+        # for since the two-menu split (2026-08-25: the reco menu hid its
+        # whole section behind this cold key)
+        _six9 = ["000660", "005930", "017670", "034020", "035420", "042660"]
+        try:
+            from services.daily_pick import score_five as _sf9
+            _reco9 = sorted(c for c, _n in (_sf9() or []))
+        except Exception:
+            _reco9 = []
+        for _codes9 in ([_six9, _reco9] if _reco9 else [_six9]):
+            _nc9 = ",".join(sorted(_codes9))
+            for _per9 in (0, 60):
+                _SWR[("rank", 5, _per9, _kd9(), "", "", True, True, _nc9)] = (
+                    _t2.time(), _rank2(tick=5, period=_per9, day="", frm="",
+                                       to="", use_gate=True,
+                                       allow_fallback=True,
+                                       codes=",".join(_codes9)))
     except Exception:
         pass
     return {"ok": True, "day": ref, "models": out,
