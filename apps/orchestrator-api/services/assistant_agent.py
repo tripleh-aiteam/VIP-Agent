@@ -1253,6 +1253,10 @@ def _is_bare_switch_followup(transcript: Optional[str]) -> bool:
 def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) -> bool:
     if (agent_id or "vip").lower() == "stock":
         return False
+    # a fundamentals ask ("배당금 얼마야?") contains price words but is NOT a quote
+    # request — it was answered with the current price (deep audit 2026-08-25)
+    if _is_fundamentals_q(transcript):
+        return False
     t = (transcript or "").lower()
     # A multi-stock COMPARISON ('compare X, Y, Z now' / 'X vs Y / 비교') is a present-price
     # ask even without an explicit price word — route it to the local comparison TABLE
@@ -2056,6 +2060,235 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
     return out, _ds_trace
 
 
+# ===== 📚 FUNDAMENTALS / CONSENSUS (deep audit 2026-08-25): PER·배당·시가총액·52주·
+# 외국인비율·목표가 questions either got an LLM apology ("doesn't provide its PER"),
+# the CURRENT PRICE (배당금+얼마 stolen by the price lane), or an unsourced consensus
+# number that looked invented. Answered deterministically from live disclosure data. =====
+_FUND_RE = _re.compile(r"\bper\b|\bpbr\b|\beps\b|\bbps\b|\broe\b", _re.I)
+_FUND_KW = ("배당", "dividend", "시가총액", "시총", "market cap", "marketcap", "market value",
+            "market capitalization", "외국인 비율", "외국인비율", "외국인 지분",
+            "foreign ownership", "foreign rate", "52주", "52 week", "52-week",
+            "목표가", "목표 주가", "target price", "컨센서스", "consensus", "투자의견",
+            "애널리스트", "analyst rating", "analyst target", "fundamental", "펀더멘털",
+            "밸류에이션", "valuation")
+
+
+def _is_fundamentals_q(transcript: Optional[str]) -> bool:
+    t = (transcript or "").lower()
+    if not t:
+        return False
+    if not (_FUND_RE.search(t) or any(k in t for k in _FUND_KW)):
+        return False
+    return bool(_all_stocks_in_query(transcript))
+
+
+def _fundamentals_reply(transcript: Optional[str], lang: str, db=None) -> Optional[str]:
+    """Focused, sourced answer for fundamentals/consensus asks — only the groups the
+    user asked about (boss: no unnecessary words), full table when the ask is broad."""
+    stocks = _all_stocks_in_query(transcript)
+    if not stocks:
+        return None
+    from services import naver_stock as _ns
+    _en = (lang or "").lower().startswith("en")
+    if not _en and not _re.search(r"[가-힣]", transcript or "") \
+            and _re.search(r"[a-zA-Z]", transcript or ""):
+        _en = True
+    t = (transcript or "").lower()
+    w_target = any(k in t for k in ("목표가", "목표 주가", "target price", "컨센서스",
+                                    "consensus", "투자의견", "analyst"))
+    w_div = "배당" in t or "dividend" in t
+    w_mcap = any(k in t for k in ("시가총액", "시총", "market cap", "marketcap",
+                                  "market value", "market capitalization"))
+    w_frn = "외국인" in t or "foreign" in t
+    w_52 = "52" in t
+    w_val = bool(_FUND_RE.search(t)) or "밸류에이션" in t or "valuation" in t or "펀더멘털" in t \
+        or "fundamental" in t
+    broad = not any((w_target, w_div, w_mcap, w_frn, w_52, w_val))
+    secs = []
+    for code, name in stocks[:3]:
+        f = _ns.fundamentals(code)
+        if not f:
+            continue
+        info = f.get("info") or {}
+
+        def g(k):
+            return info.get(k) or "-"
+        nm = (name or code).upper()
+        if _en:
+            try:
+                from services.stock_resolver import display_name_en as _dne
+                nm = _dne(code) or nm
+            except Exception:
+                pass
+        rows = []
+        if w_val or broad:
+            rows += [("PER", g("per")), ("PBR", g("pbr")), ("EPS", g("eps")),
+                     ("BPS", g("bps"))]
+        if w_div or broad:
+            rows += [("배당금(주당)" if not _en else "Dividend/share", g("dividend")),
+                     ("배당수익률" if not _en else "Dividend yield", g("dividendYieldRatio"))]
+        if w_mcap or broad:
+            rows += [("시가총액" if not _en else "Market cap", g("marketValue"))]
+        if w_frn or broad:
+            rows += [("외국인 비율" if not _en else "Foreign ownership", g("foreignRate"))]
+        if w_52 or broad:
+            rows += [("52주 최고" if not _en else "52-week high", g("highPriceOf52Weeks")),
+                     ("52주 최저" if not _en else "52-week low", g("lowPriceOf52Weeks"))]
+        L = [f"**📚 {nm} ({code})**"]
+        if rows:
+            L += ["", ("| 항목 | 값 |" if not _en else "| Item | Value |"), "|---|---|"]
+            L += [f"| {k} | {v} |" for k, v in rows]
+        if w_target or broad:
+            tm, rm = f.get("target_mean"), f.get("recomm_mean")
+            if tm:
+                up = ""
+                try:
+                    from services.paper_desk import _live_price
+                    px, _n2 = _live_price(code)
+                    if px:
+                        _u = (float(str(tm).replace(",", "")) / float(px) - 1) * 100
+                        up = (f" — 현재가 대비 {_u:+.1f}%" if not _en
+                              else f" — {_u:+.1f}% vs the current price")
+                except Exception:
+                    pass
+                L += ["", (f"🎯 증권사 컨센서스 목표가: **{tm}원** (평균 투자의견 {rm}/5 · "
+                           f"{f.get('consensus_date')} 기준){up}" if not _en else
+                           f"🎯 Analyst consensus target: **₩{tm}** (mean rating {rm}/5 · "
+                           f"as of {f.get('consensus_date')}){up}")]
+                for r in (f.get("researches") or [])[:2]:
+                    L.append(f"   · {r.get('broker')}: {r.get('title')} ({r.get('date')})")
+                L.append("_컨센서스는 참고용입니다 — 저희 매매 판단은 100체크리스트+알고리즘 기준입니다._"
+                         if not _en else
+                         "_Consensus is reference only — our trading decisions follow the "
+                         "100-item checklist + our algorithms._")
+        if len(L) > 1:
+            secs.append("\n".join(L))
+    if not secs:
+        return None
+    out = "\n\n---\n\n".join(secs)
+    out += ("\n\n📦 출처: 시장 공시·증권사 컨센서스 데이터 (실시간 조회)" if not _en
+            else "\n\n📦 Source: market disclosure & analyst consensus data (live)")
+    return out
+
+
+# ===== ❓ WHY DID IT MOVE (deep audit 2026-08-25): "why did SK hynix drop yesterday?"
+# got an INVENTED "2024-08-24 foreign sell-off" story from the analyst LLM. Answer from
+# what we actually KNOW — the real daily row, our news intern's stamps for that day,
+# the market's own move — and say honestly when no specific news was collected. =====
+
+def _is_why_move_q(transcript: Optional[str]) -> bool:
+    t = (transcript or "").lower()
+    if not t:
+        return False
+    why = "why" in t or "왜" in t or "이유" in t
+    move = any(k in t for k in ("drop", "fell", "fall", "down", "떨어", "하락", "내렸",
+                                "내려", "빠졌", "급락", "rose", "rise", " up", "올랐",
+                                "올라", "상승", "급등", "jump", "surge", "plunge"))
+    return why and move and bool(_all_stocks_in_query(transcript))
+
+
+def _why_move_reply(transcript: Optional[str], lang: str, db=None):
+    stocks = _all_stocks_in_query(transcript)
+    if not stocks:
+        return None, None
+    code, name = stocks[0]
+    _en = (lang or "").lower().startswith("en")
+    if not _en and not _re.search(r"[가-힣]", transcript or "") \
+            and _re.search(r"[a-zA-Z]", transcript or ""):
+        _en = True
+    from services.price_history import rows_traced as _phr
+    rows, _src, _tr = _phr(db, code, 8)
+    if not rows:
+        return None, None
+    if _tr is not None:
+        _tr["en"] = _en
+    t = (transcript or "").lower()
+    today_iso = _dt_now_kst().date().isoformat()
+    if "어제" in t or "yesterday" in t:
+        row = next((r for r in rows if r.get("date") and r["date"] < today_iso), rows[0])
+    else:
+        row = rows[0]
+    chg = row.get("change_pct")
+    nm = (name or code).upper()
+    if _en:
+        try:
+            from services.stock_resolver import display_name_en as _dne
+            nm = _dne(code) or nm
+        except Exception:
+            pass
+    # the market's own move that day (KODEX 200 as the index proxy)
+    mkt = None
+    try:
+        mrows, _m2, _m3 = _phr(db, "069500", 10)
+        _mrow = next((r for r in mrows if r.get("date") == row.get("date")), None)
+        mkt = _mrow.get("change_pct") if _mrow else None
+    except Exception:
+        pass
+    # our news intern's stamps for that day
+    stamps = []
+    try:
+        import json as _json
+        from pathlib import Path as _P
+        nd = _P(__file__).resolve().parent.parent / "data" / "news_intern"
+        d8 = str(row.get("date") or "").replace("-", "")
+        for p in sorted(nd.glob("2*.jsonl")):
+            if d8 and d8 in p.name:
+                for ln in p.read_text(encoding="utf-8").splitlines():
+                    try:
+                        rec = _json.loads(ln)
+                    except Exception:
+                        continue
+                    if rec.get("code") == code:
+                        stamps.append(rec)
+    except Exception:
+        pass
+    stamps = stamps[-4:]
+    up = (chg or 0) > 0
+    dirn_ko = "상승" if up else "하락"
+    dirn_en = "rise" if up else "drop"
+    L = [f"❓ **{nm} — {row.get('date')} {dirn_ko} 이유**" if not _en else
+         f"❓ **{nm} — why the {dirn_en} on {row.get('date')}**", ""]
+    # if the user assumed the wrong direction, correct it honestly first
+    said_drop = any(k in t for k in ("drop", "fell", "fall", "떨어", "하락", "내렸", "빠졌", "급락"))
+    if said_drop and up:
+        L.append("실제로는 이날 **올랐습니다** — 아래가 실제 수치입니다." if not _en
+                 else "It actually **rose** that day — here are the real figures.")
+    _chg_s = f"{chg:+.2f}%" if chg is not None else "-"
+    L.append((f"{'📉' if not up else '📈'} 실제 움직임: 종가 {_won_str(row.get('close'))} ({_chg_s}) · "
+              f"거래량 {int(row.get('volume') or 0):,}주") if not _en else
+             (f"{'📉' if not up else '📈'} The real move: close {_won_str(row.get('close'))} ({_chg_s}) · "
+              f"volume {int(row.get('volume') or 0):,}"))
+    if mkt is not None and chg is not None:
+        same = (mkt > 0) == (chg > 0)
+        if not same:
+            rel_ko, rel_en = "시장과 반대로 움직였습니다", "it moved AGAINST the market"
+        elif abs(chg) > abs(mkt) + 1:
+            rel_ko, rel_en = "시장보다 훨씬 크게 움직였습니다 — 종목 자체 요인 가능성", \
+                "a much bigger move than the market — likely stock-specific"
+        else:
+            rel_ko, rel_en = "시장 전체와 같은 방향·비슷한 폭입니다 — 시장 흐름 영향이 커 보입니다", \
+                "same direction and similar size as the market — mostly a market-wide move"
+        L.append(f"📊 같은 날 시장(KODEX200) {mkt:+.2f}% → {rel_ko}" if not _en
+                 else f"📊 The market (KODEX200) that day: {mkt:+.2f}% → {rel_en}")
+    if stamps:
+        L.append("📰 그날 우리 뉴스 판정:" if not _en else "📰 Our news rulings that day:")
+        for s in stamps:
+            _ln = f"   · [{s.get('stamp','')}] {s.get('title','')}"
+            if s.get("why"):
+                _ln += f" — {s['why']}"
+            if s.get("link"):
+                _ln += f" ([기사]({s['link']}))" if not _en else f" ([article]({s['link']}))"
+            L.append(_ln)
+    else:
+        L.append("📰 그날 우리 뉴스 수집에는 이 종목의 특별한 재료가 없었습니다." if not _en
+                 else "📰 Our news collection has no stock-specific catalyst for that day.")
+    L += ["", ("_위 수치와 뉴스가 저희가 실제로 아는 전부입니다 — 확인되지 않은 원인은 지어내지 않습니다._"
+               if not _en else
+               "_The figures and rulings above are everything we actually know — we don't "
+               "invent unverified causes._")]
+    return "\n".join(L), _tr
+
+
 # ===== MARKET DIRECTION — checklist #11 asked as a question ("오늘 코스피/코스닥
 # 방향은?", "What is today's KOSPI/KOSDAQ direction?") plus VIX/나스닥/유가/환율 asks.
 # Deterministic, from the same live indicators decide() uses — the LLM used to pick a
@@ -2078,7 +2311,11 @@ def _is_movers_q(transcript: Optional[str]) -> bool:
     if not tl:
         return False
     _dir = any(w in tl for w in ("increas", "decreas", "gainer", "loser", "오른", "내린",
-                                 "상승", "하락", "급등", "급락"))
+                                 "상승", "하락", "급등", "급락",
+                                 # plain EN move verbs ("what stocks ROSE the most today?"
+                                 # got recommendations instead — deep audit 2026-08-25)
+                                 "rose", "fell", "jumped", "dropped", "gained", "climbed",
+                                 "surged", "plunged", "went up", "went down"))
     _pick = any(w in tl for w in ("which", "what stock", "어떤", "무슨", "가장", "제일",
                                   "most", "top", "상위"))
     _stok = "종목" in tl or bool(_re.search(r"\bstocks?\b|\bstokcs?\b", tl)) \
@@ -3741,6 +3978,14 @@ def _llm_prediction_summary(d: dict, block: str, name: str, lang, question: str)
         out = chat_completion_sync(sys, [{"role": "user", "content": user}],
                                    max_tokens=500, temperature=0.3)
         if not (out or "").strip():
+            return ""
+        # a REFUSAL printed under "AI Final Summary" ("I'm sorry, but I can't provide
+        # that information" — boss's 2026-08-25 screenshot) is worse than no summary:
+        # drop it and let the three algorithms' numbers stand on their own.
+        _low_o = out.lower()
+        if any(p in _low_o for p in ("i'm sorry", "i am sorry", "cannot provide",
+                                     "can't provide", "unable to provide", "죄송",
+                                     "제공할 수 없", "도와드릴 수 없")):
             return ""
         return ("🧠 **AI Final Summary**\n\n" if en else "🧠 **AI 종합 예측 요약**\n\n") + out.strip()
     except Exception as e:
@@ -6661,6 +6906,31 @@ def _run_agent_impl(
                     "transcript": transcript, "tool_used": "readiness"}
         except Exception as e:
             log.warning(f"readiness failed: {str(e)[:120]}")
+
+    # === 📚 FUNDAMENTALS / CONSENSUS lane (deep audit 2026-08-25) — before the analyst
+    # LLM so PER/배당/시가총액/목표가 get real sourced numbers, never an apology. ===
+    if not confirmed_tool and not attachment_ids and _is_fundamentals_q(transcript):
+        try:
+            _fr = _fundamentals_reply(transcript, lang, db)
+            if _fr:
+                return {"intent": "stock_fundamentals", "language": lang, "reply": _fr,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "stock_fundamentals"}
+        except Exception as e:
+            log.warning(f"fundamentals lane failed: {str(e)[:120]}")
+
+    # === ❓ WHY-DID-IT-MOVE lane (deep audit 2026-08-25) — before the analyst LLM,
+    # which invented a 2024 sell-off story for this exact question shape. ===
+    if not confirmed_tool and not attachment_ids and _is_why_move_q(transcript) \
+            and not _is_future_outlook(transcript):
+        try:
+            _wr, _wtr = _why_move_reply(transcript, lang, db)
+            if _wr:
+                return {"intent": "stock_why_move", "language": lang, "reply": _wr,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "stock_why_move", "datasource": _wtr}
+        except Exception as e:
+            log.warning(f"why-move lane failed: {str(e)[:120]}")
 
     # === 🧠 SMART-ANALYST lane (boss 2026-07-16): analytical/explanatory stock
     # questions (ETF rebalancing mechanics, close quality, 수급 interpretation,

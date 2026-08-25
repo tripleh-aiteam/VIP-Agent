@@ -136,6 +136,34 @@ def daily_history(code: str, days: int = 20) -> list[dict]:
     return out
 
 
+_FUND_CACHE: dict = {}
+
+
+def fundamentals(code: str) -> dict | None:
+    """PER/PBR/EPS/BPS · dividend · market cap · 52-week band · foreign rate + the real
+    analyst consensus (target mean / opinion mean) for one KR ticker, from the
+    m.stock.naver integration API. Cached 10 min. None on total failure."""
+    import time
+    c = str(code).zfill(6)
+    hit = _FUND_CACHE.get(c)
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    try:
+        j = httpx.get(f"{_BASE}/{c}/integration", headers=_H, timeout=12).json()
+        info = {t.get("code"): t.get("value") for t in (j.get("totalInfos") or [])}
+        cons = j.get("consensusInfo") or {}
+        out = {"name": j.get("stockName"), "info": info,
+               "target_mean": cons.get("priceTargetMean"),
+               "recomm_mean": cons.get("recommMean"),
+               "consensus_date": cons.get("createDate"),
+               "researches": [{"title": r.get("tit"), "broker": r.get("bnm"),
+                               "date": r.get("wdt")} for r in (j.get("researches") or [])[:3]]}
+        _FUND_CACHE[c] = (time.time(), out)
+        return out
+    except Exception:
+        return hit[1] if hit else None
+
+
 def enrich_kr(code: str) -> dict:
     """Combined real-time quote + NXT + latest investor flows for one KR ticker."""
     out: dict = {}
