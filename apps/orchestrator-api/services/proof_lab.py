@@ -201,16 +201,13 @@ VARIANTS: list[dict] = [
              "sell_bot": 0.20, "bot_blues": 999,
              "bot_take": 2.0, "bot_take_blues": 1,
              "sell_top": 0.85, "top_blues": 3, "top_all": True,
-             "news_n": 2, "news_size": 0.5}, "surrender": 2,
-     # THE SURRENDER PARDON (boss 2026-08-25 evening, deployed on his explicit
-     # order, all 3 algos): after surrender, one re-entry at the 3rd rising
-     # candle BELOW the lowest stop fill - the 한화에어로 09:17 rescue
-     "surrender_pardon": True,
-     # RED-EXIT SURRENDER (boss "how about now?", 2026-08-25 evening; court
-     # measured +178.6M/yr alone, +117M/yr with the pardon): every losing
-     # full exit counts toward the surrender penalty, not only -1% stops -
-     # 알고3's 한화에어로 4-cut churn today ends at 2 under this law
-     "surrender_any_red": True,
+             "news_n": 2, "news_size": 0.5},
+     # NO SURRENDER (boss 2026-08-25 evening, final word: "I do not wanna stop
+     # to buy - it is testing, even after 3 losses also can buy"): the ban is
+     # OFF - every stop may re-enter at the 3rd red, unlimited, no price
+     # condition. The measured bans stay on record for the real-money day:
+     # red-exit surrender-2 +178.6M/yr, +117M/yr with the one-pardon variant.
+     "surrender": None,
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
      # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
@@ -259,16 +256,13 @@ VARIANTS: list[dict] = [
              "sell_bot": 0.20, "bot_blues": 999,
              "bot_take": 2.0, "bot_take_blues": 1,
              "sell_top": 0.85, "top_blues": 3, "top_all": True,
-             "news_n": 2, "news_size": 0.5}, "surrender": 2,
-     # THE SURRENDER PARDON (boss 2026-08-25 evening, deployed on his explicit
-     # order, all 3 algos): after surrender, one re-entry at the 3rd rising
-     # candle BELOW the lowest stop fill - the 한화에어로 09:17 rescue
-     "surrender_pardon": True,
-     # RED-EXIT SURRENDER (boss "how about now?", 2026-08-25 evening; court
-     # measured +178.6M/yr alone, +117M/yr with the pardon): every losing
-     # full exit counts toward the surrender penalty, not only -1% stops -
-     # 알고3's 한화에어로 4-cut churn today ends at 2 under this law
-     "surrender_any_red": True,
+             "news_n": 2, "news_size": 0.5},
+     # NO SURRENDER (boss 2026-08-25 evening, final word: "I do not wanna stop
+     # to buy - it is testing, even after 3 losses also can buy"): the ban is
+     # OFF - every stop may re-enter at the 3rd red, unlimited, no price
+     # condition. The measured bans stay on record for the real-money day:
+     # red-exit surrender-2 +178.6M/yr, +117M/yr with the one-pardon variant.
+     "surrender": None,
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
      # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
@@ -330,16 +324,13 @@ VARIANTS: list[dict] = [
              "bot": 0.20, "bot_size": 1.5,
              "sell_bot": 0.20, "bot_blues": 3,
              "sell_top": 0.85, "top_blues": 3, "top_all": True,
-             "news_n": 2, "news_size": 0.5}, "surrender": 2,
-     # THE SURRENDER PARDON (boss 2026-08-25 evening, deployed on his explicit
-     # order, all 3 algos): after surrender, one re-entry at the 3rd rising
-     # candle BELOW the lowest stop fill - the 한화에어로 09:17 rescue
-     "surrender_pardon": True,
-     # RED-EXIT SURRENDER (boss "how about now?", 2026-08-25 evening; court
-     # measured +178.6M/yr alone, +117M/yr with the pardon): every losing
-     # full exit counts toward the surrender penalty, not only -1% stops -
-     # 알고3's 한화에어로 4-cut churn today ends at 2 under this law
-     "surrender_any_red": True,
+             "news_n": 2, "news_size": 0.5},
+     # NO SURRENDER (boss 2026-08-25 evening, final word: "I do not wanna stop
+     # to buy - it is testing, even after 3 losses also can buy"): the ban is
+     # OFF - every stop may re-enter at the 3rd red, unlimited, no price
+     # condition. The measured bans stay on record for the real-money day:
+     # red-exit surrender-2 +178.6M/yr, +117M/yr with the one-pardon variant.
+     "surrender": None,
      "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      "trend": {"climb": 1.05, "dd": 0.4, "win": 30},
