@@ -206,6 +206,11 @@ VARIANTS: list[dict] = [
      # order, all 3 algos): after surrender, one re-entry at the 3rd rising
      # candle BELOW the lowest stop fill - the 한화에어로 09:17 rescue
      "surrender_pardon": True,
+     # RED-EXIT SURRENDER (boss "how about now?", 2026-08-25 evening; court
+     # measured +178.6M/yr alone, +117M/yr with the pardon): every losing
+     # full exit counts toward the surrender penalty, not only -1% stops -
+     # 알고3's 한화에어로 4-cut churn today ends at 2 under this law
+     "surrender_any_red": True,
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
      # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
@@ -259,6 +264,11 @@ VARIANTS: list[dict] = [
      # order, all 3 algos): after surrender, one re-entry at the 3rd rising
      # candle BELOW the lowest stop fill - the 한화에어로 09:17 rescue
      "surrender_pardon": True,
+     # RED-EXIT SURRENDER (boss "how about now?", 2026-08-25 evening; court
+     # measured +178.6M/yr alone, +117M/yr with the pardon): every losing
+     # full exit counts toward the surrender penalty, not only -1% stops -
+     # 알고3's 한화에어로 4-cut churn today ends at 2 under this law
+     "surrender_any_red": True,
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
      # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
@@ -325,6 +335,11 @@ VARIANTS: list[dict] = [
      # order, all 3 algos): after surrender, one re-entry at the 3rd rising
      # candle BELOW the lowest stop fill - the 한화에어로 09:17 rescue
      "surrender_pardon": True,
+     # RED-EXIT SURRENDER (boss "how about now?", 2026-08-25 evening; court
+     # measured +178.6M/yr alone, +117M/yr with the pardon): every losing
+     # full exit counts toward the surrender penalty, not only -1% stops -
+     # 알고3's 한화에어로 4-cut churn today ends at 2 under this law
+     "surrender_any_red": True,
      "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      "trend": {"climb": 1.05, "dd": 0.4, "win": 30},
