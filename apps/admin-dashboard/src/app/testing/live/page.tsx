@@ -1548,15 +1548,17 @@ export default function LiveDeskPage() {
                               </div>
                               {ex9 && ex9.length > 0 && (
                                 <div className="mt-0.5">
-                                  <b style={{ color: "#1565c0" }}>{t("실행·관리의 계산", "execution mgmt calculation")}</b>:
+                                  <b style={{ color: "#1565c0" }}>{t("④ 실행·관리의 계산", "4) EXECUTION MGMT calculation")}</b>
                                   {ex9.map((e9, i9) => (
-                                    <span key={i9} className="ml-2 whitespace-nowrap">
-                                      #{e9.no} {e9.q}: <b style={{ color: e9.ok === true ? "#0f5132" : e9.ok === false ? "#b02a2a" : "var(--text-muted)" }}>
+                                    <div key={i9} className="whitespace-nowrap overflow-hidden text-ellipsis">
+                                      <span className="opacity-60">#{e9.no}</span>
+                                      <b className="mx-1" style={{ color: e9.ok === true ? "#0f5132" : e9.ok === false ? "#b02a2a" : "var(--text-muted)" }}>
                                         {e9.ok === true ? "O" : e9.ok === false ? "X" : "—"}</b>
-                                      <span className="opacity-60"> ({e9.d.slice(0, 40)})</span>
-                                    </span>
+                                      {e9.q}<span className="opacity-50"> — {e9.d.slice(0, 50)}</span>
+                                    </div>
                                   ))}
-                                  <span className="ml-2 opacity-70">{t("= O의 비율", "= share of O answers")}</span>
+                                  <div>{t("→ O의 비율 = ", "→ share of O = ")}
+                                    <b style={{ color: "#1565c0" }}>{(r.cats as { exec?: number } | undefined)?.exec ?? "—"}</b></div>
                                 </div>
                               )}
                               {(() => {
@@ -1564,29 +1566,39 @@ export default function LiveDeskPage() {
                                   { k: string; v: string; s: number; w: number }[]> }).detail?.flows;
                                 return fl9 ? (
                                   <div className="mt-0.5">
-                                    <b style={{ color: "#1565c0" }}>{t("이슈·수급의 계산", "issue/supply calculation")}</b>:
+                                    <b style={{ color: "#1565c0" }}>{t("② 이슈·수급의 계산", "2) ISSUE/SUPPLY calculation")}</b>
                                     {fl9.map((d9, i9) => (
-                                      <span key={i9} className="ml-2 whitespace-nowrap">
+                                      <div key={i9} className="whitespace-nowrap overflow-hidden text-ellipsis">
                                         {d9.k}: <b className="text-[var(--text-primary)]">{d9.v}</b>
-                                        <span style={{ color: d9.s >= 70 ? "#0f5132" : d9.s >= 40 ? "var(--text-secondary)" : "#b02a2a" }}> →{d9.s}</span>
-                                        <span className="opacity-50">×{d9.w}%</span></span>
+                                        <span style={{ color: d9.s >= 70 ? "#0f5132" : d9.s >= 40 ? "var(--text-secondary)" : "#b02a2a" }}> → {d9.s}{t("점", "pt")}</span>
+                                        <span className="opacity-50"> ×{d9.w}%</span>
+                                      </div>
                                     ))}
+                                    <div>{t("→ 가중 합 = ", "→ weighted sum = ")}
+                                      <b style={{ color: "#1565c0" }}>{(r.cats as { issue?: number } | undefined)?.issue ?? "—"}</b></div>
                                   </div>) : null; })()}
                               {(dpick as unknown as { market_items?: { no: number; q: string;
                                 q_en?: string; ok: boolean | null; d: string }[] } | null)?.market_items
                                 && (dpick as unknown as { market_items?: { no: number; q: string;
                                 q_en?: string; ok: boolean | null; d: string }[] }).market_items!.length > 0 && (
                                 <div className="mt-0.5">
-                                  <b style={{ color: "#1565c0" }}>{t("시장의 계산 (오늘 시장 전체 — 모든 종목 공통)", "market calculation (today's whole market - same for every stock)")}</b>:
-                                  {(dpick as unknown as { market_items: { no: number; q: string;
-                                    q_en?: string; ok: boolean | null; d: string }[] }).market_items.map((m9, i9) => (
-                                    <span key={i9} className="ml-2 whitespace-nowrap">
-                                      #{m9.no} <b style={{ color: m9.ok === true ? "#0f5132" : m9.ok === false ? "#b02a2a" : "var(--text-muted)" }}>
-                                        {m9.ok === true ? "O" : m9.ok === false ? "X" : "—"}</b>
-                                      <span className="opacity-60" title={m9.d}>{(lang === "ko" ? m9.q : (m9.q_en || m9.q)).slice(0, 22)}</span>
-                                    </span>
-                                  ))}
-                                  <span className="ml-2 opacity-70">{t("= O 가중 비율", "= weighted share of O")}</span>
+                                  <b style={{ color: "#1565c0" }}>{t("① 시장의 계산 (오늘 시장 전체 — 모든 종목 공통)", "1) MARKET calculation (today's whole market - same for every stock)")}</b>
+                                  <div className="mt-0.5 grid gap-x-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))" }}>
+                                    {(dpick as unknown as { market_items: { no: number; q: string;
+                                      q_en?: string; ok: boolean | null; d: string }[] }).market_items.map((m9, i9) => (
+                                      <div key={i9} className="whitespace-nowrap overflow-hidden text-ellipsis">
+                                        <span className="opacity-60">#{m9.no}</span>
+                                        <b className="mx-1" style={{ color: m9.ok === true ? "#0f5132" : m9.ok === false ? "#b02a2a" : "var(--text-muted)" }}>
+                                          {m9.ok === true ? "O" : m9.ok === false ? "X" : "—"}</b>
+                                        {lang === "ko" ? m9.q : (m9.q_en || m9.q)}
+                                        {m9.d && <span className="opacity-50"> — {m9.d}</span>}
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <div className="mt-0.5">
+                                    {t("→ O의 가중 비율 = ", "→ weighted share of O = ")}
+                                    <b style={{ color: "#1565c0" }}>{(r.cats as { market?: number } | undefined)?.market ?? "—"}</b>
+                                  </div>
                                 </div>
                               )}
                               <div className="mt-0.5 opacity-70">
@@ -1596,7 +1608,7 @@ export default function LiveDeskPage() {
                             </>);
                           })()}
                           <div className="mt-1 tabular-nums">
-                            <b style={{ color: "#1565c0" }}>{t("종목선정의 계산", "stock-selection calculation")}</b> = ({W9.map(([k9, ko9, en9, w9], i9) => (
+                            <b style={{ color: "#1565c0" }}>{t("③ 종목선정의 계산", "3) STOCK-SELECTION calculation")}</b> = ({W9.map(([k9, ko9, en9, w9], i9) => (
                               <span key={k9}>{i9 > 0 ? " + " : ""}
                                 {lang === "ko" ? ko9 : en9} <b className="text-[var(--text-primary)]">{r.groups?.[k9 as keyof typeof r.groups] ?? 0}</b>
                                 <span className="opacity-60">×{w9}</span></span>
