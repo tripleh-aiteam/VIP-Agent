@@ -64,8 +64,8 @@ const COL_HELP: Record<string, [string, string, string, string]> = {
     "챗봇 추천과 똑같은 계산입니다: 아침 점수 + 실시간 보정(당일 등락 ±3점 · 호가 매수/매도 우위 ±2점) = 합계. 이 칸이 있는 종목만 실시간 계산 대상(상위 10)이며, 표는 이 합계 순으로 정렬됩니다 — 챗봇의 추천 순서와 같습니다.",
     "The exact same math as the chatbot's recommendation: morning score + live adjustment (today's move ±3, order-book pressure ±2) = total. Only the top 10 get the live pass, and the table sorts by this total — the same order the chatbot recommends."],
   market: ["시장 (체크리스트 11~25번)", "market (checklist #11-25)",
-    "종목이 아니라 오늘 시장 전체의 점수라 모든 줄이 같습니다. 자동 점검 항목: #11 코스피/코스닥 방향 · #12 미국 증시 · #16 유가 · #17 VIX · #20 지정학 · #22 시장 악재 · #36 만기일 · #95 급락일 · #100 마감 직전. 자세히는 챗봇에 \"체크리스트\"라고 물어보세요.",
-    "Scores TODAY's market, not the stock, so every row shows the same number. Auto-checked items: #11 KOSPI/KOSDAQ direction, #12 US close, #16 oil, #17 VIX, #20 geopolitics, #22 market-wide bad news, #36 expiry day, #95 plunge day, #100 near the close. Ask the chatbot \"checklist\" for the live detail."],
+    "종목이 아니라 오늘 시장 전체의 점수라 모든 줄이 같습니다. 11~25번 전 항목 자동 점검: #11 코스피/코스닥 방향 · #12 미국 증시 · #13 나스닥 선물 · #14 원달러 환율 · #15 국채 금리 · #16 유가 · #17 VIX · #18 경제지표 일정 · #19 정책 이벤트 · #20 지정학 · #21 시장 거래대금 · #22 시장 악재 · #24 장중 선물 흐름 · #25 시장 유동성 — 추가로 #36 만기일 · #95 급락일 · #100 마감 직전 · #28 정책수혜 · #30 배당/MSCI · #33 연기금 · #37 선물수급 · #39 섹터 순환매. (#23 종목뉴스는 종목별이라 이슈 칸에서 채점) 자세히는 챗봇에 \"체크리스트\"라고 물어보세요.",
+    "Scores TODAY's market, not the stock, so every row shows the same number. ALL of #11-25 auto-checked: #11 KOSPI/KOSDAQ, #12 US close, #13 NASDAQ futures, #14 USD/KRW, #15 bond yields, #16 oil, #17 VIX, #18 econ-data schedule, #19 policy events, #20 geopolitics, #21 market value, #22 market-wide bad news, #24 intraday futures, #25 liquidity - plus #36 expiry, #95 plunge day, #100 near close, #28 policy benefit, #30 dividend/MSCI, #33 pension, #37 futures flows, #39 sector rotation. (#23 stock-news is per-stock, in the issue column.) Ask the chatbot \"checklist\" for the live detail."],
   issue: ["이슈/수급 (#26~45) — 총점 비중 10", "Issue/Supply&Demand (#26-45) - weight 10 of 100",
     "총점 100 중 10을 차지합니다. 소분류(클릭한 이 칸의 구성): #31 외국인 순매수 45% · #32 기관 순매수 30% · #34 개인 쏠림 감점 15% · #43 공매도 과열 감점 10%. 뉴스/테마(#26~30, #40~42, #44~45)는 Qwen 뉴스 엔진이 종목별 스탬프로 판독 — 챗봇 '근거 🔍'에서 봅니다.",
     "Carries 10 of the 100 total. Subcategories of this column: #31 foreign net buying 45%, #32 institutional net 30%, #34 retail-crowding penalty 15%, #43 short-overheat penalty 10%. News/theme items (#26-30, #40-42, #44-45) are read per stock by the Qwen news engine - see the chatbot's evidence 🔍."],
@@ -597,6 +597,7 @@ export default function LiveDeskPage() {
   const [pickOpen, setPickOpen] = useState(true);      // the desk is worth seeing at once
   const [pickAll, setPickAll] = useState(false);       // the other 32 stay behind a button
   const [pickCol, setPickCol] = useState("");          // a column header explains itself when clicked
+  const [pickRow, setPickRow] = useState("");          // a clicked company opens its whole formula (boss 2026-08-25)
   const [pickDetail, setPickDetail] = useState(false); // category columns ↔ the 6 subcategory columns
   // Poll — the ranking carries the LIVE layer (same math as the chatbot), so it must
   // keep moving during the session (boss 2026-08-24: "the menu must match what the
@@ -1456,10 +1457,14 @@ export default function LiveDeskPage() {
                       style={{ background: r.on_desk ? (r.pinned ? "rgba(230,81,0,0.09)" : "rgba(21,101,192,0.10)")
                                                      : "transparent" }}>
                       <td className="px-3 py-1 text-[var(--text-muted)]">{pickAll ? ri + 1 : r.rank}</td>
-                      <td className="px-2 font-bold text-[var(--text-primary)]">
+                      <td className="px-2 font-bold text-[var(--text-primary)] cursor-pointer select-none"
+                        title={t("클릭: 이 종목의 총점 계산식 전체", "click: this stock's full score calculation")}
+                        onClick={() => setPickRow(pickRow === r.code ? "" : r.code)}>
                         {r.by_score && deskView === "reco"
                           ? <span title={t("아침 점수 상위", "morning top by score")}
-                              style={{ color: "#e65100" }}>★ </span> : ""}{r.name}</td>
+                              style={{ color: "#e65100" }}>★ </span> : ""}
+                        <span style={{ borderBottom: "1px dotted currentColor" }}>{r.name}</span>
+                        <span className="ml-0.5 opacity-50 text-[9px]">🧮</span></td>
                       {pickDetail ? (
                         <>
                           <td className="text-right px-3 font-extrabold" style={{ color: "#1565c0" }}>{r.score}</td>
@@ -1498,6 +1503,58 @@ export default function LiveDeskPage() {
                         </td>
                       ))}
                     </tr>
+                    {/* THE WHOLE FORMULA (boss 2026-08-25: "if I click any
+                        company name it should show the calculation method and
+                        formula with explanation") - the clicked stock unfolds
+                        its complete score arithmetic: every group's weighted
+                        contribution summing to the total, then every group's
+                        own sub-checks */}
+                    {pickRow === r.code && r.groups && (() => {
+                      const W9: [string, string, string, number][] = [
+                        ["trend", "추세", "trend", 25], ["liquidity", "유동성", "liquidity", 20],
+                        ["flexibility", "유연성", "flexibility", 20], ["levels", "위치", "levels", 15],
+                        ["momentum", "모멘텀", "momentum", 10], ["flows", "수급", "flows", 10]];
+                      const det9 = (r as unknown as { detail?: Record<string,
+                        { k: string; v: string; s: number; w: number }[]> }).detail;
+                      return (
+                        <tr><td colSpan={pickDetail ? 10 : 7} className="px-6 py-2 text-[10.5px] border-b"
+                          style={{ background: "rgba(230,81,0,0.05)", borderColor: "#e65100",
+                                   color: "var(--text-secondary)" }}>
+                          <div><b style={{ color: "#e65100" }}>🧮 {r.name} — {t("총점 계산식", "the total-score formula")}</b></div>
+                          <div className="mt-1 tabular-nums">
+                            {t("총점", "total")} = {W9.map(([k9, ko9, en9, w9], i9) => (
+                              <span key={k9}>{i9 > 0 ? " + " : ""}
+                                <b className="text-[var(--text-primary)]">{lang === "ko" ? ko9 : en9} {r.groups?.[k9 as keyof typeof r.groups] ?? 0}</b>
+                                <span className="opacity-60">×{w9}%</span></span>
+                            ))} = <b style={{ color: "#1565c0" }}>{r.score}</b>
+                            {r.live_adj !== undefined && (
+                              <span className="ml-2">{t(`+ 실시간 보정 ${r.live_adj >= 0 ? "+" : ""}${r.live_adj} = `, `+ live adjust ${r.live_adj >= 0 ? "+" : ""}${r.live_adj} = `)}
+                                <b style={{ color: "#0f5132" }}>{r.live_total}</b></span>)}
+                          </div>
+                          <div className="mt-0.5 opacity-70">
+                            {t("각 그룹 점수는 아래 소항목의 가중 합입니다 (항목 번호 = 100문항 체크리스트 번호):",
+                               "each group score is the weighted sum of its sub-checks (item numbers = the 100-item checklist):")}
+                          </div>
+                          {det9 && W9.map(([k9, ko9, en9, w9]) => (
+                            <div key={k9} className="mt-0.5">
+                              <b style={{ color: "#1565c0" }}>{lang === "ko" ? ko9 : en9} {r.groups?.[k9 as keyof typeof r.groups]}</b>
+                              <span className="opacity-60"> (×{w9}%)</span>:
+                              {(det9[k9] || []).map((d9, i9) => (
+                                <span key={i9} className="ml-2 whitespace-nowrap">
+                                  {d9.k}: <b className="text-[var(--text-primary)]">{d9.v}</b>
+                                  <span style={{ color: d9.s >= 70 ? "#0f5132" : d9.s >= 40 ? "var(--text-secondary)" : "#b02a2a" }}> →{d9.s}</span>
+                                  <span className="opacity-50">×{d9.w}%</span>
+                                </span>
+                              ))}
+                            </div>
+                          ))}
+                          <div className="mt-1 opacity-60">
+                            {t("시장(#11~25)·이슈 항목은 종목이 아닌 오늘 시장 전체에 매겨져 4분류 보기의 '시장' 칸에 있습니다 — 챗봇에 \"체크리스트\"라고 물으면 항목별 오늘 판독이 나옵니다.",
+                               "market items (#11-25) score TODAY's market, not this stock - see the 'Market' column in the 4-category view; ask the chatbot \"checklist\" for each item's live reading.")}
+                          </div>
+                        </td></tr>
+                      );
+                    })()}
                     {/* THE OPEN CALCULATION (boss 2026-08-25: "clicking each
                         column shows the sub-checks with the actual calculation
                         and score") - a clicked group unfolds its checklist
