@@ -288,6 +288,28 @@ def _daily_pos(code: str, price: float) -> float | None:
                     lo, hi = min(closes), max(closes)
         except Exception:
             lo = hi = None
+        if lo is None or hi is None:
+            # THE EXTRAS' BLIND SPOT (boss's deep audit, 2026-08-25 13:3x:
+            # "if it selects 5 stocks but one is in the selling zone..."):
+            # minute1_hist covers only his six, so every checklist stock had
+            # daily_pos None - the 85% no-buy ban, the bottom boost and the
+            # caution half were silently OFF for them. The year range now
+            # falls back to the daily-price DB the checklist itself scores
+            # from, so the zone laws guard all 20.
+            try:
+                from services.daily_pick import _conn
+                conn = _conn()
+                cur = conn.cursor()
+                cur.execute(
+                    """SELECT close FROM raw_daily_prices
+                       WHERE ticker = %s AND date >= CURRENT_DATE - 370
+                       ORDER BY date""", (code,))
+                closes = [float(r[0]) for r in cur.fetchall() if r[0]]
+                conn.close()
+                if len(closes) >= 40:
+                    lo, hi = min(closes), max(closes)
+            except Exception:
+                lo = hi = None
         rng = (lo, hi)
         _YR_CACHE[code] = rng
     lo, hi = rng

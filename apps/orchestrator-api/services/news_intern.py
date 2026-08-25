@@ -46,6 +46,24 @@ STOCKS = [
     ("042660", "한화오션"),
     ("034020", "두산에너빌리티"),
 ]
+
+
+def _universe() -> list[tuple[str, str]]:
+    """The whole 20-stock desk, not just the six (boss's deep audit
+    2026-08-25: the news judge was BLIND on every checklist extra - the
+    intern only read headlines for the six). Reads the live watch list from
+    the server; falls back to the six if the server is down."""
+    import urllib.request as _u
+    try:
+        st = json.loads(_u.urlopen(
+            "http://127.0.0.1:8000/paper-desk/live/status", timeout=15).read())
+        rows = [(s.get("code"), s.get("name")) for s in st.get("stocks") or []
+                if s.get("code") and s.get("name")]
+        if len(rows) >= 6:
+            return rows
+    except Exception:
+        pass
+    return STOCKS
 OLLAMA = "http://localhost:11434/api/chat"
 MODEL = "qwen3:32b"
 OUT_DIR = Path(__file__).resolve().parent.parent / "data" / "news_intern"
@@ -141,7 +159,7 @@ def cycle(seen: set, verbose: bool = False) -> int:
     out = OUT_DIR / f"{day}.jsonl"
     fresh = 0
     dart = dart_feed()
-    for code, name in STOCKS:
+    for code, name in _universe():
         pool = google_news(name)
         pool += [d for d in dart if name in d["title"]]
         for it in pool:
