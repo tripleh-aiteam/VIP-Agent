@@ -937,6 +937,9 @@ export default function LiveDeskPage() {
       + `&day=${ruleDayRef.current}&frm=${encodeURIComponent(hourFromRef.current)}`
       + `&to=${encodeURIComponent(hourToRef.current)}`
       + `&gate=${showBlockedRef.current ? 0 : 1}`
+      // NO MIXED DESKS (boss 2026-08-25): each menu's history covers only
+      // its own stocks - the six here, the checklist picks on the reco desk
+      + `&codes=${encodeURIComponent(deskCodesRef.current)}`
       + `&auto=${dayTouchedRef.current && !ruleDayRef.current ? 0 : 1}`)
       .then((d) => { if (my !== famSeqRef.current) return;
                      if ((d as unknown as { computing?: boolean })?.computing) {

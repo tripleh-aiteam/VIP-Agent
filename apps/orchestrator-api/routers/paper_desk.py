@@ -782,7 +782,8 @@ def _swr(key, fresh_sec: float, compute, placeholder=None, vital: bool = False):
 def live_family_trades(family: str = Query("new"), tick: int = Query(5),
                        period: int = Query(0), day: str = Query(""),
                        frm: str = Query(""), to: str = Query(""),
-                       gate: int = Query(1), auto: int = Query(1)):
+                       gate: int = Query(1), auto: int = Query(1),
+                       codes: str = Query("")):
     """EVERY trade of one family in one table (boss 2026-08-11: rule, stock, buy, sell,
     result, money - across the whole family, not one rule at a time). Rows carry the
     rule id and the trade's index inside that rule's own list, so the page can open the
@@ -790,10 +791,14 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
     # stale-serve: the last table answers instantly, a background thread recomputes
     # (the 20s hard cache alone still made every reload wait out a full-day replay)
     from services.kiwoom_tape import _day as _kd9
+    # NO MIXED DESKS (boss 2026-08-25: "menu 1 trades ONLY the six, menu 2
+    # ONLY the recommended - no mixed"): the history is desk-scoped by codes,
+    # normalized (sorted) in the key so the warm can prefill both desks.
+    _nc = ",".join(sorted(c for c in (codes or "").split(",") if c))
     return _swr(("fam", family, tick, period, day or _kd9(), frm, to, gate,
-                 auto), 20.0,
+                 auto, _nc), 20.0,
                 lambda: _fam_compute(family, tick, period, day, frm, to, gate,
-                                     auto),
+                                     auto, codes),
                 placeholder={"ok": False, "computing": True})
 
 
@@ -1005,7 +1010,7 @@ def live_layers(code: str = Query(...)):
 
 
 def _fam_compute(family: str, tick: int, period: int, day: str,
-                 frm: str, to: str, gate: int, auto: int):
+                 frm: str, to: str, gate: int, auto: int, codes: str = ""):
     from services.kiwoom_rules import DESK, trades
     import time as _t
     _fk = (family, tick, period, day, frm, to, gate, auto)
@@ -1016,7 +1021,7 @@ def _fam_compute(family: str, tick: int, period: int, day: str,
             continue
         d = trades(v["id"], tick=tick, period=max(0, min(int(period or 0), 600)),
                    bars=10, limit=500, day=day, frm=frm, to=to,
-                   use_gate=bool(gate), allow_fallback=bool(auto))
+                   use_gate=bool(gate), allow_fallback=bool(auto), codes=codes)
         if not d.get("ok"):
             continue
         for h in (d.get("holding") or []):
@@ -1531,12 +1536,21 @@ def live_warm():
     # Only what the page's default view actually asks for: the three live
     # families + old, 1분 clock. Everything else earns its cache on first
     # click through the vital lane.
-    for fam in ("d1", "d2", "d3", "old"):
-        try:
-            _SWR[("fam", fam, 5, 60, _kd9(), "", "", 1, 1)] = (
-                _t2.time(), _fam_compute(fam, 5, 60, "", "", "", 1, 1))
-        except Exception:
-            pass
+    _sixw = ["000660", "005930", "017670", "034020", "035420", "042660"]
+    try:
+        from services.daily_pick import score_five as _sfw
+        _recow = sorted(c for c, _n in (_sfw() or []))
+    except Exception:
+        _recow = []
+    for _cw in ([_sixw, _recow] if _recow else [_sixw]):
+        _ncw = ",".join(sorted(_cw))
+        for fam in ("d1", "d2", "d3"):
+            try:
+                _SWR[("fam", fam, 5, 60, _kd9(), "", "", 1, 1, _ncw)] = (
+                    _t2.time(), _fam_compute(fam, 5, 60, "", "", "", 1, 1,
+                                             ",".join(_cw)))
+            except Exception:
+                pass
     try:
         from services.kiwoom_rules import rank as _rank2
         # both desks' rank keys, in the endpoint's normalized (sorted-codes)
