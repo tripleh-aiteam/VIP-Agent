@@ -274,13 +274,39 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
     except Exception:
         pass
     algo_map = ALGO_EN if en else ALGO_KO
+    # 📊/📰 lines carry the #1 PICK's measured answers (boss 2026-08-25: "there is no
+    # answer to some of them — at least show a number or yes/no"); other stocks' answers
+    # live in their own 근거 🔍 card.
+    _t1 = top[0][0] if top else None
+    _t1_name = (_t1.get("name") if _t1 else "") or ""
+    _t1_ans: dict = {}
+    if _t1:
+        try:
+            from services.checklist_engine import stock_scorecard
+            _card1 = stock_scorecard(db, _t1["code"])
+            for it1 in (_card1.get("stock") or {}).get("items", []):
+                _mk1 = "✅" if it1.get("ok") else "❌" if it1.get("ok") is False else "❓"
+                _t1_ans[it1.get("no")] = f"{_mk1} {it1.get('detail')}"
+        except Exception:
+            pass
+        try:
+            for _no1, (_ok1, _det1) in _news_answers(db, _t1["code"], en).items():
+                _t1_ans.setdefault(_no1, f"{'✅' if _ok1 else '❌'} {_det1}")
+        except Exception:
+            pass
+        _g1 = _t1.get("groups") or {}
+        for _no2, _gk, _lab in ((46, "liquidity", "유동성/거래대금"), (48, "flexibility", "유연성/호가비용"),
+                                (69, "liquidity", "거래량"), (56, "flows", "수급/잔량"), (70, "flows", "매수세")):
+            if _no2 not in _t1_ans and _g1.get(_gk) is not None:
+                _t1_ans[_no2] = (f"✅ {_lab} 그룹 {_g1[_gk]}/100 반영" if not en
+                                 else f"✅ via {_gk} group {_g1[_gk]}/100")
     try:
         from services.checklist_engine import full_checklist
         all_items = sorted(full_checklist()["items"], key=lambda x: x["no"])
-        L.append(("Legend: ✅/❌/❓ measured now · 📊 per stock (answers in 근거 🔍) · "
-                  "📰 Qwen news engine · 🤖 executed by the algorithm · 🧑 yours" if en else
-                  "표기: ✅/❌/❓ 지금 실측 · 📊 종목별(근거 🔍에서 실측) · 📰 Qwen 뉴스 판독 · "
-                  "🤖 알고리즘 자동 실행 · 🧑 본인 확인"))
+        L.append((f"Legend: ✅/❌/❓ measured now · 📊/📰 measured for the #1 pick {_t1_name} "
+                  f"(other stocks → their 근거 🔍) · 🤖 executed by the algorithm · 🧑 yours" if en else
+                  f"표기: ✅/❌/❓ 지금 실측 · 📊/📰 1위 {_t1_name} 실측값 표시(다른 종목은 근거 🔍) · "
+                  f"🤖 알고리즘 자동 실행 · 🧑 본인 확인"))
         _sections = ([("[Market #11–25]", 11, 25), ("[Issue/Supply&Demand #26–45]", 26, 45),
                       ("[Stock selection #46–75]", 46, 75), ("[Execution #76–100]", 76, 100)]
                      if en else
@@ -302,11 +328,11 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
                     mark = "✅" if lv.get("ok") else "❌" if lv.get("ok") is False else "❓"
                     L.append(f"{mark} {no}. {q} — {lv.get('detail')}")
                 elif no in per_stock_nos:
-                    L.append(f"📊 {no}. {q}")
+                    L.append(f"📊 {no}. {q} — {_t1_ans[no]}" if no in _t1_ans else f"📊 {no}. {q}")
                 elif no in algo_map:
                     L.append(f"🤖 {no}. {q} — {algo_map[no]}")
                 elif no in NEWS_NOS:
-                    L.append(f"📰 {no}. {q}")
+                    L.append(f"📰 {no}. {q} — {_t1_ans[no]}" if no in _t1_ans else f"📰 {no}. {q}")
                 else:
                     L.append(f"🧑 {no}. {q}")
         if m.get("deal_breakers"):
