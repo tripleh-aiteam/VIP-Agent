@@ -35,7 +35,7 @@ import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 // Bump on every user-facing chat-UI change — rendered as a tiny badge above the
 // composer so a stale browser tab is diagnosable at a glance.
-const UI_BUILD = "ui v08.25-13";
+const UI_BUILD = "ui v08.25-14";
 
 // ── Lightweight markdown renderer (no deps) ───────────────────────────────
 // Renders GitHub-flavored tables, **bold**, `code`, bullet lists and line
@@ -453,50 +453,105 @@ const _DS_TIERS: Record<string, [string, string]> = {
   supabase: ["🗄️", "자체 아카이브 DB (2015~ 수집분)"],
   naver: ["🌐", "네이버 (인터넷)"],
 };
+// Deliberately paced (boss 2026-08-25: "it ends very fast because data collects very
+// fast — use a more visible way"): each server holds a ~1.4s connecting phase with a
+// filling progress bar, the row count COUNTS UP, then the source chip lands. The
+// numbers shown are the backend's real ones; only the pacing is theatrical.
+const _DS_CONNECT_MS = 1400;
+const _DS_COUNT_MS = 900;
 function DataSourceTrace({ ds, ts }: { ds: NonNullable<AgentResponse["datasource"]>; ts: number }) {
   const steps = ds.steps || [];
   const fresh = !_dsDone.has(ts) && Date.now() - ts < 20000;
+  // phase: step index i in "connecting" (progress fills) → "result" (count-up) → next
   const [i, setI] = useState(fresh ? 0 : steps.length);
+  const [prog, setProg] = useState(0);          // 0..100 progress of the active step
+  const [countRows, setCountRows] = useState(0); // animated row counter
   useEffect(() => {
     if (!fresh) { setI(steps.length); return; }
     _dsDone.add(ts);
-    const timer = setInterval(() => setI(v => {
-      if (v + 1 >= steps.length) { clearInterval(timer); return steps.length; }
-      return v + 1;
-    }), 550);
-    return () => clearInterval(timer);
+    let step = 0, cancelled = false;
+    const runStep = () => {
+      if (cancelled) return;
+      if (step >= steps.length) { setI(steps.length); return; }
+      setI(step); setProg(0); setCountRows(0);
+      const t0 = Date.now();
+      const fill = setInterval(() => {
+        const p = Math.min(100, ((Date.now() - t0) / _DS_CONNECT_MS) * 100);
+        setProg(p);
+        if (p >= 100) {
+          clearInterval(fill);
+          const s = steps[step];
+          if (s.ok && s.rows > 0) {
+            const c0 = Date.now();
+            const cnt = setInterval(() => {
+              const q = Math.min(1, (Date.now() - c0) / _DS_COUNT_MS);
+              setCountRows(Math.round(s.rows * q));
+              if (q >= 1) { clearInterval(cnt); step += 1; setTimeout(runStep, 350); }
+            }, 40);
+          } else {
+            step += 1; setTimeout(runStep, 500);
+          }
+        }
+      }, 40);
+    };
+    runStep();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ts]);
   if (!steps.length) return null;
   const running = i < steps.length;
   const ownServer = !!ds.source && (ds.source.includes("데이터 PC") || ds.source.includes("자체"));
   return (
-    <div className="mb-2 rounded-xl border border-teal-200 bg-teal-50/50 px-3 py-2 text-[12.5px]">
-      <div className="font-semibold text-teal-800 flex items-center gap-2">
-        {running ? <span className="animate-pulse">📡</span> : "📡"}
+    <div className="mb-2 rounded-xl border-2 border-teal-300 bg-teal-50/60 px-4 py-3 text-[13px]">
+      <div className="font-bold text-teal-900 flex items-center gap-2 text-[14px]">
+        {running ? <span className="animate-pulse text-[16px]">📡</span> : <span className="text-[16px]">📡</span>}
         {running ? "데이터 가져오는 중…" : "데이터 수신 완료"}
-        {!running && ds.source && (
-          <span className={`ml-auto px-2 py-0.5 rounded-full text-[11px] font-bold text-white ${
-            ownServer ? "bg-emerald-600" : "bg-gray-500"}`}>
-            {ownServer ? `✓ ${ds.source} — 인터넷 아님` : ds.source}
-          </span>
-        )}
       </div>
-      <div className="mt-1 space-y-0.5 font-mono text-[12px] text-gray-700">
-        {steps.slice(0, Math.max(i, running ? i + 1 : i)).map((s, si) => {
+      <div className="mt-2 space-y-2">
+        {steps.map((s, si) => {
           const [icon, name] = _DS_TIERS[s.tier] || ["📦", s.tier];
-          const active = running && si === i;
+          const state = si < i ? "done" : si === i && running ? "active" : si === i ? "done" : "waiting";
+          if (state === "waiting") return null;
+          const isActive = state === "active";
+          const showingCount = isActive && prog >= 100;
           return (
-            <div key={si} className={active ? "animate-pulse" : ""}>
-              {icon} {name} — {active
-                ? "연결 중…"
-                : s.ok
-                ? <b className="text-emerald-700">✓ {s.rows.toLocaleString()}행 · {s.ms.toLocaleString()}ms</b>
-                : <span className="text-gray-500">✗ {s.note === "depth" ? "보유 기간 부족 → 다음 소스" : "응답 없음 → 다음 소스"}</span>}
+            <div key={si} className="rounded-lg border border-teal-200 bg-white px-3 py-2">
+              <div className="flex items-center gap-2">
+                <span className={`text-[18px] ${isActive ? "animate-bounce" : ""}`}>{icon}</span>
+                <b className="text-[12.5px] text-gray-800">{name}</b>
+                <span className="ml-auto text-[12px] font-mono">
+                  {isActive && !showingCount ? (
+                    <span className="text-teal-700 animate-pulse">연결 중…</span>
+                  ) : s.ok ? (
+                    <b className="text-emerald-700 text-[13px]">
+                      ✓ {(isActive ? countRows : s.rows).toLocaleString()}행
+                      {!isActive && ` · ${s.ms.toLocaleString()}ms`}
+                    </b>
+                  ) : (
+                    <span className="text-red-500 font-bold">
+                      ✗ {s.note === "depth" ? "보유 기간 부족 → 다음 소스" : "응답 없음 → 다음 소스"}
+                    </span>
+                  )}
+                </span>
+              </div>
+              {isActive && !showingCount && (
+                <div className="mt-1.5 h-1.5 w-full rounded-full bg-teal-100 overflow-hidden">
+                  <div className="h-full rounded-full bg-teal-500 transition-all duration-100"
+                    style={{ width: `${prog}%` }} />
+                </div>
+              )}
             </div>
           );
         })}
       </div>
+      {!running && ds.source && (
+        <div className="mt-2 flex justify-center">
+          <span className={`px-4 py-1.5 rounded-full text-[13px] font-extrabold text-white shadow ${
+            ownServer ? "bg-emerald-600" : "bg-gray-500"}`}>
+            {ownServer ? `✓ ${ds.source} — 우리 서버 데이터, 인터넷 아님` : `출처: ${ds.source}`}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
