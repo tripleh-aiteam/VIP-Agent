@@ -1490,6 +1490,26 @@ def _won_str(v) -> str:
         return str(v)
 
 
+_FIELD_FAMILIES = (
+    ("volume", ("거래량", "volume", "volumn", "volme")),
+    ("open", ("시가", "open price", "opening price")),
+    ("high", ("고가", "high price", "highest price")),
+    ("low", ("저가", "low price", "lowest price")),
+    ("close", ("종가", "close price", "closing price")),
+)
+
+
+def _single_field_asked(transcript: Optional[str]) -> Optional[str]:
+    """EXACTLY ONE price field asked ('SK하이닉스 어제 거래량?') → that field's name, so
+    the answer is the one number + a natural offer for the rest — not the whole OHLCV
+    table (boss 2026-08-25: 'I am asking only volume but it is showing other info')."""
+    tl = (transcript or "").lower()
+    if any(w in tl for w in ("전체", "모두", "다 ", "all", "ohlc", "table", "표")):
+        return None
+    hits = [k for k, kws in _FIELD_FAMILIES if any(w in tl for w in kws)]
+    return hits[0] if len(hits) == 1 else None
+
+
 def _also_wants_current_price(transcript: Optional[str]) -> bool:
     """True when a past-date question ALSO explicitly asks for the CURRENT price in the
     same breath ('현재가랑 12월 10일 종가 둘 다', 'price now and its Dec 10 close'). Needs an
@@ -1619,6 +1639,38 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
                     f"{nm}: minute-level price for {d} {hh:02d}:{mm:02d} isn't on the free feed. Day close {_won_str(close)} (H {_won_str(row.get('high'))} / L {_won_str(row.get('low'))}).")
     if not any(s["rows"] for s in out):
         return None
+    # ONE FIELD ASKED, ONE NUMBER ANSWERED (+ a natural offer) — single past date only;
+    # ranges and multi-field asks keep the full table.
+    _fld = _single_field_asked(transcript)
+    if _fld and kind == "dates" and len({d.isoformat() for d in payload}) == 1 and not tm:
+        _F_KO = {"volume": "거래량", "open": "시가", "high": "고가", "low": "저가", "close": "종가"}
+        _fl = list(notes)
+        for s in out:
+            if not s["rows"]:
+                continue
+            row = s["rows"][0]
+            v = row.get(_fld)
+            if v is None:
+                continue
+            if _en:
+                _val = f"{int(v):,} shares" if _fld == "volume" else _won_str(v)
+                _fl.append(f"**{s['name']}** — {row.get('date')} {_fld}: **{_val}**")
+            else:
+                _val = f"{int(v):,}주" if _fld == "volume" else _won_str(v)
+                _fl.append(f"**{s['name']}** — {row.get('date')} {_F_KO[_fld]}: **{_val}**")
+        if len(_fl) > len(notes):
+            _fl += ["", ("Want that day's open/high/low/close too, or another date? Just ask."
+                         if _en else
+                         "원하시면 그날의 시가·고가·저가·종가 전체나 다른 날짜도 바로 알려드릴게요.")]
+            result = "\n".join(_fl)
+            if _also_wants_current_price(transcript):
+                try:
+                    cur = _vip_live_price_reply(transcript, lang, db)
+                    if cur and cur.get("reply"):
+                        result = cur["reply"].rstrip() + "\n\n---\n\n" + result
+                except Exception:
+                    pass
+            return result
     table = price_format.format_history(out, lang=("en" if _en else "ko"))
     result = ("\n".join(notes) + "\n\n" + table) if notes else table
     # 'current price AND the 12/10 close, both' — prepend the live quote so the
