@@ -77,7 +77,7 @@ def rows_traced(db, code: str, days: int) -> tuple[list[dict], str, dict]:
                                key=lambda r: r["date"], reverse=True)
                 if fresh:
                     out = fresh + out
-                    src = "데이터 PC + 네이버(오늘)"
+                    src = "데이터 PC"
             except Exception:
                 pass
             trace["source"] = src
@@ -136,7 +136,7 @@ def rows_traced(db, code: str, days: int) -> tuple[list[dict], str, dict]:
                        key=lambda r: r["date"], reverse=True)
         if fresh:
             out = fresh + out
-            src = "자체 DB + 네이버(최신)"
+            src = "자체 DB"
     except Exception:
         pass
     trace["source"] = src

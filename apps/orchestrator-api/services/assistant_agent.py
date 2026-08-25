@@ -1929,12 +1929,11 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
     if not sections:
         return None, None
     out = "\n\n---\n\n".join(sections)
+    _own_src = bool(_src_lbl and ("자체" in _src_lbl or "데이터 PC" in _src_lbl))
     out += (f"\n\n📦 {'Source' if _en else '데이터 출처'}: "
             + (_src_lbl or ("네이버" if not _en else "Naver"))
-            + (" — our own collected daily data (2015~), Naver only for the freshest sessions"
-               if _en and _src_lbl and "자체" in _src_lbl else
-               " — 우리 서버가 수집한 일봉(2015~) 기준, 최신 1~2일만 네이버 보충"
-               if _src_lbl and "자체" in _src_lbl else ""))
+            + ((" — our own collected data" if _en else " — 우리 서버 수집 데이터")
+               if _own_src else ""))
     return out, _ds_trace
 
 
