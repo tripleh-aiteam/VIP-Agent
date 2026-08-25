@@ -96,6 +96,36 @@ def windows_for(code: str, day: str | None = None) -> list | None:
     return out
 
 
+_news9 = {"mtime": 0.0, "rows": []}
+
+
+def _news_counts(code: str, minutes: int = 60) -> tuple[int, int]:
+    """(위험, 호재) stamps for one stock in the last N minutes, from the
+    intern's live log (mtime-cached parse, so the 4s loop stays free)."""
+    f = (Path(__file__).resolve().parent.parent / "data" / "news_intern"
+         / f"{_day()}.jsonl")
+    try:
+        mt = f.stat().st_mtime
+        if mt != _news9["mtime"]:
+            rows = []
+            for ln in f.read_text(encoding="utf-8").splitlines():
+                try:
+                    rows.append(json.loads(ln))
+                except Exception:
+                    continue
+            _news9["mtime"] = mt
+            _news9["rows"] = rows
+        cut = (datetime.now(KST) - timedelta(minutes=minutes)
+               ).isoformat(timespec="seconds")
+        risk = sum(1 for r in _news9["rows"] if r.get("code") == code
+                   and r.get("stamp") == "위험" and (r.get("ts") or "") >= cut)
+        good = sum(1 for r in _news9["rows"] if r.get("code") == code
+                   and r.get("stamp") == "호재" and (r.get("ts") or "") >= cut)
+        return risk, good
+    except Exception:
+        return 0, 0
+
+
 _base = {"t": 0.0, "rows": []}      # morning scores, refreshed every 5 min
 
 
@@ -145,6 +175,16 @@ def _fast_cycle() -> None:
                     adj += 2.0 if dp <= 0.20 else (-3.0 if dp >= 0.85 else 0.0)
             except Exception:
                 pass
+        # NEWS IN THE SELECTION (boss 2026-08-25 13:5x: "news also must be
+        # implemented BEFORE selection to buy"): the intern's last-hour stamps
+        # move the rank itself - each 위험 -2 (cap -4), each 호재 +1 (cap +2).
+        # A stock drowning in danger headlines can no longer hold a top seat
+        # on price alone; the engine's half-size law still applies on top.
+        try:
+            risk9, good9 = _news_counts(c)
+            adj += min(2, good9) * 1.0 - min(2, risk9) * 2.0
+        except Exception:
+            pass
         adj = max(-9.0, min(9.0, adj))
         rows.append({"code": c, "name": b.get("name") or watch.get(c) or c,
                      "avg": round(float(base) + adj, 1)})
