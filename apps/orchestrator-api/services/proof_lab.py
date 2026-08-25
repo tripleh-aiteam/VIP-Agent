@@ -1258,6 +1258,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     lastc = [0.0] * n          # each stock's most recent close, for the closing bell
     cut_px = [None] * n        # court 2026-08-25: last red full-exit price per stock
                                # (v["reenter_below_cut"]: re-enter only cheaper)
+    red_seen = 0               # how many `out` rows the decay-law sweep has read
 
     def _secs(t: str) -> int:
         try:
@@ -1281,10 +1282,22 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
         s = stks[si]
         closes = s["closes"]
         c, prev = closes[i], closes[i - 1]
-        # court 2026-08-25 (decay-churn laws): remember whether this stock held
-        # a hand and its stop count when the bar began, to spot red full exits
-        _had9x = poss[si] is not None
-        _sct9x = stop_ct[si]
+        # court 2026-08-25 (decay-churn laws): sweep rows appended since the
+        # last event - a red FULL exit of ANY kind (drip retreat, decay cut,
+        # bell) arms the laws. Placed at bar START because the drip section
+        # `continue`s before any end-of-body code could run. The -1% stop rows
+        # ("손절") are excluded from surrender_any_red - stop_ct already
+        # counted them at the stop site.
+        if v.get("surrender_any_red") or v.get("reenter_below_cut"):
+            while red_seen < len(out):
+                _r9x = out[red_seen]
+                red_seen += 1
+                if (_r9x.get("gross_pct") or 0) < 0:
+                    if v.get("reenter_below_cut"):
+                        cut_px[_r9x["si"]] = _r9x.get("exit")
+                    if (v.get("surrender_any_red")
+                            and "손절" not in str(_r9x.get("exit_why") or "")):
+                        stop_ct[_r9x["si"]] += 1
         # THE CLOSING BELL. Found 2026-08-10 while asking why the 1분 board was empty:
         # one position that never reached its take and never triggered its floored stop
         # holds the desk's single hand for the REST OF THE DAY, so 23 rules showed 0
@@ -1461,6 +1474,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            and _burst_entry(s, v, i, closes, _now))
                   and not (v.get("recovery")
                            and _recovery_entry(s, v, i, closes, _now))
+                  and not (v.get("family_door")
+                           and bool((s.get("fam_sig") or [])[i:i + 1]
+                                    and s["fam_sig"][i]))
                   and not (v.get("drip", {}).get("reboard")
                            and reb_pk[si] and up[si] >= 3)):
                 pass
@@ -1613,6 +1629,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                    or (bool(v.get("recovery"))
                                        and _recovery_entry(s, v, i, closes,
                                                            _now))
+                                   or bool(v.get("family_door")
+                                           and (s.get("fam_sig") or [])[i:i + 1]
+                                           and s["fam_sig"][i])
                                    or bool(v.get("drip", {}).get("reboard")
                                            and reb_pk[si]
                                            and up[si] >= 3)))
@@ -2312,19 +2331,6 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                      "seq": closes[max(0, i - (v["a"] if v["kind"] == "candle" else 1)): i + 1]}
                 out.append(tr)
                 poss[si] = None
-        # COURT LAWS 2026-08-25 (decay churn): a red FULL exit of any kind arms
-        # them - not only the -1% stop. surrender_any_red counts it toward the
-        # surrender total; reenter_below_cut remembers the fill so re-entry is
-        # only allowed cheaper. Variant-gated, default OFF - the live book
-        # replays byte-identical without these keys.
-        if ((v.get("surrender_any_red") or v.get("reenter_below_cut"))
-                and _had9x and poss[si] is None):
-            _rr9x = next((r for r in reversed(out) if r.get("si") == si), None)
-            if _rr9x and (_rr9x.get("gross_pct") or 0) < 0:
-                if v.get("reenter_below_cut"):
-                    cut_px[si] = _rr9x.get("exit")
-                if v.get("surrender_any_red") and stop_ct[si] == _sct9x:
-                    stop_ct[si] += 1
     if not with_open:
         return out
     ops: list[dict] = []
