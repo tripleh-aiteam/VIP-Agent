@@ -40,6 +40,9 @@ _SLANG: dict[str, str] = {
     "대한항공": "003490", "kal": "003490", "korean air": "003490",
     "한국항공우주": "047810", "kai": "047810",
     "lig넥스원": "079550", "넥스원": "079550",
+    # 079550 renamed (LIG넥스원 → LIG디펜스앤에어로스페이스) — the ranking row carries the
+    # NEW official name and it did not resolve (universe audit 2026-08-25)
+    "lig디펜스앤에어로스페이스": "079550", "lig디펜스": "079550", "lig defense": "079550",
     "한화시스템": "272210",
     "한화에어로": "012450", "한화에어로스페이스": "012450", "hanwha aerospace": "012450",
     "한화오션": "042660",
@@ -123,7 +126,9 @@ def display_name(ticker: str) -> str:
 _EN_NAMES = {
     "005930": "Samsung Electronics", "000660": "SK Hynix", "005380": "Hyundai Motor",
     "000270": "Kia", "035420": "NAVER", "035720": "Kakao", "009150": "Samsung Electro-Mechanics",
-    "042700": "Hanmi Semiconductor", "012450": "Hanwha Aerospace", "079550": "LIG Nex1",
+    "042700": "Hanmi Semiconductor", "012450": "Hanwha Aerospace",
+    "079550": "LIG Defense & Aerospace",
+    "069500": "KODEX 200", "047810": "Korea Aerospace Industries",
     "272210": "Hanwha Systems", "003490": "Korean Air", "034020": "Doosan Enerbility",
     "052690": "KEPCO E&C", "015760": "KEPCO", "066570": "LG Electronics", "017670": "SK Telecom",
     "030200": "KT", "005490": "POSCO Holdings", "006400": "Samsung SDI", "051910": "LG Chem",
