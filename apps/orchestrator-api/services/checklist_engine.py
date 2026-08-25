@@ -1019,8 +1019,11 @@ def render_market_ko(db) -> str:
 
 # ---------------------------------------------------------------- full 100-item list
 # The boss handed over his ORIGINAL paper checklist verbatim (2026-08-24). It lives in
-# data/checklist_100.json — his exact KO wording + EN translation, with `auto` marking
-# the 36 items this engine already checks from live data. The chatbot's "체크리스트 전체"
+# data/checklist_100.json — his exact KO wording + EN translation, with `auto`
+# marking the 90 items the platform checks or enforces automatically (scoring
+# columns, doors, ladder/stop laws, order-book watch, news intern, nightly
+# audits); the 10 🧑 items are the trader's own mindset/journal/allocation
+# (reclassified 2026-08-25 on the boss's order). The chatbot's "체크리스트 전체"
 # intent renders it; editing the JSON changes the answer without touching code.
 
 _FULL_FILE = Path(__file__).resolve().parent.parent / "data" / "checklist_100.json"
@@ -1028,8 +1031,16 @@ _FULL_FILE = Path(__file__).resolve().parent.parent / "data" / "checklist_100.js
 
 def full_checklist() -> dict[str, Any]:
     """The boss's verbatim 100-item list ({categories, items}); cached 10 min so a
-    JSON edit shows up without a restart."""
-    return _cached("full100", 600, lambda: json.loads(_FULL_FILE.read_text(encoding="utf-8")))
+    JSON edit shows up without a restart. Items always sorted 1..100 (boss
+    2026-08-25: "it should count +1 like 1,2,3...100, not without order")."""
+    def _load9():
+        d = json.loads(_FULL_FILE.read_text(encoding="utf-8"))
+        try:
+            d["items"] = sorted(d["items"], key=lambda i: i.get("no") or 0)
+        except Exception:
+            pass
+        return d
+    return _cached("full100", 600, _load9)
 
 
 def render_full_ko() -> str:
