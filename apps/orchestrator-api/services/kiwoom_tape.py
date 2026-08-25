@@ -255,6 +255,20 @@ def last_price(code: str) -> float | None:
     return None
 
 
+def today_volume(code: str) -> float | None:
+    """Today's cumulative traded volume from the in-memory tape - the live
+    ranker's volume-surge source (boss 2026-08-25: "volume changes but its
+    weight is tiny, it will not affect the top 5"). Zero API calls."""
+    with _lock:
+        m = _mem.get(code)
+        if m and _mem_day.get(code) == _day():
+            try:
+                return float(sum(x.get("qty") or 0 for x in m))
+            except Exception:
+                return None
+    return None
+
+
 def load(code: str, day: str | None = None) -> list[dict]:
     """Today's stored ticks for one stock, chronological."""
     with _lock:

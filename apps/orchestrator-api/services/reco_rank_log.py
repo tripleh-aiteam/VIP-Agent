@@ -136,7 +136,7 @@ def live_pulse() -> dict:
     return dict(_live)
 
 
-_base = {"t": 0.0, "rows": []}      # morning scores, refreshed every 5 min
+_base = {"t": 0.0, "rows": [], "vol20": {}}   # morning scores + 20d volume baselines
 
 
 def _refresh_base() -> None:
@@ -144,6 +144,18 @@ def _refresh_base() -> None:
         "http://127.0.0.1:8000/paper-desk/daily-pick", timeout=60))
     _base["rows"] = r.get("rows") or []
     _base["t"] = time.time()
+    # 20-day average volume per stock (for the live volume-surge term) -
+    # one cheap DB read per 5-minute refresh, never in the 4s loop
+    try:
+        from services.daily_pick import _conn
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute("""SELECT ticker, AVG(volume) FROM raw_daily_prices
+                       WHERE date >= CURRENT_DATE - 35 GROUP BY ticker""")
+        _base["vol20"] = {t: float(a or 0) for t, a in cur.fetchall()}
+        conn.close()
+    except Exception:
+        pass
 
 
 def _fast_cycle() -> None:
@@ -195,7 +207,24 @@ def _fast_cycle() -> None:
             adj += min(2, good9) * 1.0 - min(2, risk9) * 2.0
         except Exception:
             pass
-        adj = max(-9.0, min(9.0, adj))
+        # THE VOLUME MUSCLE (boss 2026-08-25: "volume changes but it will not
+        # affect the top 5 - solve this"): today's pace vs the stock's own
+        # 20-day average, time-of-day adjusted. Measured 2026-08-25: turnover
+        # is the single strongest next-day predictor (IC +0.13/+0.09 across
+        # two independent 250-day periods) - so a real surge now carries up
+        # to +4, enough to flip a 2-4 point seat gap. No baseline = term 0.
+        try:
+            av20 = (_base.get("vol20") or {}).get(c) or 0
+            tv = kt.today_volume(c)
+            if av20 and tv:
+                nk = datetime.now(KST)
+                frac = max(0.05, min(1.0, ((nk.hour - 9) * 60 + nk.minute) / 390))
+                ratio = tv / (av20 * frac)
+                adj += (4.0 if ratio >= 3 else 3.0 if ratio >= 2
+                        else 1.5 if ratio >= 1.5 else (-1.0 if ratio < 0.5 else 0.0))
+        except Exception:
+            pass
+        adj = max(-12.0, min(12.0, adj))
         rows.append({"code": c, "name": b.get("name") or watch.get(c) or c,
                      "avg": round(float(base) + adj, 1)})
     if not rows:

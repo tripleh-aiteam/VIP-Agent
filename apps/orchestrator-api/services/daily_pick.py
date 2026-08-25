@@ -34,8 +34,19 @@ _PICK_FILE = _DATA / "today_picks.json"
 _CHAR_FILE = _DATA / "stock_character.json"      # the slow half, refreshed weekly
 
 # the checklist's own sections, weighted as they weigh on "which stock today"
-WEIGHTS = {"trend": 25, "liquidity": 20, "flexibility": 20,
-           "levels": 15, "momentum": 10, "flows": 10}
+# REWEIGHED BY MEASUREMENT (boss 2026-08-25: "out of 90 each item's effect is
+# different - find which matters"). Two independent 250-day backtests over the
+# 51-stock history: turnover IC +0.13/+0.09 (king), MA-alignment +0.08/+0.08,
+# trendiness +0.05/+0.03, tick cost +0.03/+0.02; RSI/MACD ~0 both periods,
+# and #67 vs-prev-close NEGATIVE both periods (-0.04/-0.08). The winning
+# scheme (top-5 next-day rise +0.55%p/+0.46%p vs +0.39/+0.25 for the old
+# weights) puts volume and trend in charge; levels/momentum leave the
+# ranking (the engine still enforces zone laws at buy time). Flows kept at
+# 10 - no per-day history to test it, industry practice says keep it.
+OLD_WEIGHTS = {"trend": 25, "liquidity": 20, "flexibility": 20,
+               "levels": 15, "momentum": 10, "flows": 10}
+WEIGHTS = {"trend": 35, "liquidity": 45, "flexibility": 10,
+           "levels": 0, "momentum": 0, "flows": 10}
 N_PICKS = 5
 
 # THE BOSS'S DESK (2026-08-10, his call). He named the six companies he wants traded
@@ -300,15 +311,15 @@ def pick(day: str, n: int | None = None, refresh_character: bool = False) -> dic
         a, b = ch[c], co[c]
         g = {
             # 46,47,69,21 - can we get in and out?
-            "liquidity": 0.6 * _pct(A["turnover"], a["turnover"]) +
-                         0.4 * _pct(A["surge_rate"], a["surge_rate"]),
+            "liquidity": 0.7 * _pct(A["turnover"], a["turnover"]) +
+                         0.3 * _pct(A["surge_rate"], a["surge_rate"]),
             # 48 - is one tick cheap enough to profit?
             "flexibility": _pct(A["tick_pct"], a["tick_pct"], hi=False),
             # 50,51,52,58 - is it trending and aligned right now?
-            "trend": (0.35 * (b["aligned"] / 2 * 100) +
+            "trend": (0.40 * (b["aligned"] / 2 * 100) +
                       0.25 * _pct(A["trendiness"], a["trendiness"]) +
                       0.20 * (b["new_high"] * 100) +
-                      0.20 * _pct(B["above_s20"], b["above_s20"])),
+                      0.15 * _pct(B["above_s20"], b["above_s20"])),
             # 62,63,67,74 - where is it against its own levels?
             "levels": (0.5 * max(0.0, min(100.0, (b["bb_pos"] + 1) * 50)) +
                        0.5 * _pct(B["vs_close"], b["vs_close"])),
@@ -344,9 +355,9 @@ def pick(day: str, n: int | None = None, refresh_character: bool = False) -> dic
         detail = {
             "liquidity": [
                 {"k": "거래대금 회전 (46·47)", "v": f"{a['turnover']:,.0f}",
-                 "s": round(_pct(A["turnover"], a["turnover"])), "w": 60},
+                 "s": round(_pct(A["turnover"], a["turnover"])), "w": 70},
                 {"k": "거래량 급증 빈도 (69)", "v": f"{a['surge_rate']:.2f}",
-                 "s": round(_pct(A["surge_rate"], a["surge_rate"])), "w": 40}],
+                 "s": round(_pct(A["surge_rate"], a["surge_rate"])), "w": 30}],
             "flexibility": [
                 {"k": "호가 1틱 비용 (48)", "v": f"{a['tick_pct']:.3f}%",
                  "s": round(_pct(A["tick_pct"], a["tick_pct"], hi=False)),
@@ -355,13 +366,13 @@ def pick(day: str, n: int | None = None, refresh_character: bool = False) -> dic
                 {"k": "이평 정배열 5>20>60 (50)",
                  "v": ("정배열" if b["aligned"] == 2
                        else "부분" if b["aligned"] == 1 else "역배열"),
-                 "s": round(b["aligned"] / 2 * 100), "w": 35},
+                 "s": round(b["aligned"] / 2 * 100), "w": 40},
                 {"k": "추세성 · 1년 (52)", "v": f"{a['trendiness']:.2f}",
                  "s": round(_pct(A["trendiness"], a["trendiness"])), "w": 25},
                 {"k": "20일 신고가 (51)", "v": "예" if b["new_high"] else "아니오",
                  "s": 100 if b["new_high"] else 0, "w": 20},
                 {"k": "20일선 위 거리 (58)", "v": f"{b['above_s20']:+.2f}%",
-                 "s": round(_pct(B["above_s20"], b["above_s20"])), "w": 20}],
+                 "s": round(_pct(B["above_s20"], b["above_s20"])), "w": 15}],
             "levels": [
                 {"k": "볼린저 위치 (62·63)", "v": f"{b['bb_pos']:+.2f}",
                  "s": round(max(0.0, min(100.0, (b["bb_pos"] + 1) * 50))),
