@@ -6360,6 +6360,12 @@ def _run_agent_impl(
             # 2026-08-24: the KO phrasing got a "data not included" apology here).
             if (_full or _simple) and _is_period_stats_q(transcript):
                 _full = _simple = False
+            # score questions ("지금 점수 몇 점이야?") belong to the checklist-score lane —
+            # the analyst LLM invented its own 0-10 scale here (boss 2026-08-25).
+            _tl_an = (transcript or "").lower()
+            if (_full or _simple) and ("점수" in _tl_an or _re.search(r"\bscore\b", _tl_an)) \
+                    and not any(k in _tl_an for k in ("체크리스트", "checklist")):
+                _full = _simple = False
             if _full or _simple:
                 _an_out = _an_answer(db, transcript, lang, _an_stocks, history,
                                      concise=_simple)
@@ -6783,6 +6789,56 @@ def _run_agent_impl(
                         "tool_used": "stock_news"}
         except Exception as e:
             log.warning(f"stock news lane failed: {str(e)[:120]}")
+
+    # ===== CHECKLIST SCORE ("한화에어로 지금 점수?" / "what is the score now X") — the
+    # ONE true score (0~100 checklist 총점, base + live), never an invented LLM scale
+    # (boss 2026-08-25: the analyst lane free-styled a made-up 0-10 'bullish score'). =====
+    _tl_sc = (transcript or "").lower()
+    if (not confirmed_tool and not attachment_ids
+            and ("점수" in _tl_sc or _re.search(r"\bscore\b", _tl_sc))
+            and not any(k in _tl_sc for k in ("체크리스트", "checklist"))):
+        try:
+            from services.stock_resolver import resolve_one as _rs1
+            _sc_c, _sc_n = _rs1(transcript or "") or (None, None)
+            if _sc_c:
+                _en_s = str(lang or "").lower().startswith("en") or (
+                    not _re.search(r"[가-힣]", transcript or "") and _re.search(r"[a-zA-Z]", transcript or ""))
+                from services.checklist_reco import GROUP_EN, GROUP_KO, _live_state, _ranking
+                _rk = _ranking() or {}
+                _rows_s = sorted(_rk.get("rows", []), key=lambda r: -(r.get("score") or 0))
+                _row_s = next((r for r in _rows_s if r["code"] == _sc_c), None)
+                _lv_s = _live_state(db, _sc_c)
+                _nm_s = _sc_n or _sc_c
+                _Ls = []
+                if _row_s:
+                    _tot = round((_row_s.get("score") or 0) + _lv_s.get("adj", 0), 1)
+                    _rank_pos = _rows_s.index(_row_s) + 1
+                    _ap = _lv_s.get("adj_parts") or {}
+                    if _en_s:
+                        _Ls = [f"**🎯 {_nm_s} — checklist score right now: {_tot} / 100**",
+                               f"= morning base {_row_s.get('score')} + live {_lv_s.get('adj', 0):+g} "
+                               f"(price {_ap.get('price', 0):+g} · order book {_ap.get('book', 0):+g} · year zone {_ap.get('zone', 0):+g})",
+                               f"Rank today: {_rank_pos} of {len(_rows_s)} candidates"
+                               + (" · 🟢 trading on the reco desk" if _row_s.get("by_score") else ""),
+                               "Groups: " + " · ".join(f"{GROUP_EN[k]} {v}" for k, v in (_row_s.get('groups') or {}).items()),
+                               "", f"Details: [근거 🔍](evidence:{_sc_c}) · weights: trend25·liq20·flex20·levels15·mom10·flows10"]
+                    else:
+                        _Ls = [f"**🎯 {_nm_s} — 지금 체크리스트 점수: {_tot} / 100점**",
+                               f"= 아침 기준 {_row_s.get('score')} + 실시간 {_lv_s.get('adj', 0):+g} "
+                               f"(등락 {_ap.get('price', 0):+g} · 호가 {_ap.get('book', 0):+g} · 연중구간 {_ap.get('zone', 0):+g})",
+                               f"오늘 순위: {len(_rows_s)}종목 중 {_rank_pos}위"
+                               + (" · 🟢 추천 데스크에서 매매중" if _row_s.get("by_score") else ""),
+                               "그룹: " + " · ".join(f"{GROUP_KO[k]} {v}" for k, v in (_row_s.get('groups') or {}).items()),
+                               "", f"자세히: [근거 🔍](evidence:{_sc_c}) · 가중치: 추세25·유동성20·유연성20·지지저항15·모멘텀10·수급10"]
+                else:
+                    _Ls = [(f"**{_nm_s}** is not in today's 40-candidate scoring universe — "
+                            f"the checklist score exists only for tracked candidates." if _en_s else
+                            f"**{_nm_s}**은(는) 오늘 채점 대상 40종목에 없어 체크리스트 점수가 계산되지 않습니다.")]
+                return {"intent": "checklist_score", "language": lang, "reply": "\n".join(_Ls),
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "checklist_score"}
+        except Exception as e:
+            log.warning(f"score lane failed: {str(e)[:120]}")
 
     # ===== RECOMMENDATION EVIDENCE (the proof click): "한미반도체 추천 근거" / "evidence
     # for X recommendation" → the checklist/일봉/분봉/거래량/뉴스 breakdown with item
