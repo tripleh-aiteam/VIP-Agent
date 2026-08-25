@@ -743,7 +743,14 @@ def _swr(key, fresh_sec: float, compute, placeholder=None, vital: bool = False):
         # board's endless rank/history refreshers were hogging all 3 slots and
         # a cross-company click starved forever (boss 2026-08-20: "if I am in
         # SK I cannot move to Samsung")
-        if not vital and len(_SWR_BUSY) >= 3:
+        # 2026-08-25: the desk grew to 9 stocks (desk_mode extras) and the
+        # process died three times before 10:00 - each replay is ~50% heavier
+        # now. Background cap drops to 2, and the vital lane (user clicks) is
+        # BOUNDED at 5 instead of unlimited: a click still jumps the queue,
+        # but clicks can no longer stampede memory alongside the refreshers.
+        if not vital and len(_SWR_BUSY) >= 2:
+            return
+        if vital and len(_SWR_BUSY) >= 5:
             return
         _SWR_BUSY[key] = _t.time()
 
@@ -1491,6 +1498,14 @@ def live_warm():
         try:
             _SWR[("fam", fam, 5, 0, _kd9(), "", "", 1, 1)] = (
                 _t2.time(), _fam_compute(fam, 5, 0, "", "", "", 1, 1))
+        except Exception:
+            pass
+        # the page's 1분 default asks with period=60 - a warm that skips this
+        # key leaves every reload cold (the 2026-08-25 crash-loop morning:
+        # cold keys + 9-stock replays = OOM). Sequential, so memory-safe.
+        try:
+            _SWR[("fam", fam, 5, 60, _kd9(), "", "", 1, 1)] = (
+                _t2.time(), _fam_compute(fam, 5, 60, "", "", "", 1, 1))
         except Exception:
             pass
     try:
