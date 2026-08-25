@@ -139,5 +139,14 @@ def rows_traced(db, code: str, days: int) -> tuple[list[dict], str, dict]:
             src = "자체 DB"
     except Exception:
         pass
+    # DB rows carry no change% — compute close-over-previous-close so tables and the
+    # focused '등락' answers stay complete on our own data
+    for _i2 in range(len(out)):
+        if out[_i2].get("change_pct") is None:
+            try:
+                _prev = out[_i2 + 1]["close"]
+                out[_i2]["change_pct"] = (out[_i2]["close"] / _prev - 1) * 100
+            except Exception:
+                pass
     trace["source"] = src
     return out[:days], src, trace

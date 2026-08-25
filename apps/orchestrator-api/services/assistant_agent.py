@@ -1507,12 +1507,22 @@ _FIELD_FAMILIES = (
 def _single_field_asked(transcript: Optional[str]) -> Optional[str]:
     """EXACTLY ONE price field asked ('SK하이닉스 어제 거래량?') → that field's name, so
     the answer is the one number + a natural offer for the rest — not the whole OHLCV
-    table (boss 2026-08-25: 'I am asking only volume but it is showing other info')."""
+    table (boss 2026-08-25: 'I am asking only volume but it is showing other info').
+    Counts BARE English words too (open/close/max/min/high/low) — 'open, close, max,
+    min and volume' asked FIVE fields but only 'volume' matched a family, so the answer
+    wrongly showed volume alone (boss bug report, same day)."""
     tl = (transcript or "").lower()
     if any(w in tl for w in ("전체", "모두", "다 ", "all", "ohlc", "table", "표")):
         return None
-    hits = [k for k, kws in _FIELD_FAMILIES if any(w in tl for w in kws)]
-    return hits[0] if len(hits) == 1 else None
+    fams = {k for k, kws in _FIELD_FAMILIES if any(w in tl for w in kws)}
+    for w, k in (("open", "open"), ("close", "close"), ("high", "high"), ("low", "low"),
+                 ("max", "high"), ("min", "low")):
+        if _re.search(rf"\b{w}\b", tl):
+            fams.add(k)
+    for w, k in (("최고", "high"), ("최저", "low")):
+        if w in tl:
+            fams.add(k)
+    return next(iter(fams)) if len(fams) == 1 else None
 
 
 def _also_wants_current_price(transcript: Optional[str]) -> bool:
@@ -1567,9 +1577,14 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
         _oldest = min(payload)
         _span = (_dt_now_kst().date() - _oldest).days
         _days = max(60, min(_span + 7, 400))
+    _h_trace = None
+    _h_src = None
     for code, name in stocks[:6]:
         try:
-            rows = naver_stock.daily_history(code, days=_days)
+            from services.price_history import rows_traced as _phr
+            rows, _h_src, _tr2 = _phr(db, code, _days)
+            if _h_trace is None:
+                _h_trace = _tr2
         except Exception as e:
             log.warning(f"vip history {code} failed: {str(e)[:120]}")
             rows = []
@@ -1663,7 +1678,7 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
                     if not _en else
                     f"{nm}: minute-level price for {d} {hh:02d}:{mm:02d} isn't on the free feed. Day close {_won_str(close)} (H {_won_str(row.get('high'))} / L {_won_str(row.get('low'))}).")
     if not any(s["rows"] for s in out):
-        return None
+        return None, None
     # ONE FIELD ASKED → ONLY that field answered (boss 2026-08-25: "I asked only changes
     # but it is showing all days' info, which is token consumption").
     _fld = _single_field_asked(transcript)
@@ -1692,7 +1707,7 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
             _fl2 += ["", ("Want the full daily table (open/high/low/close/volume)? Just ask."
                           if _en else
                           "전체 표(시가·고가·저가·종가·거래량)가 필요하시면 말씀해 주세요.")]
-            return "\n".join(_fl2)
+            return "\n".join(_fl2), _h_trace
     # single past date + one field
     if _fld and kind == "dates" and len({d.isoformat() for d in payload}) == 1 and not tm:
         _F_KO = {"volume": "거래량", "open": "시가", "high": "고가", "low": "저가",
@@ -1725,8 +1740,14 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
                         result = cur["reply"].rstrip() + "\n\n---\n\n" + result
                 except Exception:
                     pass
-            return result
+            return result, _h_trace
     table = price_format.format_history(out, lang=("en" if _en else "ko"))
+    # the table footer must name OUR source when our data served it (boss 2026-08-25)
+    if _h_src and ("자체" in _h_src or "데이터 PC" in _h_src):
+        table = table.replace("Source: Naver Finance (daily OHLCV)",
+                              f"Source: {_h_src} — our own collected data")
+        table = table.replace("출처: 네이버 금융 (일봉 OHLCV)",
+                              f"출처: {_h_src} — 우리 서버 수집 데이터")
     result = ("\n".join(notes) + "\n\n" + table) if notes else table
     # 'current price AND the 12/10 close, both' — prepend the live quote so the
     # current-price half isn't dropped by the past-date route (boss test 2026-07-22).
@@ -1737,7 +1758,7 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
                 result = cur["reply"].rstrip() + "\n\n---\n\n" + result
         except Exception:
             pass
-    return result
+    return result, _h_trace
 
 
 # ===== PERIOD STATS — "삼성바이오 최근 6개월 최저/최고/거래량" / "last 6 months min, max,
@@ -2165,7 +2186,7 @@ def _vip_stock_data_reply(transcript: Optional[str], lang: str, db=None) -> Opti
         return ps
     h = _requested_history_dates(transcript)
     if h:
-        r = _vip_history_reply(transcript, lang, h, db=db)
+        r, _tr_ig = _vip_history_reply(transcript, lang, h, db=db)
         if r:
             return r
     cur = _vip_live_price_reply(transcript, lang, db)
@@ -7515,11 +7536,11 @@ def _run_agent_impl(
             and not _is_stock_advice(transcript, agent_id)   # 'last week I bought X, hold or sell?' = ADVICE
             and not _wants_recommendation(transcript)               # not a price-history dump
             and _requested_history_dates(transcript)):
-        _hist = _vip_history_reply(transcript, lang, history=history or [], db=db)
+        _hist, _h_tr = _vip_history_reply(transcript, lang, history=history or [], db=db)
         if _hist:
             return {"intent": "stock_history", "language": lang, "reply": _hist,
                     "action": None, "speak": True, "transcript": transcript,
-                    "tool_used": "stock_history"}
+                    "tool_used": "stock_history", "datasource": _h_tr}
 
     # ===== VIP LOCAL current-price (the rich single source) =====
     # VIP holds the Kiwoom key, so it answers current-price HERE — Kiwoom during market
