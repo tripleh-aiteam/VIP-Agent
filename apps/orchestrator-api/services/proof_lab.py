@@ -1145,6 +1145,44 @@ def _burst_entry(s: dict, v: dict, i: int, closes: list[float],
     return bool(lo) and (c / lo - 1) * 100 >= bcf.get("rise", 0.7)
 
 
+def _recovery_entry(s: dict, v: dict, i: int, closes: list[float],
+                    now_str: str) -> bool:
+    """THE RECOVERY DOOR (court 2026-08-25 night; the lead defendant with ~28
+    live sightings): a rise of >= rise% from the lowest close of the last
+    win_min minutes that is NOT at a fresh session high - the below-the-high
+    recovery every existing door structurally misses (burst demands the fresh
+    high, dip demands its own fall shape, climb needs 31 bars). below_high%
+    keeps it off the burst door's turf. Court dial, default OFF."""
+    rc = v.get("recovery") or {}
+    if i < 2 or not now_str or str(now_str)[:5] < "09:01":
+        return False
+    c = closes[i]
+    hi = max(closes[:i + 1])
+    if not c or not hi or c >= hi * (1 - rc.get("below_high", 0.2) / 100.0):
+        return False
+    tms = s.get("times")
+    if not tms:
+        return False
+
+    def _sc9(x):
+        if isinstance(x, str) and len(x) >= 7:
+            t2 = x.replace(":", "")
+            try:
+                return int(t2[0:2]) * 3600 + int(t2[2:4]) * 60 + int(t2[4:6])
+            except Exception:
+                return None
+        return None
+    now_s = _sc9(tms[i])
+    if now_s is None:
+        return False
+    j = i
+    lim = rc.get("win_min", 10) * 60
+    while j > 0 and (_sc9(tms[j - 1]) or 0) >= now_s - lim:
+        j -= 1
+    lo = min(closes[j:i + 1])
+    return bool(lo) and (c / lo - 1) * 100 >= rc.get("rise", 0.7)
+
+
 def _rebound_entry(s: dict, v: dict, i: int, ups: int, closes: list[float]) -> bool:
     """THE DAILY REBOUND DOOR (boss 2026-08-13, from NAVER): two time-scales
     agreeing. The stock closed yesterday near its multi-week bottom, is up hard
@@ -1218,6 +1256,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                # blue sell, THEN AGAIN BUY" - a ride's old peak;
                                # price back above it = the climb resumed)
     lastc = [0.0] * n          # each stock's most recent close, for the closing bell
+    cut_px = [None] * n        # court 2026-08-25: last red full-exit price per stock
+                               # (v["reenter_below_cut"]: re-enter only cheaper)
 
     def _secs(t: str) -> int:
         try:
@@ -1241,6 +1281,10 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
         s = stks[si]
         closes = s["closes"]
         c, prev = closes[i], closes[i - 1]
+        # court 2026-08-25 (decay-churn laws): remember whether this stock held
+        # a hand and its stop count when the bar began, to spot red full exits
+        _had9x = poss[si] is not None
+        _sct9x = stop_ct[si]
         # THE CLOSING BELL. Found 2026-08-10 while asking why the 1분 board was empty:
         # one position that never reached its take and never triggered its floored stop
         # holds the desk's single hand for the REST OF THE DAY, so 23 rules showed 0
@@ -1374,6 +1418,11 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             elif v.get("surrender") and stop_ct[si] >= v["surrender"]:
                 pass       # this stock's day is broken - doors stay shut until
                            # tomorrow (exits above run untouched)
+            elif (v.get("reenter_below_cut") and cut_px[si] is not None
+                  and c >= cut_px[si]):
+                pass       # court 2026-08-25 (알고3's 두산/하이닉스 churn):
+                           # after a red cut, re-entry only BELOW the cut price
+                           # - never re-buy the same fade higher or flat
             elif (s.get("rank_win") is not None and _now
                   and not (str(_now) < (s.get("rank_t0") or "00:00:00")
                            or any(f_ <= str(_now) <= t_
@@ -1410,6 +1459,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            and _morning_entry(s, v, i, closes, _now))
                   and not (v.get("burst")
                            and _burst_entry(s, v, i, closes, _now))
+                  and not (v.get("recovery")
+                           and _recovery_entry(s, v, i, closes, _now))
                   and not (v.get("drip", {}).get("reboard")
                            and reb_pk[si] and up[si] >= 3)):
                 pass
@@ -1559,6 +1610,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                    or (bool(v.get("burst"))
                                        and _burst_entry(s, v, i, closes,
                                                         _now))
+                                   or (bool(v.get("recovery"))
+                                       and _recovery_entry(s, v, i, closes,
+                                                           _now))
                                    or bool(v.get("drip", {}).get("reboard")
                                            and reb_pk[si]
                                            and up[si] >= 3)))
@@ -2258,6 +2312,19 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                      "seq": closes[max(0, i - (v["a"] if v["kind"] == "candle" else 1)): i + 1]}
                 out.append(tr)
                 poss[si] = None
+        # COURT LAWS 2026-08-25 (decay churn): a red FULL exit of any kind arms
+        # them - not only the -1% stop. surrender_any_red counts it toward the
+        # surrender total; reenter_below_cut remembers the fill so re-entry is
+        # only allowed cheaper. Variant-gated, default OFF - the live book
+        # replays byte-identical without these keys.
+        if ((v.get("surrender_any_red") or v.get("reenter_below_cut"))
+                and _had9x and poss[si] is None):
+            _rr9x = next((r for r in reversed(out) if r.get("si") == si), None)
+            if _rr9x and (_rr9x.get("gross_pct") or 0) < 0:
+                if v.get("reenter_below_cut"):
+                    cut_px[si] = _rr9x.get("exit")
+                if v.get("surrender_any_red") and stop_ct[si] == _sct9x:
+                    stop_ct[si] += 1
     if not with_open:
         return out
     ops: list[dict] = []
