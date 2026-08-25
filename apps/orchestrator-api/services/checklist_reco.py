@@ -261,23 +261,61 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
         m_items = m.get("items", [])
     except Exception:
         pass
-    # COMPACT BY DEFAULT (boss 2026-08-24 evening: "just listing 100 checkpoints tells
-    # nothing — show the list of companies; clicking shows THAT stock's checklist,
-    # because each company's 100-item result is different"). The answer carries only
-    # the MEASURED market items (real values); the per-stock 100 lives behind 근거 🔍.
+    # THE FULL 11→100, every number present (boss 2026-08-25: "some are missing —
+    # make sure it must have 11-100"). Measured items carry live values; the rest carry
+    # their mark: 📊 per-stock (answered in 근거 🔍), 📰 Qwen news, 🤖 algorithm-executed,
+    # 🧑 the trader's own. #1~10 (준비) stay his — the answer starts at the market.
     _n_cand = len(rank.get("rows", []))
-    if m_items:
-        L.append(f"**{'[Market check — measured now, checklist #11–25/#36/#95/#100]' if en else '[시장 실측 — 체크리스트 시장 항목]'} "
-                 + (f"{m.get('score')}/{m.get('max')}**" if m else "**"))
-        for it in sorted(m_items, key=lambda x: x.get("no", 0)):
-            mark = "✅" if it.get("ok") else "❌" if it.get("ok") is False else "❓"
-            q = (it.get("q_en") if en else it.get("q")) or it.get("q")
-            L.append(f"{mark} {it['no']}. {q} — {it.get('detail')}")
+    live_by_no = {it.get("no"): it for it in m_items}
+    per_stock_nos: set = set(PROXY_NOS)
+    try:
+        from services.checklist_engine import STOCK_ITEMS
+        per_stock_nos |= {it[0] for it in STOCK_ITEMS}
+    except Exception:
+        pass
+    algo_map = ALGO_EN if en else ALGO_KO
+    try:
+        from services.checklist_engine import full_checklist
+        all_items = sorted(full_checklist()["items"], key=lambda x: x["no"])
+        L.append(("Legend: ✅/❌/❓ measured now · 📊 per stock (answers in 근거 🔍) · "
+                  "📰 Qwen news engine · 🤖 executed by the algorithm · 🧑 yours" if en else
+                  "표기: ✅/❌/❓ 지금 실측 · 📊 종목별(근거 🔍에서 실측) · 📰 Qwen 뉴스 판독 · "
+                  "🤖 알고리즘 자동 실행 · 🧑 본인 확인"))
+        _sections = ([("[Market #11–25]", 11, 25), ("[Issue/Supply&Demand #26–45]", 26, 45),
+                      ("[Stock selection #46–75]", 46, 75), ("[Execution #76–100]", 76, 100)]
+                     if en else
+                     [("[시장 #11~25]", 11, 25), ("[이슈/수급 #26~45]", 26, 45),
+                      ("[종목선정 #46~75]", 46, 75), ("[실행/관리 #76~100]", 76, 100)])
+        for _title, _lo, _hi in _sections:
+            head = f"**{_title}**"
+            if _lo == 11 and m:
+                head += (f" — auto {m.get('score')}/{m.get('max')}" if en
+                         else f" — 자동 {m.get('score')}/{m.get('max')}점")
+            L += ["", head]
+            for it in all_items:
+                no = it["no"]
+                if not (_lo <= no <= _hi):
+                    continue
+                q = (it.get("q_en") if en else it["q"]) or it["q"]
+                lv = live_by_no.get(no)
+                if lv is not None:
+                    mark = "✅" if lv.get("ok") else "❌" if lv.get("ok") is False else "❓"
+                    L.append(f"{mark} {no}. {q} — {lv.get('detail')}")
+                elif no in per_stock_nos:
+                    L.append(f"📊 {no}. {q}")
+                elif no in algo_map:
+                    L.append(f"🤖 {no}. {q} — {algo_map[no]}")
+                elif no in NEWS_NOS:
+                    L.append(f"📰 {no}. {q}")
+                else:
+                    L.append(f"🧑 {no}. {q}")
         if m.get("deal_breakers"):
             det = "; ".join(f"#{b['no']} {b['detail']}" for b in m["deal_breakers"][:2])
-            L.append(("🚫 Deal-breaker today — new buying is reference only: " if en
-                      else "🚫 오늘 결격 — 신규 매수는 참고만: ") + det)
+            L += ["", ("🚫 Deal-breaker today — new buying is reference only: " if en
+                       else "🚫 오늘 결격 — 신규 매수는 참고만: ") + det]
         L.append("")
+    except Exception:
+        pass
     L += [(f"**[Scoring]** {_n_cand} candidates, weighted: trend 25 + liquidity 20 + flexibility 20 "
            f"+ levels 15 + momentum 10 + flows 10 = 100 ({day_disp} morning base), then the live "
            f"re-rank at {now} (price ±4 · book ±2 · zone +2/−3, max ±9). "
