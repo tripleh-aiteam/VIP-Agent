@@ -78,23 +78,30 @@ def refresh_watch(force: bool = False) -> list[tuple[str, str]]:
         mode = desk_mode()
     except Exception:
         pass
+    # THE 20-STOCK UNIVERSE (boss 2026-08-25 12:5x: "build with 20 including
+    # SK하이닉스, 삼성, NAVER, 한화오션 and the other menu-1 stocks - then make
+    # it a 3-5 second recheck"): his six ALWAYS + the checklist's top-14 by
+    # morning score = 20 stocks, ALL under full tape collection. With the
+    # whole universe collected, the reco re-rank runs from our own ticks at
+    # 3-5s and no stock ever needs a warmup - the two-tier compromise dies.
     extras: list[tuple[str, str]] = []
     if mode in ("both", "score"):
         try:
             from services.daily_pick import save_picks, score_five
-            sf = score_five()
+            sf = score_five(14)
             if not sf:
                 save_picks(today)
-                sf = score_five()
-            extras = [(c, n) for c, n in sf if c not in {x[0] for x in SIX}]
+                sf = score_five(14)
+            extras = [(c, n) for c, n in (sf or [])
+                      if c not in {x[0] for x in SIX}][:14]
             if mode == "score":
                 if sf:
-                    WATCH[:] = sf
+                    WATCH[:] = (sf or [])[:20]
                 else:
                     WATCH[:] = SIX      # picker down → the six, never an empty desk
                     logger.warning("kiwoom_tape: score desk has no picks - falling back to the six")
             else:
-                WATCH[:] = SIX + extras
+                WATCH[:] = (SIX + extras)[:20]
         except Exception as e:
             WATCH[:] = SIX
             logger.warning("kiwoom_tape: daily pick failed (%s) - watch = the six", str(e)[:80])
@@ -105,7 +112,9 @@ def refresh_watch(force: bool = False) -> list[tuple[str, str]]:
     return WATCH
 
 
-POLL_SEC = 3.0          # comfortably inside the ~40s the API remembers
+POLL_SEC = 1.0          # with 20 stocks the CYCLE itself takes ~5-6s; a short
+                        # sleep keeps each stock revisited well inside the ~40s
+                        # the API remembers (2026-08-25, the 20-universe)
 OVERLAP = 250           # how many recent ticks to match on when finding the new part
 
 _lock = threading.Lock()
@@ -231,6 +240,19 @@ def gaps(code: str, min_sec: int = 60) -> list[dict]:
         if d - quiet >= min_sec:
             out.append({"from": a_["t"], "to": b_["t"], "seconds": d})
     return out
+
+
+def last_price(code: str) -> float | None:
+    """The newest recorded tick's price, from memory - the 3-5s re-ranker's
+    zero-API price source (2026-08-25, the 20-universe fast loop)."""
+    with _lock:
+        m = _mem.get(code)
+        if m and _mem_day.get(code) == _day():
+            try:
+                return float(m[-1]["px"])
+            except Exception:
+                return None
+    return None
 
 
 def load(code: str, day: str | None = None) -> list[dict]:

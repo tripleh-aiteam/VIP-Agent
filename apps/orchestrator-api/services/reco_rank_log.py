@@ -85,6 +85,86 @@ def windows_for(code: str, day: str | None = None) -> list | None:
     return out
 
 
+_base = {"t": 0.0, "rows": []}      # morning scores, refreshed every 5 min
+
+
+def _refresh_base() -> None:
+    r = json.load(urllib.request.urlopen(
+        "http://127.0.0.1:8000/paper-desk/daily-pick", timeout=60))
+    _base["rows"] = r.get("rows") or []
+    _base["t"] = time.time()
+
+
+def _fast_cycle() -> None:
+    """THE 3-5 SECOND RE-CHECK (boss 2026-08-25: "make it 3-5 sec recheck",
+    the 20-universe): every watched stock's score = its morning checklist
+    base + a live adjustment computed ENTIRELY from our own recorded tape
+    (last tick price vs prev close, year zone) - zero API calls, so this
+    loop can run every few seconds forever. The adjustment mirrors the
+    chatbot's live layer (price up to ±4, zone +2/−3, cap ±9; the order-book
+    term rides the slower base refresh)."""
+    import services.kiwoom_tape as kt
+    import services.kiwoom_rules as kr
+    if time.time() - _base["t"] > 300:
+        try:
+            _refresh_base()
+        except Exception:
+            pass
+    watch = {c: n for c, n in kt.WATCH}
+    rows = []
+    for b in _base["rows"]:
+        c = b.get("code")
+        if c not in watch:
+            continue
+        base = ((b.get("cats") or {}).get("avg")
+                or b.get("live_total") or b.get("score") or 0)
+        px = kt.last_price(c)
+        adj = 0.0
+        if px:
+            try:
+                prev = kr._daily20(c, kt._day())[0]
+                if prev:
+                    chg = (px / prev - 1) * 100
+                    adj += max(-4.0, min(4.0, chg * 1.33))
+            except Exception:
+                pass
+            try:
+                dp = kr._daily_pos(c, px)
+                if dp is not None:
+                    adj += 2.0 if dp <= 0.20 else (-3.0 if dp >= 0.85 else 0.0)
+            except Exception:
+                pass
+        adj = max(-9.0, min(9.0, adj))
+        rows.append({"code": c, "name": b.get("name") or watch.get(c) or c,
+                     "avg": round(float(base) + adj, 1)})
+    if not rows:
+        return
+    rows.sort(key=lambda x: -(x["avg"] or 0))
+    _write_snapshot(rows[:10])
+
+
+def _write_snapshot(slim: list) -> None:
+    now = datetime.now(KST).strftime("%H:%M:%S")
+    p = log_path()
+    last = None
+    try:
+        lines = p.read_text(encoding="utf-8").splitlines()
+        if lines:
+            last = json.loads(lines[-1])
+    except Exception:
+        pass
+    tops_new = [x["code"] for x in slim[:TOP_N]]
+    tops_old = [x.get("code") for x in (last.get("rows") or [])[:TOP_N]] \
+        if last else None
+    aged = (not last) or (last.get("t", "") < (
+        datetime.now(KST) - timedelta(seconds=60)).strftime("%H:%M:%S"))
+    if tops_new != tops_old or aged:
+        DIR.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"t": now, "rows": slim},
+                               ensure_ascii=False) + "\n")
+
+
 def _cycle() -> None:
     r = json.load(urllib.request.urlopen(
         "http://127.0.0.1:8000/paper-desk/daily-pick", timeout=60))
@@ -129,8 +209,8 @@ def start_logger() -> None:
             try:
                 from services.kiwoom_tape import market_open
                 if market_open():
-                    _cycle()
-                    time.sleep(20)
+                    _fast_cycle()          # the 3-5s check (own tape, no API)
+                    time.sleep(4)
                 else:
                     time.sleep(120)
             except Exception:

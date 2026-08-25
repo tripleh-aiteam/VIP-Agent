@@ -1283,8 +1283,13 @@ export default function LiveDeskPage() {
     : (_sixTabs.length > 0 ? _sixTabs : (st?.stocks ?? []));
   // the trades/rank replay covers only THIS desk's stocks (boss 2026-08-24: the two
   // desks' trading histories looked identical)
+  // menu 2's replay universe = the FULL 20-stock watch (boss 2026-08-25:
+  // "build with 20 including the menu-1 stocks") - the living top-3 gate
+  // decides who may actually BUY at any moment, so the checklist can crown
+  // any of the 20, six-members included, and the board shows it honestly
   deskCodesRef.current = deskView === "reco"
-    ? _recoRows.map((r) => r.code).join(",")
+    ? ((st?.stocks ?? []).map((x) => x.code).join(",")
+       || _recoRows.map((r) => r.code).join(","))
     : Array.from(SIX_CODES).join(",");
   useEffect(() => {
     if (deskView === "reco" && recoSet.size > 0 && !recoSet.has(code)) {
