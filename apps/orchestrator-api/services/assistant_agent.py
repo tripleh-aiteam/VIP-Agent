@@ -1769,13 +1769,15 @@ def _period_stats_window(q: Optional[str]):
 
     # 'mo/mon/mont/month/months/monthes' — the boss types fast ('last 6 mont' returned
     # the CURRENT price because the window parse missed, 2026-08-25)
+    # cap raised 18 → 132 months (2026-08-25): history now serves from OUR OWN DB
+    # (raw_daily_prices, 2015→) instead of Naver's ~18-month window
     m = _re.search(r"(\d+)\s*(?:개\s*월|달)", t) or _re.search(r"(\d+)\s*mo(?:n(?:th?e?s?)?)?\b", t)
     if m:
-        n = max(1, min(int(m.group(1)), 18))
+        n = max(1, min(int(m.group(1)), 132))
         return _back(n), n, f"최근 {n}개월", f"last {n} months"
     m = _re.search(r"(\d+)\s*년", t) or _re.search(r"(\d+)\s*(?:years?|yrs?)\b", t)
     if m:
-        n = max(1, min(int(m.group(1)) * 12, 18))
+        n = max(1, min(int(m.group(1)) * 12, 132))
         return _back(n), n, f"최근 {n // 12}년" if n % 12 == 0 else f"최근 {n}개월", \
             f"last {n // 12} year(s)" if n % 12 == 0 else f"last {n} months"
     if _re.search(r"반\s*년|half\s*(?:a\s*)?year", t):
@@ -1828,9 +1830,11 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
         _en = True
     cut_iso = cutoff.isoformat()
     sections = []
+    _src_lbl = None
     for code, name in stocks[:3]:
         try:
-            rows = naver_stock.daily_history(code, days=min(400, months * 23 + 15))
+            from services.price_history import rows as _ph_rows
+            rows, _src_lbl = _ph_rows(db, code, min(2900, months * 23 + 15))
         except Exception as e:
             log.warning(f"period stats {code} failed: {str(e)[:120]}")
             rows = []
@@ -1922,10 +1926,12 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
     if not sections:
         return None
     out = "\n\n---\n\n".join(sections)
-    if months >= 18:
-        out += ("\n\n※ 무료 일봉 데이터는 약 18개월까지만 제공되어 그 범위 내에서 계산했습니다."
-                if not _en else
-                "\n\n※ Free daily data covers ~18 months, so the figures are computed within that range.")
+    out += (f"\n\n📦 {'Source' if _en else '데이터 출처'}: "
+            + (_src_lbl or ("네이버" if not _en else "Naver"))
+            + (" — our own collected daily data (2015~), Naver only for the freshest sessions"
+               if _en and _src_lbl and "자체" in _src_lbl else
+               " — 우리 서버가 수집한 일봉(2015~) 기준, 최신 1~2일만 네이버 보충"
+               if _src_lbl and "자체" in _src_lbl else ""))
     return out
 
 
