@@ -355,6 +355,26 @@ function LiveChart({ bars, marks, focus, off = 0 }:
   return <div ref={ref} style={{ width: "100%", height: 320 }} />;
 }
 
+// 🛡 SAFE BOX (boss 2026-08-25: "Application error: a client-side exception
+// has occurred" - one broken panel must never blank the whole page): a React
+// error boundary that renders a small notice instead of crashing the app.
+class SafeBox extends React.Component<{ children?: React.ReactNode; label?: string },
+  { broken: boolean }> {
+  constructor(props: { children?: React.ReactNode; label?: string }) {
+    super(props);
+    this.state = { broken: false };
+  }
+  static getDerivedStateFromError() { return { broken: true }; }
+  render() {
+    if (this.state.broken) {
+      return <div className="mt-2 px-3 py-1 rounded border text-[10.5px]"
+        style={{ borderColor: "#b8860b", color: "#b8860b" }}>
+        ⚠ {this.props.label || "panel"} error — the rest of the page keeps working (hard-refresh to retry)</div>;
+    }
+    return this.props.children as React.ReactNode;
+  }
+}
+
 // 🔄 THE VISIBLE HEARTBEAT (boss 2026-08-25: "show the process that every 20
 // sec is rechecking — real-time, interactive"): a live monitor of the rank
 // logger — countdown to the next re-check, and a feed where every completed
@@ -1606,6 +1626,7 @@ export default function LiveDeskPage() {
                         contribution summing to the total, then every group's
                         own sub-checks */}
                     {pickRow === r.code && r.groups && (() => {
+                      try {
                       const c9 = r.cats as { market?: number | null; issue?: number | null;
                         stock_sel?: number | null; exec?: number | null; avg?: number | null } | undefined;
                       const det9 = (r as unknown as { detail?: Record<string,
@@ -1722,6 +1743,7 @@ export default function LiveDeskPage() {
                           </div>
                         </td></tr>
                       );
+                      } catch { return null; }
                     })()}
                     {/* THE OPEN CALCULATION (boss 2026-08-25: "clicking each
                         column shows the sub-checks with the actual calculation
@@ -1885,8 +1907,8 @@ export default function LiveDeskPage() {
       {/* SEMI-AUTO control + pending suggestions (boss 2026-08-25: "Auto trades by the
           100-checklist recommendation; in Semi-auto it suggests and the final click is
           human"). SELLs/stops always execute; the six always auto-trade. */}
-      {deskView === "reco" && <RecoLiveCheckPanel t={t} lang={lang} />}
-      {deskView === "reco" && <RecoTradeModePanel t={t} />}
+      {deskView === "reco" && <SafeBox label="live-check"><RecoLiveCheckPanel t={t} lang={lang} /></SafeBox>}
+      {deskView === "reco" && <SafeBox label="auto/semi"><RecoTradeModePanel t={t} /></SafeBox>}
       {/* GO/NO-GO board removed at the boss's order (2026-08-25) — code preserved. */}
       {/* THE ALGORITHM CHOICE, its own bar above the panel (boss 2026-08-11: it was
           buried under the history table inside the toolbar and unreachable) */}
