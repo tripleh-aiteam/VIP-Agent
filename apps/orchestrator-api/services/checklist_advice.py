@@ -152,27 +152,48 @@ def _buy(db, code: str, name: str, en: bool) -> dict:
                          else f"News judge (Qwen): {_sc:+d} (range −3~+3)")
     except Exception:
         pass
-    # ---- verdict from the checklist, zone and news — deterministic
+    # ---- the THREE GATES, shown as the boss stated them (2026-08-25: "if score is
+    # normal and if not in the selling zone and no bad news it should say final
+    # decision as a buy"): score ≥55 · not the selling zone · no bad news
+    _news_sc = None
+    try:
+        _news_sc = int(re.search(r"([+-]?\d+)", news_line or "").group(1)) if news_line else None
+    except Exception:
+        _news_sc = None
+    g_score = pct is not None and pct >= 55
+    g_zone = not (z and z["zone"] == "sell")
+    g_news = _news_sc is None or _news_sc > -2
+    _zp = f"연중 {z['pos']}%" if z else "확인 불가"
+    _zp_en = f"{z['pos']}% of year" if z else "unknown"
+    gates_ko = (f"{'✅' if g_score else '❌'} 점수 {'정상' if g_score else '미달'}"
+                f"({pct if pct is not None else '?'}% {'≥' if g_score else '<'} 55) · "
+                f"{'✅' if g_zone else '❌'} 매도구간 {'아님' if g_zone else '⚠️ 매도구간'}({_zp}) · "
+                f"{'✅' if g_news else '❌'} 악재 {'없음' if g_news else '있음'}"
+                f"(뉴스 {_news_sc:+d})" if _news_sc is not None else
+                f"{'✅' if g_score else '❌'} 점수 {'정상' if g_score else '미달'}"
+                f"({pct if pct is not None else '?'}% {'≥' if g_score else '<'} 55) · "
+                f"{'✅' if g_zone else '❌'} 매도구간 {'아님' if g_zone else '⚠️ 매도구간'}({_zp}) · "
+                f"✅ 악재 없음(수집 뉴스 없음)")
+    gates_en = (f"{'✅' if g_score else '❌'} score {'OK' if g_score else 'below bar'}"
+                f"({pct if pct is not None else '?'}% {'≥' if g_score else '<'} 55) · "
+                f"{'✅' if g_zone else '❌'} {'not the selling zone' if g_zone else 'IN the selling zone'}({_zp_en}) · "
+                + (f"{'✅' if g_news else '❌'} {'no bad news' if g_news else 'bad news'}(news {_news_sc:+d})"
+                   if _news_sc is not None else "✅ no bad news (none collected)"))
     if breakers:
-        verdict = ("🚫 **매수 금지** — 결격 사유가 있습니다" if not en
-                   else "🚫 **DO NOT BUY** — deal-breakers present")
+        verdict = (f"{gates_ko}\n🚫 **최종 판단: 매수 금지** — 결격 사유가 있습니다" if not en
+                   else f"{gates_en}\n🚫 **FINAL DECISION: DO NOT BUY** — deal-breakers present")
         picked = False
-    elif z and z["zone"] == "sell":
-        verdict = ("⚠️ **지금은 매수 보류** — 연중 고점권(매도구간)이라 신규 매수는 쫓아가지 않습니다"
-                   if not en else
-                   "⚠️ **WAIT** — it sits in the SELLING zone (year high area); we don't chase new buys there")
-        picked = False
-    elif pct is not None and pct >= 55:
-        _zx = (" + 매수구간(연중 바닥권)이라 법칙상 최적 자리입니다" if (z and z["zone"] == "buy") else "")
-        verdict = ((f"✅ **매수 가능** — 체크리스트 {pct}% 통과{_zx}") if not en
-                   else (f"✅ **OK TO BUY** — passes the checklist at {pct}%"
-                         + (" + it sits in the BUYING zone (year bottom), the law's best spot"
-                            if (z and z["zone"] == "buy") else "")))
+    elif g_score and g_zone and g_news:
+        _zx = (" (매수구간 — 법칙상 최적 자리)" if (z and z["zone"] == "buy") else "")
+        verdict = ((f"{gates_ko}\n✅ **최종 판단: 매수**{_zx}") if not en
+                   else (f"{gates_en}\n✅ **FINAL DECISION: BUY**"
+                         + (" (buying zone — the law's best spot)" if (z and z["zone"] == "buy") else "")))
         picked = True
     else:
-        verdict = ((f"⚠️ **대기 추천** — 체크리스트 {pct if pct is not None else '?'}%로 기준(55%) 미달")
-                   if not en else
-                   (f"⚠️ **WAIT** — checklist {pct if pct is not None else '?'}% is below the 55% bar"))
+        _why = ("매도구간" if not g_zone else "점수 미달" if not g_score else "악재 뉴스")
+        _why_en = ("the selling zone" if not g_zone else "the score" if not g_score else "bad news")
+        verdict = ((f"{gates_ko}\n⚠️ **최종 판단: 대기** — {_why} 때문에 지금은 사지 않습니다") if not en
+                   else (f"{gates_en}\n⚠️ **FINAL DECISION: WAIT** — {_why_en} blocks the buy for now"))
         picked = False
     # worst failing stock items (why)
     fails = [it for it in (st.get("items") or []) if it.get("ok") is False][:3]
@@ -205,13 +226,18 @@ def _buy(db, code: str, name: str, en: bool) -> dict:
                   + f" · recent candles {_t3}"))
     L.append("")
     if picked and z and z.get("cur"):
+        # the smart-assistant OFFER (boss 2026-08-25: "then as a smart people it
+        # should say do you wanna help to buy") — "네" opens the order confirmation
         try:
-            from services.chat_trade import advise_qty, budget
+            from services.chat_trade import advise_qty, budget, stash_offer
             q = advise_qty(z["cur"])
-            L.append((f"🧾 주문하려면: **\"{name} 매수\"** — 추천 수량 {q:,}주(예산 ₩{budget():,.0f} 기준), "
-                      f"확인 후 \"네\"로 체결됩니다.") if not en else
-                     (f"🧾 To order: say **\"buy {name}\"** — advised size {q:,} shares "
-                      f"(₩{budget():,.0f} budget); confirm with \"yes\"."))
+            stash_offer(code, name, en)
+            L.append((f"🤝 **매수 도와드릴까요?** \"네\" 하시면 {q:,}주(예산 ₩{budget():,.0f} 기준) "
+                      f"주문 확인을 바로 띄워드립니다 — 수량을 바꾸려면 \"{name} 10주 매수\"처럼 말씀하세요.")
+                     if not en else
+                     (f"🤝 **Want me to help you buy?** Say \"yes\" and I'll bring up the order "
+                      f"confirmation for {q:,} shares (₩{budget():,.0f} budget) — or say "
+                      f"\"buy {name} 10 shares\" for a custom size."))
         except Exception:
             pass
     L.append((f"📋 [전체 100문항 근거 🔍](evidence:{code}) · [차트 보기](chart:{code})" if not en
@@ -230,9 +256,20 @@ def _buy(db, code: str, name: str, en: bool) -> dict:
                 groups = row.get("groups")
         except Exception:
             pass
-        proc = {"market": [{"no": it.get("no"), "ok": it.get("ok"), "q": it.get("q"),
+        proc = {"mode": "advice",
+                "market": [{"no": it.get("no"), "ok": it.get("ok"), "q": it.get("q"),
                             "q_en": it.get("q_en"), "detail": it.get("detail")}
                            for it in (mk.get("items") or [])],
+                # the stock's OWN checked items — the real 100-item walk the boss
+                # wants to WATCH happening (2026-08-25: "show real process in the
+                # chat that our agent is checking 100 checklist")
+                "stock_items": [{"no": it.get("no"), "ok": it.get("ok"), "q": it.get("q"),
+                                 "q_en": it.get("q_en"), "detail": it.get("detail")}
+                                for it in (st.get("items") or [])],
+                "zone": ({"pos": z.get("pos"), "zone": z.get("zone")} if z else None),
+                "news": _news_sc,
+                "verdict": ("매수" if picked else ("매수 금지" if breakers else "대기")),
+                "verdict_en": ("BUY" if picked else ("DO NOT BUY" if breakers else "WAIT")),
                 "candidates": [{"code": code, "name": name, "score": score, "groups": groups}],
                 "picked": [code] if picked else [], "n": 1}
     except Exception:

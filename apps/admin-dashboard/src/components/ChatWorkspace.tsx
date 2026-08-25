@@ -35,7 +35,7 @@ import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 // Bump on every user-facing chat-UI change — rendered as a tiny badge above the
 // composer so a stale browser tab is diagnosable at a glance.
-const UI_BUILD = "ui v08.25-15";
+const UI_BUILD = "ui v08.25-16";
 
 // ── Lightweight markdown renderer (no deps) ───────────────────────────────
 // Renders GitHub-flavored tables, **bold**, `code`, bullet lists and line
@@ -184,9 +184,13 @@ interface AgentResponse {
   action?: { type: string; to?: string; external?: boolean; command?: string };
   proposed_action?: { confirm_text?: string; tool?: string; args?: Record<string, unknown> };
   suggestions?: string[];
-  // checklist_reco: every candidate's real scores → drives the live checking simulation
-  process?: { market?: unknown[]; candidates?: { code: string; name: string; score: number;
-              groups?: Record<string, number> }[]; picked?: string[]; n?: number };
+  // checklist_reco: every candidate's real scores → drives the live checking simulation.
+  // mode:"advice" (checklist_advice) adds the stock's own checked items + zone + news
+  // so the chat can SHOW the real 100-item walk behind a buy verdict (boss 2026-08-25).
+  process?: { mode?: string; market?: unknown[]; candidates?: { code: string; name: string; score: number;
+              groups?: Record<string, number> }[]; picked?: string[]; n?: number;
+              stock_items?: unknown[]; zone?: { pos?: number; zone?: string } | null;
+              news?: number | null; verdict?: string; verdict_en?: string };
   // history answers: which servers the data came from (drives the animated fetch view)
   datasource?: { steps: { tier: string; ok: boolean; ms: number; rows: number; note?: string }[];
                  source?: string; en?: boolean };
@@ -623,6 +627,83 @@ function ChecklistSimulation({ process, ts }: { process: NonNullable<AgentRespon
               {String(ci + 1).padStart(2, " ")}. {c2.name} — {c2.score}{picked.includes(c2.code) ? " ★ 선정" : ""}
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ADVICE INVESTIGATION (boss 2026-08-25: "show real process in the chat that our
+// agent is checking 100 checklist and depending on this checklist, buying/selling
+// zone, news, then it should tell"): steps through the REAL market items, then the
+// stock's own checked items one by one, then the daily-chart zone, then the news
+// judge — and lands on the final decision. All lines are the backend's real checks.
+type SimItem = { no?: number; ok?: boolean | null; q?: string; q_en?: string; detail?: string };
+const simMark = (ok?: boolean | null) => (ok === true ? "✅" : ok === false ? "❌" : "❓");
+function AdviceSimulation({ process, ts }: { process: NonNullable<AgentResponse["process"]>; ts: number }) {
+  const mkt = (process.market || []) as SimItem[];
+  const stk = (process.stock_items || []) as SimItem[];
+  const total = mkt.length + stk.length + 2;   // + zone step + news step
+  const fresh = !_simDone.has(ts) && Date.now() - ts < 20000;
+  const [i, setI] = useState(fresh ? 0 : total);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!fresh) { setI(total); return; }
+    _simDone.add(ts);
+    const timer = setInterval(() => setI(v => {
+      if (v + 1 >= total) { clearInterval(timer); return total; }
+      return v + 1;
+    }), 100);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ts]);
+  if (!mkt.length && !stk.length) return null;
+  const running = i < total;
+  const zoneLabel = process.zone
+    ? `연중 ${process.zone.pos}% — ${process.zone.zone === "buy" ? "🟢 매수구간" : process.zone.zone === "sell" ? "🔴 매도구간" : "중간 구간"}`
+    : "데이터 부족";
+  const newsLabel = process.news === null || process.news === undefined
+    ? "수집된 특이 뉴스 없음" : `Qwen 판정 ${process.news >= 0 ? "+" : ""}${process.news} (범위 −3~+3)`;
+  let phase = ""; let line = "";
+  if (i < mkt.length) {
+    const it = mkt[i];
+    phase = `1/4 시장 체크… #${it?.no} (${i + 1}/${mkt.length})`;
+    line = `#${it?.no} ${it?.q || ""} — ${simMark(it?.ok)}`;
+  } else if (i < mkt.length + stk.length) {
+    const it = stk[i - mkt.length];
+    phase = `2/4 종목 체크… #${it?.no} (${i - mkt.length + 1}/${stk.length})`;
+    line = `#${it?.no} ${it?.q || ""} — ${simMark(it?.ok)}`;
+  } else if (i === mkt.length + stk.length) {
+    phase = "3/4 일봉 매수/매도구간 확인…";
+    line = zoneLabel;
+  } else {
+    phase = "4/4 뉴스 판정 확인…";
+    line = newsLabel;
+  }
+  return (
+    <div className="mb-2 rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-2 text-[13px]">
+      <div className="flex items-center gap-2 font-semibold text-indigo-800">
+        {running ? <span className="animate-pulse">🔎</span> : "✅"}
+        {running
+          ? <>{phase}</>
+          : <>100문항 + 구간 + 뉴스 점검 완료 → 최종 판단: <b>{process.verdict || "완료"}</b></>}
+        {!running && (
+          <button onClick={() => setOpen(!open)}
+            className="ml-auto text-[11.5px] text-indigo-600 underline">{open ? "접기 ▲" : "전 항목 결과 보기 ▼"}</button>
+        )}
+      </div>
+      {running && (
+        <div className="mt-1 truncate font-mono text-[12.5px] text-gray-700">{line}</div>
+      )}
+      {!running && open && (
+        <div className="mt-1.5 max-h-64 overflow-y-auto font-mono text-[12px] leading-5 text-gray-700">
+          <div className="font-bold text-indigo-700">시장 체크 (#11~40)</div>
+          {mkt.map(it => <div key={`m${it.no}`}>{simMark(it.ok)} #{it.no} {it.q}{it.detail ? ` — ${String(it.detail).slice(0, 60)}` : ""}</div>)}
+          <div className="mt-1 font-bold text-indigo-700">종목 체크 (#41~100)</div>
+          {stk.map(it => <div key={`s${it.no}`}>{simMark(it.ok)} #{it.no} {it.q}{it.detail ? ` — ${String(it.detail).slice(0, 60)}` : ""}</div>)}
+          <div className="mt-1 font-bold text-indigo-700">구간 · 뉴스</div>
+          <div>📊 {zoneLabel}</div>
+          <div>📰 {newsLabel}</div>
         </div>
       )}
     </div>
@@ -1503,7 +1584,9 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                       </div>
                       <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-md px-4 py-3 text-[15px] leading-relaxed text-gray-900 shadow-sm w-full">
                         {t.datasource && <DataSourceTrace ds={t.datasource} ts={t.ts} />}
-                        {t.process && <ChecklistSimulation process={t.process} ts={t.ts} />}
+                        {t.process && (t.process.mode === "advice"
+                          ? <AdviceSimulation process={t.process} ts={t.ts} />
+                          : <ChecklistSimulation process={t.process} ts={t.ts} />)}
                         <RevealMarkdown text={t.text} ts={t.ts} />
                         {(t.intent || t.tool_used) && (
                           <div className="text-[10px] text-gray-400 mt-2 pt-2 border-t border-gray-100">

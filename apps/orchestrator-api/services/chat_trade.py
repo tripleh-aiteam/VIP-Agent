@@ -114,6 +114,13 @@ def _position_qty(db, code: str) -> int:
         return 0
 
 
+def stash_offer(code: str, name: str, en: bool) -> None:
+    """A BUY verdict's '도와드릴까요?' offer — the next '네' opens the order preview
+    (which then needs its own '네' to execute; money keeps its two-step gate)."""
+    _PENDING.clear()
+    _PENDING.update({"offer": True, "code": code, "name": name, "ts": time.time(), "en": en})
+
+
 def build_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
     cmd = parse(transcript)
     if not cmd:
@@ -122,7 +129,13 @@ def build_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
     if not en and not re.search(r"[가-힣]", transcript or "") \
             and re.search(r"[a-zA-Z]", transcript or ""):
         en = True
-    code, name, side = cmd["code"], cmd["name"], cmd["side"]
+    return _make_preview(db, cmd["code"], cmd["name"], cmd["side"], cmd["qty"],
+                         cmd["all_"], en)
+
+
+def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
+                  all_: bool, en: bool) -> Optional[str]:
+    cmd = {"code": code, "name": name, "side": side, "qty": qty_asked, "all_": all_}
     from services.paper_desk import BUY_COST_PCT, SELL_COST_PCT, _live_price
     px, kw_name = _live_price(code)
     if px is None:
@@ -198,6 +211,14 @@ def finish(db, word: str) -> Optional[str]:
     p = dict(_PENDING)
     _PENDING.clear()
     en = bool(p.get("en"))
+    # the advice lane's OFFER ("매수 도와드릴까요?"): "네" opens the real order
+    # preview (a fresh pending), "아니요" just drops it — nothing was ordered yet
+    if p.get("offer"):
+        if word == "no":
+            return ("알겠습니다 — 주문 없이 두겠습니다. 언제든 \"{n} 매수\"라고 말씀하세요."
+                    .format(n=p["name"]) if not en else
+                    f"Understood — no order placed. Say \"buy {p['name']}\" anytime.")
+        return _make_preview(db, p["code"], p["name"], "BUY", None, False, en)
     side_ko = "매수" if p["side"] == "BUY" else "매도"
     if word == "no":
         return (f"🚫 취소했습니다 — {side_ko} {p['name']} {p['qty']:,}주 주문은 실행되지 않았습니다."
