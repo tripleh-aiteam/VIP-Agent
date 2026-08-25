@@ -869,6 +869,17 @@ def live_daily_chart(code: str = Query(...)):
                       "bottom_20": lo + (hi - lo) * 0.20}}
 
 
+@router.get("/live/reco-rank-at")
+def live_reco_rank_at(code: str = Query(...), t: str = Query(...),
+                      day: str = Query("")):
+    """WHY THIS STOCK, WHY THIS TIME (boss 2026-08-25, menu 2): the recorded
+    checklist rank and score of one stock at one moment - the record every
+    reco-desk buy is judged and explained by."""
+    from services.reco_rank_log import rank_at
+    r = rank_at(_resolve(code), (t or "")[:8], day or None)
+    return {"ok": bool(r), **(r or {})}
+
+
 @router.get("/live/news-stamps")
 def live_news_stamps(code: str = Query(...), stamp: str = Query("")):
     """THE EVIDENCE BEHIND THE RULING (boss 2026-08-24: "I do not see which
@@ -1024,9 +1035,13 @@ def _fam_compute(family: str, tick: int, period: int, day: str,
     for v in DESK:
         if family != "all" and v.get("family", "old") != family:
             continue
+        _sixset9 = {"000660", "005930", "017670", "034020", "035420", "042660"}
+        _codeset9 = {c for c in (codes or "").split(",") if c}
+        _rg9 = bool(_codeset9) and _codeset9 != _sixset9
         d = trades(v["id"], tick=tick, period=max(0, min(int(period or 0), 600)),
                    bars=10, limit=500, day=day, frm=frm, to=to,
-                   use_gate=bool(gate), allow_fallback=bool(auto), codes=codes)
+                   use_gate=bool(gate), allow_fallback=bool(auto), codes=codes,
+                   rank_gate=_rg9)
         if not d.get("ok"):
             continue
         for h in (d.get("holding") or []):
@@ -1939,3 +1954,13 @@ def auto_focus_detail(code: str = Query(...), lang: str = Query("ko"),
     return {"code": str(code).zfill(6),
             "reply": d.get("reasoning_en" if str(lang).lower().startswith("en")
                            else "reasoning_ko") or ""}
+
+
+# THE RECO RANK LOGGER rides the server's own lifetime (boss 2026-08-25,
+# menu 2's living top-3): it polls our own daily-pick endpoint - zero new
+# Kiwoom load - and records the ranking timeline the reco engine trades by.
+try:
+    from services.reco_rank_log import start_logger as _srl9
+    _srl9()
+except Exception:
+    pass

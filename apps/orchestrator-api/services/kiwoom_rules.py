@@ -793,18 +793,35 @@ def shares_for(entry: float, budget: int) -> int:
     return max(1, int(budget // max(1.0, entry)))
 
 
+def _rank_win9(code: str, day: str = ""):
+    try:
+        from services.reco_rank_log import windows_for
+        return windows_for(code, day or None)
+    except Exception:
+        return None
+
+
+def _rank_t09(day: str = ""):
+    try:
+        from services.reco_rank_log import snapshots
+        sn = snapshots(day or None)
+        return sn[0].get("t") if sn else None
+    except Exception:
+        return None
+
+
 def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
            bars: int = 2500, limit: int = 300, around: int = -1,
            budget: int = 0, day: str = "", frm: str = "", to: str = "",
            use_gate: bool = True, allow_fallback: bool = True,
-           codes: str = "") -> dict[str, Any]:
+           codes: str = "", rank_gate: bool = False) -> dict[str, Any]:
     """One rule's trades on the real tape, with the chart and the evidence per trade."""
     v = next((x for x in DESK if x["id"] == vid), None)
     if v is None:
         return {"ok": False, "error": f"unknown rule {vid}"}
     import time as _t
     day, _auto = _auto_day(day) if allow_fallback else (day, False)
-    _tk2 = (vid, tick, period, code, bars, limit, around, budget, day, frm, to, use_gate, codes)
+    _tk2 = (vid, tick, period, code, bars, limit, around, budget, day, frm, to, use_gate, codes, rank_gate)
     _hit2 = _TRADES_TTL.get(_tk2)
     if _hit2 and _t.time() - _hit2[0] < 20.0:
         return _hit2[1]
@@ -852,6 +869,12 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                                                  cs[-1]["close"] if cs else 0),
                          "fuel": _fuel(c_code, cs),
                          "news_risk": _news_risk(c_code),
+                         # THE LIVING TOP-3 (boss 2026-08-25, menu 2): the
+                         # reco desk's entries replay against the recorded
+                         # rank timeline; None = no log (gate off)
+                         "rank_win": (_rank_win9(c_code, day) if rank_gate
+                                      else None),
+                         "rank_t0": (_rank_t09(day) if rank_gate else None),
                          "times": [c["hhmm"] for c in cs],
                          "vols": [float(c.get("vol") or 0) for c in cs],
                          "ctx": daily_ctx(c_code, d or _kd0()),

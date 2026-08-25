@@ -1072,6 +1072,23 @@ export default function LiveDeskPage() {
     return () => { on9 = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [famExp, fam]);
+  // WHY THIS STOCK, WHY THIS TIME (boss 2026-08-25, menu 2): when a reco-desk
+  // trade's story expands, fetch its recorded checklist rank at the buy moment
+  const [rankAt9, setRankAt9] = useState<{ ok?: boolean; t?: string; rank?: number | null;
+    of?: number; avg?: number | null; in_top?: boolean;
+    top?: { code: string; name: string; avg?: number }[] } | null>(null);
+  useEffect(() => {
+    setRankAt9(null);
+    if (deskView !== "reco" || !famExp || !fam) return;
+    const r9 = fam.rows.find((r) => `${r.rule}-${r.idx}` === famExp);
+    if (!r9?.code || !r9.buy_t) return;
+    let on9 = true;
+    api<typeof rankAt9>(`/paper-desk/live/reco-rank-at?code=${r9.code}&t=${encodeURIComponent(r9.buy_t.slice(0, 8))}`)
+      .then((d) => { if (on9) setRankAt9(d?.ok ? d : null); })
+      .catch(() => {});
+    return () => { on9 = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [famExp, fam, deskView]);
   const openFamTrade = useCallback((r: FamRow, side: "b" | "s") => {
     setFocusSide(side);
     setSel(r.rule);
@@ -2374,6 +2391,21 @@ export default function LiveDeskPage() {
                               style={{ background: "rgba(106,27,154,0.05)", color: "var(--text-secondary)" }}>
                               <div><b style={{ color: "#6a1b9a" }}>{lang === "ko" ? r.rule_ko : r.rule_en}</b></div>
                               <div className="mt-1"><b style={{ color: RED }}>{t("왜 샀나 — ", "why it bought — ")}</b>{lang === "ko" ? ex.buyKo : ex.buyEn}</div>
+                              {deskView === "reco" && rankAt9 && famExp === `${r.rule}-${r.idx}` && (
+                                <div className="mt-0.5 pl-2" style={{ borderLeft: "2px solid #e65100" }}>
+                                  <b style={{ color: "#e65100" }}>{t("왜 이 종목, 왜 이 시각 — ", "why this stock, why this time — ")}</b>
+                                  {rankAt9.rank != null
+                                    ? t(`매수 시각(${rankAt9.t}) 체크리스트 순위 #${rankAt9.rank}/${rankAt9.of} · 평균 ${rankAt9.avg ?? "—"}점${rankAt9.in_top ? " → 톱3 자격으로 매수 허용" : " (톱3 밖 — 순위 기록 이전의 유예 매수)"}`,
+                                        `at ${rankAt9.t} it ranked #${rankAt9.rank}/${rankAt9.of} on the checklist, avg ${rankAt9.avg ?? "—"}${rankAt9.in_top ? " → in the top-3, entry allowed" : " (outside top-3 - a grace entry from before logging began)"}`)
+                                    : t("이 시각의 순위 기록 없음 (기록 시작 전 매수 — 유예)", "no rank record at this time (bought before logging began - grace)")}
+                                  {rankAt9.top && rankAt9.top.length > 0 && (
+                                    <span className="ml-1 opacity-60">
+                                      {t("· 그 순간의 톱3: ", "· the top-3 then: ")}
+                                      {rankAt9.top.map((x9) => `${x9.name} ${x9.avg ?? ""}`).join(" · ")}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                               {(() => { const js9 = judgeStory(r.judge);
                                 return js9 ? (
                                   <div className="mt-0.5 pl-2" style={{ borderLeft: "2px solid #2e7d32" }}>

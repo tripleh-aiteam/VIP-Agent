@@ -1374,6 +1374,17 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             elif v.get("surrender") and stop_ct[si] >= v["surrender"]:
                 pass       # this stock's day is broken - doors stay shut until
                            # tomorrow (exits above run untouched)
+            elif (s.get("rank_win") is not None and _now
+                  and not (str(_now) < (s.get("rank_t0") or "00:00:00")
+                           or any(f_ <= str(_now) <= t_
+                                  for f_, t_ in s["rank_win"]))):
+                pass       # THE LIVING TOP-3 (boss 2026-08-25 12:3x, menu 2:
+                           # "check every few seconds and buy using the
+                           # checklist - not only one time"): on the reco desk
+                           # a stock may only ENTER while it stood in the
+                           # checklist's top-N at that moment, per the recorded
+                           # rank timeline. Times before the day's first
+                           # snapshot get grace; exits are never gated.
             elif (v.get("ctx") and s.get("daily_pos") is not None
                   and v["ctx"].get("no_buy_top") is not None
                   and s["daily_pos"] >= v["ctx"]["no_buy_top"]):
