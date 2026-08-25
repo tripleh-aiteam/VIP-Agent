@@ -1640,7 +1640,7 @@ export default function LiveDeskPage() {
                       ) : (
                         // AVERAGE SCORE (boss 2026-08-25: the four checklist
                         // categories, each scored, divided by their count)
-                        {(() => {
+                        (() => {
                           const base9 = (r.cats as { avg?: number } | undefined)?.avg
                             ?? (r.live_total !== undefined ? r.live_total : r.score);
                           const live9 = rankHead9?.rows?.find((x) => x.code === r.code)?.avg;
@@ -1660,7 +1660,7 @@ export default function LiveDeskPage() {
                                   {adj9 > 0 ? "▲" : "▼"}</span>)}
                             </td>
                           );
-                        })()}
+                        })()
                       )}
                       {(pickDetail
                         ? (["trend","liquidity","flexibility","levels","momentum","flows"] as const)

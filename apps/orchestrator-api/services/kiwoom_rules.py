@@ -834,8 +834,14 @@ def _rank_t09(day: str = "", code: str = ""):
         t0 = sn[0].get("t") if sn else None
         if code:
             try:
-                from services.daily_pick import load_picks
-                picks = {c for c, _n in (load_picks() or [])}
+                from services.daily_pick import load_picks, reco_n
+                # ONLY the morning's actual top-N recommendation gets grace.
+                # Since the 20-universe, the saved picks file carries the six
+                # core stocks too (they sit in the checklist board), so the
+                # full list is NOT "the selection" (boss 2026-08-25 14:2x:
+                # SK하이닉스 traded in menu 2 all morning through this hole).
+                _n9 = max(1, min(int(reco_n()), 10))
+                picks = {c for c, _n in (load_picks() or [])[:_n9]}
                 if code not in picks:
                     return "00:00:00"       # no grace - top-N windows only
             except Exception:
