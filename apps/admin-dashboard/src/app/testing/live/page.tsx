@@ -2221,9 +2221,25 @@ export default function LiveDeskPage() {
                     className="px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)]"
                     style={{ borderColor: fCode ? "#6a1b9a" : "var(--border-default)" }}>
                     <option value="">{t("모든 종목", "all stocks")}</option>
-                    {[["000660","SK하이닉스"],["005930","삼성전자"],["035420","NAVER"],
-                      ["017670","SK텔레콤"],["042660","한화오션"],["034020","두산에너빌리티"]]
-                      .map(([c2, n2]) => <option key={c2} value={c2}>{n2}</option>)}
+                    {(() => {
+                      // the filter lists THIS desk's stocks plus anything that
+                      // actually traded today (boss 2026-08-25: menu 2's
+                      // filter still showed only the six - today's trading
+                      // companies were missing)
+                      const opts9 = new Map<string, string>();
+                      if (deskView === "reco") {
+                        (st?.stocks ?? []).forEach((x) => opts9.set(x.code, x.name));
+                      } else {
+                        [["000660","SK하이닉스"],["005930","삼성전자"],["035420","NAVER"],
+                         ["017670","SK텔레콤"],["042660","한화오션"],["034020","두산에너빌리티"]]
+                          .forEach(([c2, n2]) => opts9.set(c2, n2));
+                      }
+                      (fam?.rows ?? []).forEach((r) => {
+                        if (r.code && !opts9.has(r.code)) opts9.set(r.code, r.name || r.code);
+                      });
+                      return Array.from(opts9.entries()).map(([c2, n2]) =>
+                        <option key={c2} value={c2}>{n2}</option>);
+                    })()}
                   </select>
                   <select value={fRes} onChange={(e) => setFRes(e.target.value)}
                     className="px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)]"
