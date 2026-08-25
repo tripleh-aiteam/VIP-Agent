@@ -1116,9 +1116,10 @@ export default function LiveDeskPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deskView, dpick, st]);
-  // reco page defaults to the FULL ranking, all 40 top→down (boss 2026-08-24)
+  // reco page defaults to the FULL ranking, all 40 top→down (boss 2026-08-24);
+  // the live desk never shows the score ranking (boss 2026-08-25)
   useEffect(() => {
-    if (deskView === "reco") setPickAll(true);
+    setPickAll(deskView === "reco");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deskView]);
 
@@ -1256,30 +1257,23 @@ export default function LiveDeskPage() {
               </span>
             )}
             <span className="ml-auto flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-              {/* desk on/off toggles belong to the Live Kiwoom Desk only — the reco page
-                  is a pure score view (boss 2026-08-24) */}
-              {deskView !== "reco" && ([["fixed", t("내 6종목", "my 6 stocks")],
-                 ["score", t("100점 상위 5종목", "top 5 by the 100-point score")]] as const)
-                .map(([m, lab]) => {
-                const cur = (dpick.mode ?? "both") as string;
-                const on = cur === "both" || cur === m;
+              {/* NO score-based controls on the Live Kiwoom Desk (boss 2026-08-25, second
+                  report: this menu is DEDICATED to the fixed six). The single reco
+                  auto-trade switch lives on the reco page; the six are always on. */}
+              {deskView === "reco" && (() => {
+                const recoOn = (dpick.mode ?? "both") === "both";
                 return (
-                <button key={m} disabled={deskBusy} onClick={() => switchDesk(m)}
-                  title={(m === "fixed"
-                    ? t("SK하이닉스 · 삼성전자 · NAVER · SK텔레콤 · 한화오션 · 두산에너빌리티",
-                        "SK하이닉스, 삼성전자, NAVER, SK텔레콤, 한화오션, 두산에너빌리티")
-                    : t("매일 아침 100항목 점수로 다시 뽑는 상위 5종목",
-                        "the top five re-scored by the 100-item checklist every morning"))
-                    + t(" — 눌러서 켜기/끄기 (둘 다 켜면 함께 매매)",
-                        " — click to switch on/off (both on = both trade)")}
-                  className="text-[10px] font-bold px-2 py-0.5 rounded border"
-                  style={on
-                    ? { background: "#1565c0", color: "#fff", borderColor: "#1565c0" }
-                    : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
-                  {on ? "● " : "○ "}{lab}
-                </button>
+                  <button disabled={deskBusy} onClick={() => switchDesk("score")}
+                    title={t("추천 상위 종목 자동매매 켜기/끄기 (내 6종목은 항상 매매)",
+                             "turn the reco picks' auto-trading on/off (my 6 always trade)")}
+                    className="text-[10px] font-bold px-2 py-0.5 rounded border"
+                    style={recoOn
+                      ? { background: "#e65100", color: "#fff", borderColor: "#e65100" }
+                      : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                    {recoOn ? "● " : "○ "}{t("추천 자동매매", "reco auto-trade")}
+                  </button>
                 );
-              })}
+              })()}
               <span className="text-[10.5px] ml-1" style={{ color: "#1565c0" }}>
                 {pickOpen ? t("닫기 ▲", "close ▲") : t("순위 보기 ▼", "see the ranking ▼")}
               </span>
@@ -1335,8 +1329,11 @@ export default function LiveDeskPage() {
                       // order the chatbot recommends (boss 2026-08-24: consistency)
                       ? [...dpick.rows].sort((a, b) =>
                           (b.live_total ?? b.score) - (a.live_total ?? a.score))
-                      : (dpick.picks || []).map((c) => dpick.rows.find((r) => r.code === c))
-                                           .filter(Boolean) as typeof dpick.rows
+                      // desk view: the LIVE desk lists ONLY the six (boss 2026-08-25);
+                      // the reco desk lists its own picks
+                      : deskView === "reco"
+                      ? _recoRows
+                      : (dpick.rows || []).filter((r) => r.pinned)
                    ).map((r, ri) => (
                     <React.Fragment key={r.code}>
                     {pickAll && ri === 0 && (
@@ -1351,8 +1348,9 @@ export default function LiveDeskPage() {
                                                      : "transparent" }}>
                       <td className="px-3 py-1 text-[var(--text-muted)]">{pickAll ? ri + 1 : r.rank}</td>
                       <td className="px-2 font-bold text-[var(--text-primary)]">
-                        {r.by_score ? <span title={t("아침 점수 상위 5", "morning top 5 by score")}
-                          style={{ color: "#e65100" }}>★ </span> : ""}{r.name}</td>
+                        {r.by_score && deskView === "reco"
+                          ? <span title={t("아침 점수 상위", "morning top by score")}
+                              style={{ color: "#e65100" }}>★ </span> : ""}{r.name}</td>
                       {pickDetail ? (
                         <>
                           <td className="text-right px-3 font-extrabold" style={{ color: "#1565c0" }}>{r.score}</td>
@@ -1396,14 +1394,18 @@ export default function LiveDeskPage() {
                 </tbody>
               </table>
               <div className="px-4 py-1.5 border-t text-center" style={{ borderColor: "var(--border-default)" }}>
+                {/* score-view buttons live on the RECO page only (boss 2026-08-25:
+                    the Live Kiwoom Desk is dedicated to the fixed six) */}
+                {deskView === "reco" && (
                 <button onClick={() => setPickAll(!pickAll)}
                   className="text-[10.5px] font-bold px-2.5 py-1 rounded-md border"
                   style={pickAll ? { background: "#1565c0", color: "#fff", borderColor: "#1565c0" }
                                  : { borderColor: "#1565c0", color: "#1565c0" }}>
-                  {pickAll ? t("내 종목만 보기 ▲", "show only my desk ▲")
+                  {pickAll ? t("추천 종목만 보기 ▲", "show only the picks ▲")
                            : t(`100점 체크리스트 순위 보기 (${dpick.rows.length}종목) ▼`,
                                `see the 100-item checklist ranking (${dpick.rows.length} stocks) ▼`)}
                 </button>
+                )}
                 <button onClick={() => { setPickDetail(!pickDetail); setPickCol(""); }}
                   className="ml-2 text-[10.5px] font-bold px-2.5 py-1 rounded-md border"
                   style={pickDetail ? { background: "#00838f", color: "#fff", borderColor: "#00838f" }
