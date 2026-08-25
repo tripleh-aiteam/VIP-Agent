@@ -1480,6 +1480,13 @@ def _requested_history_dates(q: Optional[str]):
                 return ("dates", [_date.fromisoformat(iso)])
             except ValueError:
                 pass
+    # NUMBERLESS "last week / last month" ("what was the price last week" answered with
+    # the CURRENT price — boss 2026-08-25): the range pattern above needs a digit, so
+    # the bare phrases fell straight through to the live-price lane.
+    if _re.search(r"\b(?:last|past)\s+week\b", t) or "지난주" in t or "지난 주" in t:
+        return ("range", 7)
+    if _re.search(r"\b(?:last|past)\s+month\b", t) or "지난달" in t or "지난 달" in t:
+        return ("range", 23)
     if _is_history_range_query(q):
         return ("range", 7)
     iso = _relative_date_iso(q)
