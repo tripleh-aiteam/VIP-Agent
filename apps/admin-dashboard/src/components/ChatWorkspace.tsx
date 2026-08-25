@@ -35,7 +35,7 @@ import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 // Bump on every user-facing chat-UI change — rendered as a tiny badge above the
 // composer so a stale browser tab is diagnosable at a glance.
-const UI_BUILD = "ui v08.25-14";
+const UI_BUILD = "ui v08.25-15";
 
 // ── Lightweight markdown renderer (no deps) ───────────────────────────────
 // Renders GitHub-flavored tables, **bold**, `code`, bullet lists and line
@@ -189,7 +189,7 @@ interface AgentResponse {
               groups?: Record<string, number> }[]; picked?: string[]; n?: number };
   // history answers: which servers the data came from (drives the animated fetch view)
   datasource?: { steps: { tier: string; ok: boolean; ms: number; rows: number; note?: string }[];
-                 source?: string };
+                 source?: string; en?: boolean };
 }
 
 interface Props {
@@ -448,10 +448,15 @@ function RevealMarkdown({ text, ts }: { text: string; ts: number }) {
 // from ANOTHER SERVER, not from the internet — not just with words"). Animates the real
 // tiers the backend tried, with real timings and row counts, ending in a source chip.
 const _dsDone = new Set<number>();
-const _DS_TIERS: Record<string, [string, string]> = {
-  data_pc: ["🖥️", "우리 데이터 서버 (Tailscale 직결 · DESKTOP-P1PIS12)"],
+const _DS_TIERS_KO: Record<string, [string, string]> = {
+  data_pc: ["🖥️", "우리 데이터 서버 (Tailscale 직결)"],
   supabase: ["🗄️", "자체 아카이브 DB (2015~ 수집분)"],
   naver: ["🌐", "네이버 (인터넷)"],
+};
+const _DS_TIERS_EN: Record<string, [string, string]> = {
+  data_pc: ["🖥️", "our data server (Tailscale direct)"],
+  supabase: ["🗄️", "our archive DB (collected since 2015)"],
+  naver: ["🌐", "Naver (internet)"],
 };
 // Deliberately paced (boss 2026-08-25: "it ends very fast because data collects very
 // fast — use a more visible way"): each server holds a ~1.4s connecting phase with a
@@ -460,7 +465,11 @@ const _DS_TIERS: Record<string, [string, string]> = {
 const _DS_CONNECT_MS = 1400;
 const _DS_COUNT_MS = 900;
 function DataSourceTrace({ ds, ts }: { ds: NonNullable<AgentResponse["datasource"]>; ts: number }) {
-  const steps = ds.steps || [];
+  // SUCCESSFUL sources only (boss 2026-08-25: the '✗ no response → next source' lines
+  // confused people) — failures are silent; the panel shows where data DID come from.
+  const en = !!ds.en;
+  const TIERS = en ? _DS_TIERS_EN : _DS_TIERS_KO;
+  const steps = (ds.steps || []).filter((s) => s.ok);
   const fresh = !_dsDone.has(ts) && Date.now() - ts < 20000;
   // phase: step index i in "connecting" (progress fills) → "result" (count-up) → next
   const [i, setI] = useState(fresh ? 0 : steps.length);
@@ -505,11 +514,12 @@ function DataSourceTrace({ ds, ts }: { ds: NonNullable<AgentResponse["datasource
     <div className="mb-2 rounded-xl border-2 border-teal-300 bg-teal-50/60 px-4 py-3 text-[13px]">
       <div className="font-bold text-teal-900 flex items-center gap-2 text-[14px]">
         {running ? <span className="animate-pulse text-[16px]">📡</span> : <span className="text-[16px]">📡</span>}
-        {running ? "데이터 가져오는 중…" : "데이터 수신 완료"}
+        {running ? (en ? "Fetching data…" : "데이터 가져오는 중…")
+                 : (en ? "Data received" : "데이터 수신 완료")}
       </div>
       <div className="mt-2 space-y-2">
         {steps.map((s, si) => {
-          const [icon, name] = _DS_TIERS[s.tier] || ["📦", s.tier];
+          const [icon, name] = TIERS[s.tier] || ["📦", s.tier];
           const state = si < i ? "done" : si === i && running ? "active" : si === i ? "done" : "waiting";
           if (state === "waiting") return null;
           const isActive = state === "active";
@@ -521,16 +531,12 @@ function DataSourceTrace({ ds, ts }: { ds: NonNullable<AgentResponse["datasource
                 <b className="text-[12.5px] text-gray-800">{name}</b>
                 <span className="ml-auto text-[12px] font-mono">
                   {isActive && !showingCount ? (
-                    <span className="text-teal-700 animate-pulse">연결 중…</span>
-                  ) : s.ok ? (
+                    <span className="text-teal-700 animate-pulse">{en ? "connecting…" : "연결 중…"}</span>
+                  ) : (
                     <b className="text-emerald-700 text-[13px]">
-                      ✓ {(isActive ? countRows : s.rows).toLocaleString()}행
+                      ✓ {(isActive ? countRows : s.rows).toLocaleString()}{en ? " rows" : "행"}
                       {!isActive && ` · ${s.ms.toLocaleString()}ms`}
                     </b>
-                  ) : (
-                    <span className="text-red-500 font-bold">
-                      ✗ {s.note === "depth" ? "보유 기간 부족 → 다음 소스" : "응답 없음 → 다음 소스"}
-                    </span>
                   )}
                 </span>
               </div>
@@ -548,7 +554,9 @@ function DataSourceTrace({ ds, ts }: { ds: NonNullable<AgentResponse["datasource
         <div className="mt-2 flex justify-center">
           <span className={`px-4 py-1.5 rounded-full text-[13px] font-extrabold text-white shadow ${
             ownServer ? "bg-emerald-600" : "bg-gray-500"}`}>
-            {ownServer ? `✓ ${ds.source} — 우리 서버 데이터, 인터넷 아님` : `출처: ${ds.source}`}
+            {ownServer
+              ? (en ? "✓ our server data — not the internet" : "✓ 우리 서버 데이터 — 인터넷 아님")
+              : (en ? `source: ${ds.source}` : `출처: ${ds.source}`)}
           </span>
         </div>
       )}

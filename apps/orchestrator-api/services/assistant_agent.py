@@ -1585,6 +1585,8 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
             rows, _h_src, _tr2 = _phr(db, code, _days)
             if _h_trace is None:
                 _h_trace = _tr2
+                if _h_trace is not None:
+                    _h_trace["en"] = _en
         except Exception as e:
             log.warning(f"vip history {code} failed: {str(e)[:120]}")
             rows = []
@@ -1859,6 +1861,8 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
             rows, _src_lbl, _tr = _ph_rows(db, code, min(2900, months * 23 + 15))
             if _ds_trace is None:
                 _ds_trace = _tr
+                if _ds_trace is not None:
+                    _ds_trace["en"] = _en
         except Exception as e:
             log.warning(f"period stats {code} failed: {str(e)[:120]}")
             rows = []
