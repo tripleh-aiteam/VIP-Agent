@@ -430,64 +430,78 @@ def manage_chat_positions(db) -> list[dict]:
     if not _mkt_open():
         return []
     if not _CHAT_MGR_DDL_DONE["v"]:
+        # PER-LOT (boss 2026-08-26: "I checked in both menus it shows more
+        # than 1%" — the boards measure each chat buy from ITS OWN fill price,
+        # so the manager must too; one buy = one managed lot, its own ladder)
         db.execute(text(
-            "CREATE TABLE IF NOT EXISTS paper_desk_chat_mgr ("
-            "ticker TEXT PRIMARY KEY, base DOUBLE PRECISION, qty0 INT, "
-            "k_up INT DEFAULT 0, updated_at TIMESTAMPTZ DEFAULT now())"))
+            "CREATE TABLE IF NOT EXISTS paper_desk_chat_lots ("
+            "order_id INT PRIMARY KEY, ticker TEXT, base DOUBLE PRECISION, "
+            "qty0 INT, sold_qty INT DEFAULT 0, k_up INT DEFAULT 0, "
+            "done BOOLEAN DEFAULT FALSE, updated_at TIMESTAMPTZ DEFAULT now())"))
         db.commit()
         _CHAT_MGR_DDL_DONE["v"] = True
     fills: list[dict] = []
-    rows = db.execute(text(
-        "SELECT p.ticker, p.name, p.qty, p.avg_price FROM paper_desk_positions p "
-        "WHERE EXISTS (SELECT 1 FROM paper_desk_orders o WHERE o.ticker=p.ticker "
-        "AND o.side='BUY' AND o.source IN ('chat','chatbot'))")).fetchall()
-    live_tk = {r[0] for r in rows}
-    db.execute(text("DELETE FROM paper_desk_chat_mgr WHERE ticker != ALL(:t)"),
-               {"t": list(live_tk) or ["-"]})
-    for tk, nm, qty, avg in rows:
-        qty, avg = int(qty), float(avg)
-        if qty <= 0 or avg <= 0:
+    lots = db.execute(text(
+        "SELECT o.id, o.ticker, o.name, o.qty, o.fill_price FROM paper_desk_orders o "
+        "WHERE o.side='BUY' AND o.status='FILLED' AND o.source IN ('chat','chatbot') "
+        "ORDER BY o.id")).fetchall()
+    for oid, tk, nm, oqty, fpx in lots:
+        if not fpx:
             continue
         st9 = db.execute(text(
-            "SELECT base, qty0, k_up FROM paper_desk_chat_mgr WHERE ticker=:t"),
-            {"t": tk}).first()
-        if st9 is None or abs(float(st9[0]) - avg) / avg > 0.002:
-            # first sight, or the boss bought more (blend moved) → (re)base
+            "SELECT base, qty0, sold_qty, k_up, done FROM paper_desk_chat_lots "
+            "WHERE order_id=:i"), {"i": oid}).first()
+        if st9 is None:
             db.execute(text(
-                "INSERT INTO paper_desk_chat_mgr (ticker, base, qty0, k_up) "
-                "VALUES (:t, :b, :q, 0) ON CONFLICT (ticker) DO UPDATE "
-                "SET base=:b, qty0=:q, k_up=0, updated_at=now()"),
-                {"t": tk, "b": avg, "q": qty})
+                "INSERT INTO paper_desk_chat_lots (order_id, ticker, base, qty0) "
+                "VALUES (:i, :t, :b, :q) ON CONFLICT DO NOTHING"),
+                {"i": oid, "t": tk, "b": float(fpx), "q": int(oqty)})
             db.commit()
-            base, qty0, k_up = avg, qty, 0
+            base, qty0, sold, k_up, done = float(fpx), int(oqty), 0, 0, False
         else:
-            base, qty0, k_up = float(st9[0]), int(st9[1]), int(st9[2])
+            base, qty0, sold, k_up, done = (float(st9[0]), int(st9[1]),
+                                            int(st9[2]), int(st9[3]), bool(st9[4]))
+        if done or sold >= qty0:
+            continue
+        held = int(db.execute(text(
+            "SELECT qty FROM paper_desk_positions WHERE ticker=:t"),
+            {"t": tk}).scalar() or 0)
+        if held <= 0:
+            db.execute(text(
+                "UPDATE paper_desk_chat_lots SET done=TRUE, updated_at=now() "
+                "WHERE order_id=:i"), {"i": oid})
+            db.commit()
+            continue
         px, _src = _live_price(tk)
         if not px:
             continue
-        # −1% guard first: sell everything, management ends for this position
+        remain = min(qty0 - sold, held)
+        # −1% guard (vs THIS lot's own buy price): sell the lot's remainder
         if px <= base * 0.99:
-            r = place_order(db, tk, "SELL", qty, "market",
+            r = place_order(db, tk, "SELL", remain, "market",
                             source="algo2-chat", direct=True)
             if r.get("ok"):
                 fills.append({"ticker": tk, "name": nm, "why": "-1% guard",
-                              "qty": qty, "px": r.get("live_price")})
-                db.execute(text("DELETE FROM paper_desk_chat_mgr WHERE ticker=:t"),
-                           {"t": tk})
+                              "qty": remain, "px": r.get("live_price")})
+                db.execute(text(
+                    "UPDATE paper_desk_chat_lots SET sold_qty=sold_qty+:q, "
+                    "done=TRUE, updated_at=now() WHERE order_id=:i"),
+                    {"q": remain, "i": oid})
                 db.commit()
             continue
-        # +1% ladder rung (알고2 band: arms at +0.85, +1.85, ...)
+        # +1% ladder rung vs the lot's own price (알고2 band +0.85/+1.85/...)
         lvl = base * (1 + ((k_up + 1) * 1.0 - 0.15) / 100)
         if px >= lvl:
-            q9 = min(max(1, int(qty0 * 0.10)), qty)
+            q9 = min(max(1, int(qty0 * 0.10)), remain)
             r = place_order(db, tk, "SELL", q9, "market",
                             source="algo2-chat", direct=True)
             if r.get("ok"):
                 fills.append({"ticker": tk, "name": nm, "why": f"+{k_up + 1}% rung",
                               "qty": q9, "px": r.get("live_price")})
                 db.execute(text(
-                    "UPDATE paper_desk_chat_mgr SET k_up=k_up+1, updated_at=now() "
-                    "WHERE ticker=:t"), {"t": tk})
+                    "UPDATE paper_desk_chat_lots SET sold_qty=sold_qty+:q, "
+                    "k_up=k_up+1, done=(sold_qty+:q >= qty0), updated_at=now() "
+                    "WHERE order_id=:i"), {"q": q9, "i": oid})
                 db.commit()
     return fills
 

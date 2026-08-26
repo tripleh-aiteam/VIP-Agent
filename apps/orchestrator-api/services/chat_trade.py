@@ -146,9 +146,22 @@ def parse(transcript: Optional[str]) -> Optional[dict]:
         except Exception:
             qty = None
     all_ = any(w in tl for w in ("all", "전량", "전부", "모두", "다 팔", "다팔"))
+    # PERCENT sizes (boss 2026-08-26: "can you sell 10% of LG shares?" built a
+    # WHOLE-position confirmation — a % must mean a %; 'half/절반' = 50%)
+    pct = None
+    pm = re.search(r"(\d{1,3})\s*(?:%|퍼센트|프로|percent)", tl)
+    if pm:
+        try:
+            pct = max(1, min(100, int(pm.group(1))))
+        except Exception:
+            pct = None
+    if pct is None and any(w in tl for w in ("half", "절반", "반만", "반 만")):
+        pct = 50
+    if pct is not None:
+        qty = None
     market = "시장가" in tl or "market" in tl
     return {"side": side, "code": code, "name": name, "qty": qty, "all_": all_,
-            "price": price, "market": market}
+            "pct": pct, "price": price, "market": market}
 
 
 def _tick(price: float) -> int:
@@ -328,12 +341,14 @@ def build_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
         en = str(lang or "").lower().startswith("en") or bool(re.search(r"[a-zA-Z]", transcript or ""))
     return _make_preview(db, cmd["code"], cmd["name"], cmd["side"], cmd["qty"],
                          cmd["all_"], en, price_asked=cmd.get("price"),
-                         market_flag=bool(cmd.get("market")))
+                         market_flag=bool(cmd.get("market")),
+                         pct=cmd.get("pct"))
 
 
 def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
                   all_: bool, en: bool, price_asked: Optional[float] = None,
-                  market_flag: bool = False) -> Optional[str]:
+                  market_flag: bool = False,
+                  pct: Optional[int] = None) -> Optional[str]:
     # market-hours gate FIRST — no order form outside the session
     try:
         from services.kiwoom_tape import market_open
@@ -355,7 +370,24 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
             return (f"⚠️ **{name}** 보유 수량이 없습니다 — 팔 것이 없어 주문을 만들지 않았습니다."
                     if not en else
                     f"⚠️ We hold no **{name}** — nothing to sell, so no order was created.")
-        qty = pos if (cmd["all_"] or not cmd["qty"]) else min(cmd["qty"], pos)
+        if pct:
+            qty = max(1, min(pos, round(pos * pct / 100)))
+        elif cmd["all_"]:
+            qty = pos
+        elif cmd["qty"]:
+            qty = min(cmd["qty"], pos)
+        else:
+            # NO size given → ASK, never default to the whole position (boss
+            # 2026-08-26: "it should ask how many % wanna sell or all")
+            _PENDING.clear()
+            _PENDING.update({"offer": True, "side": "SELL", "code": code,
+                             "name": name, "ts": time.time(), "en": en})
+            _save_pending()
+            return (f"🧮 **{name}** {pos:,}주 보유 중입니다 — 얼마나 팔까요?\n"
+                    f"· 예: **\"10%\"** (= {max(1, round(pos * 0.10)):,}주) · \"절반\" · \"30주\" · \"전량\""
+                    if not en else
+                    f"🧮 You hold {pos:,} shares of **{name}** — how much should I sell?\n"
+                    f"· e.g. **\"10%\"** (= {max(1, round(pos * 0.10)):,} sh) · \"half\" · \"30 shares\" · \"all\"")
     else:
         qty = cmd["qty"] or advise_qty(px)
     fee = BUY_COST_PCT if side == "BUY" else SELL_COST_PCT
@@ -508,6 +540,16 @@ def qty_reply(db, transcript: Optional[str]) -> Optional[str]:
     if not _PENDING or time.time() - _PENDING.get("ts", 0) > _TTL:
         return None
     t = (transcript or "").strip().lower()
+    p = dict(_PENDING)
+    # percent / half / all replies while the size question stands
+    pm = re.fullmatch(r"(\d{1,3})\s*(?:%|퍼센트|프로|percent)\s*"
+                      r"(?:please|주세요|요|로|팔아|매도)?[.! ]*", t)
+    if pm or t in ("절반", "반만", "half") or t in ("전량", "전부", "all", "다"):
+        return _make_preview(db, p["code"], p.get("name") or p["code"],
+                             p.get("side") or "BUY", None,
+                             t in ("전량", "전부", "all", "다"), bool(p.get("en")),
+                             pct=(50 if (not pm and t in ("절반", "반만", "half"))
+                                  else (max(1, min(100, int(pm.group(1)))) if pm else None)))
     m = re.fullmatch(r"(\d[\d,]*)\s*(?:주|shares?|share|stocks?|개)?\s*"
                      r"(?:please|주세요|요|로|사줘|매수|매도)?[.! ]*", t)
     if not m:
@@ -516,7 +558,6 @@ def qty_reply(db, transcript: Optional[str]) -> Optional[str]:
         qty = max(1, int(m.group(1).replace(",", "")))
     except Exception:
         return None
-    p = dict(_PENDING)
     return _make_preview(db, p["code"], p.get("name") or p["code"],
                          p.get("side") or "BUY", qty, False, bool(p.get("en")))
 
