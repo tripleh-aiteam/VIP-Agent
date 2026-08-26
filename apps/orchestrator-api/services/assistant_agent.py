@@ -2207,6 +2207,16 @@ def _is_adviceish(transcript: Optional[str]) -> bool:
         return False
 
 
+def _is_statusish(transcript: Optional[str]) -> bool:
+    """'still holding or you already sold out?' belongs to the chat order desk's
+    status answer, not the position/portfolio/analyst lanes (2026-08-26)."""
+    try:
+        from services.chat_trade import is_status_q
+        return is_status_q(transcript)
+    except Exception:
+        return False
+
+
 def _is_cancelish(transcript: Optional[str]) -> bool:
     """A cancel-order intent ('cancle naver which I bought') must reach the chat
     order desk, not the portfolio lane (2026-08-26)."""
@@ -5623,8 +5633,26 @@ def _paper_portfolio_reply(db, lang: str, agent_id: str = "vip",
                              + (f" · 현재가 {_w(_hit9.get('live_price'))}원 · 평가손익 {_hit9.get('unrealized_pnl_pct'):+.2f}%"
                                 if _hit9.get("live_price") else "") + "**\n")
             else:
-                L.append((f"**❌ No — you don't hold {_fn9 or _fc9} right now.**\n" if en
-                          else f"**❌ 아니요 — {_fn9 or _fc9}은(는) 현재 보유하고 있지 않습니다.**\n"))
+                # FAMILY CHECK (boss 2026-08-26: "any share RELATED to samsung?"
+                # answered 'No 삼성전자' while 삼성전기/삼성SDI/삼성중공업 sat right
+                # below): the yes/no lead scans the whole name family too.
+                import re as _re9
+                _fm9 = _re9.match(r"([A-Za-z]+|[가-힣]{2})", str(_fn9 or ""))
+                _fam9 = _fm9.group(1) if _fm9 else ""
+                _kin9 = [p for p in poss
+                         if _fam9 and str(p.get("name", "")).startswith(_fam9)
+                         and str(p.get("ticker")) != str(_fc9)]
+                if _kin9:
+                    _kl9 = " · ".join(
+                        f"{p.get('name')} {p.get('qty'):,}" + ("sh" if en else "주")
+                        for p in _kin9[:5])
+                    L.append((f"**{_fn9 or _fc9} itself: no — but you DO hold "
+                              f"{_fam9}-family stocks: {_kl9}**\n" if en else
+                              f"**{_fn9 or _fc9} 자체는 없지만, {_fam9} 계열은 보유 중입니다: "
+                              f"{_kl9}**\n"))
+                else:
+                    L.append((f"**❌ No — you don't hold {_fn9 or _fc9} right now.**\n" if en
+                              else f"**❌ 아니요 — {_fn9 or _fc9}은(는) 현재 보유하고 있지 않습니다.**\n"))
     if en:
         L.append(f"**🧾 Your paper-trading desk — {len(poss)} position(s) right now**")
         if not poss:
@@ -7041,6 +7069,7 @@ def _run_agent_impl(
     if (not confirmed_tool and not attachment_ids and transcript
             and not _is_my_chat_orders_q(transcript)
             and not _is_cancelish(transcript)
+            and not _is_statusish(transcript)
             and _PORTFOLIO_RE.search(transcript)):
         _pf = _paper_portfolio_reply(db, lang, agent_id, focus_text=transcript)
         if _pf:
@@ -7137,7 +7166,7 @@ def _run_agent_impl(
             # doesn't claim
             from services import checklist_advice as _ca_gate
             if (is_position_question(transcript) and not _ca_gate.kind(transcript)
-                    and not _is_cancelish(transcript)):
+                    and not _is_cancelish(transcript) and not _is_statusish(transcript)):
                 from services.position_advice import advise as _pos_advise
                 _adv = _pos_advise(db, parse(transcript))
                 if _adv.get("ok"):
@@ -7298,6 +7327,23 @@ def _run_agent_impl(
             _ctx = _ct.cancel_open(db, transcript, lang)
             if _ctx:
                 return {"intent": "chat_trade", "language": lang, "reply": _ctx,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "chat_trade"}
+            _cts = _ct.order_status_reply(db, transcript, lang)
+            if _cts:
+                return {"intent": "chat_trade", "language": lang, "reply": _cts,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "chat_trade"}
+            _ctx_code9 = None
+            if _ctx_stock:
+                try:
+                    from services.stock_resolver import resolve_one as _r19
+                    _ctx_code9, _ = _r19(_ctx_stock)
+                except Exception:
+                    pass
+            _ctb = _ct.breakeven_reply(db, transcript, lang, ctx_code=_ctx_code9)
+            if _ctb:
+                return {"intent": "chat_trade", "language": lang, "reply": _ctb,
                         "action": None, "speak": True, "transcript": transcript,
                         "tool_used": "chat_trade"}
             _ctp = _ct.build_preview(db, transcript, lang)
