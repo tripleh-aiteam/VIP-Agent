@@ -829,8 +829,15 @@ def _chat_rows_for(code_set: set) -> list[dict]:
             "SELECT ticker, name, side, qty, status, fill_price, realized_pnl, "
             "  realized_pnl_pct, created_at FROM paper_desk_orders "
             "WHERE COALESCE(source,'') IN ('chat','chatbot') ORDER BY id DESC LIMIT 40")).fetchall()
+        # menu 1 (the six) shows the six's chat orders; menu 2 shows EVERY other
+        # chat order — filtering menu 2 by the day's picks made the boss's LG전자
+        # buy invisible on BOTH desks (2026-08-26)
+        _sixset = {"000660", "005930", "017670", "034020", "035420", "042660"}
+        _is_menu1 = code_set == _sixset
         for r in rows:
-            if r[0] not in code_set:
+            if _is_menu1 and r[0] not in _sixset:
+                continue
+            if not _is_menu1 and r[0] in _sixset:
                 continue
             _at = None
             try:

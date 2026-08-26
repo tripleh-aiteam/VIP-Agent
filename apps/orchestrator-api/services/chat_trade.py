@@ -81,8 +81,20 @@ def parse(transcript: Optional[str]) -> Optional[dict]:
         side = "BUY"
     if not side:
         return None
+    # PRICE first, then blank its span — a 6-digit price ("at 198000") read as a
+    # TICKER code and broke the stock resolve (2026-08-26)
+    price = None
+    pm = (re.search(r"(\d[\d,]{2,})\s*원", tl) or re.search(r"[@₩]\s*(\d[\d,]{2,})", tl)
+          or re.search(r"\bat\s+(\d[\d,]{2,})\b", tl))
+    if pm:
+        try:
+            price = float(pm.group(1).replace(",", ""))
+        except Exception:
+            price = None
+    t_res = (transcript[:pm.start()] + " " + transcript[pm.end():]) if pm else transcript
+    tl = t_res.lower()
     from services.assistant_agent import _all_stocks_in_query
-    stocks = _all_stocks_in_query(transcript)
+    stocks = _all_stocks_in_query(t_res)
     if len(stocks) != 1:
         # hard-typo fallback ("BUY SASMCUNG ELECTROCNICS" resolved to 삼성전자 AND a
         # phantom LG전자): inside an explicit BUY/SELL command the WHOLE remainder can
@@ -111,7 +123,55 @@ def parse(transcript: Optional[str]) -> Optional[dict]:
         except Exception:
             qty = None
     all_ = any(w in tl for w in ("all", "전량", "전부", "모두", "다 팔", "다팔"))
-    return {"side": side, "code": code, "name": name, "qty": qty, "all_": all_}
+    market = "시장가" in tl or "market" in tl
+    return {"side": side, "code": code, "name": name, "qty": qty, "all_": all_,
+            "price": price, "market": market}
+
+
+def _tick(price: float) -> int:
+    """KRX tick size for a price."""
+    p = float(price or 0)
+    if p < 2000: return 1
+    if p < 5000: return 5
+    if p < 20000: return 10
+    if p < 50000: return 50
+    if p < 200000: return 100
+    if p < 500000: return 500
+    return 1000
+
+
+def _book_offer(code: str, side: str) -> Optional[dict]:
+    """The boss's own price-offering method read from the LIVE Kiwoom order book
+    (2026-08-26: 'for buying we should be top of the big guy, for selling one row
+    down from the big guy'): find the biggest resting wall on our side and queue
+    one tick in front of it."""
+    try:
+        from services.kiwoom_rest import order_book
+        ob = order_book(code, ttl=2) or {}
+        lvls = [l for l in (ob.get("levels") or []) if l.get("price")]
+        if side == "BUY":
+            rows = [l for l in lvls if l.get("side") == "bid"]
+            if not rows:
+                return None
+            wall = max(rows, key=lambda l: l.get("qty") or 0)
+            limit = wall["price"] + _tick(wall["price"])
+            ba = ob.get("best_ask")
+            if ba and limit >= ba:        # never offer above the ask — that IS the market
+                limit = ba
+        else:
+            rows = [l for l in lvls if l.get("side") == "ask"]
+            if not rows:
+                return None
+            wall = max(rows, key=lambda l: l.get("qty") or 0)
+            limit = wall["price"] - _tick(wall["price"])
+            bb = ob.get("best_bid")
+            if bb and limit <= bb:
+                limit = bb
+        return {"limit": float(limit), "wall_price": wall["price"],
+                "wall_qty": int(wall.get("qty") or 0),
+                "best_bid": ob.get("best_bid"), "best_ask": ob.get("best_ask")}
+    except Exception:
+        return None
 
 
 def _position_qty(db, code: str) -> int:
@@ -180,11 +240,13 @@ def build_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
     else:
         en = str(lang or "").lower().startswith("en") or bool(re.search(r"[a-zA-Z]", transcript or ""))
     return _make_preview(db, cmd["code"], cmd["name"], cmd["side"], cmd["qty"],
-                         cmd["all_"], en)
+                         cmd["all_"], en, price_asked=cmd.get("price"),
+                         market_flag=bool(cmd.get("market")))
 
 
 def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
-                  all_: bool, en: bool) -> Optional[str]:
+                  all_: bool, en: bool, price_asked: Optional[float] = None,
+                  market_flag: bool = False) -> Optional[str]:
     # market-hours gate FIRST — no order form outside the session
     try:
         from services.kiwoom_tape import market_open
@@ -210,10 +272,23 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
     else:
         qty = cmd["qty"] or advise_qty(px)
     fee = BUY_COST_PCT if side == "BUY" else SELL_COST_PCT
-    total = px * qty
+    # PRICE OFFERING like a real trader (boss 2026-08-26): his own price wins;
+    # otherwise the order book proposes one (in front of the biggest wall);
+    # '시장가/market' forces an immediate market order
+    offer = None
+    limit_price = None
+    if price_asked:
+        limit_price = float(price_asked)
+    elif not market_flag:
+        offer = _book_offer(code, side)
+        if offer:
+            limit_price = offer["limit"]
+    order_type = "limit" if limit_price else "market"
+    total = (limit_price or px) * qty
     _PENDING.clear()
     _PENDING.update({"code": code, "name": name, "side": side, "qty": qty,
-                     "px": px, "ts": time.time(), "en": en})
+                     "px": px, "ts": time.time(), "en": en,
+                     "order_type": order_type, "limit_price": limit_price})
     b = budget()
     qty_note_ko = (f"직접 지정" if cmd["qty"] else
                    (f"보유 전량" if side == "SELL" else f"예산 ₩{b:,.0f} 기준 자동"))
@@ -252,6 +327,16 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
              f"· Quantity: **{qty:,} shares** ({qty_note_en})"
              + (f" — e.g. say '{name} 10 shares {side.lower()}' to change" if not cmd["qty"] else ""),
              f"· Live price: ₩{px:,.0f} → total ~₩{total:,.0f} (fee {fee}%)"]
+        if price_asked:
+            L.append(f"· Order: **LIMIT ₩{limit_price:,.0f}** (your price) — waits in the book until touched")
+        elif offer:
+            L.append(f"· Order: **LIMIT ₩{limit_price:,.0f}** — my offer from the live order book: "
+                     f"the biggest {'bid' if side == 'BUY' else 'ask'} wall sits at "
+                     f"₩{offer['wall_price']:,.0f} ({offer['wall_qty']:,} sh), we queue "
+                     f"{'one tick in front of it' if side == 'BUY' else 'one tick below it'} · "
+                     f"say 'market' for instant fill")
+        else:
+            L.append("· Order: **MARKET** — fills instantly at the live price")
         if side == "SELL":
             L.append(f"· Position: {pos:,} shares held")
         if score_en:
@@ -266,6 +351,15 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
              f"· 수량: **{qty:,}주** ({qty_note_ko})"
              + (f" — 바꾸려면 '{name} 10주 {side_ko}'처럼 말씀하세요" if not cmd["qty"] else ""),
              f"· 현재가: ₩{px:,.0f} → 예상 금액 ~₩{total:,.0f} (수수료 {fee}%)"]
+        if price_asked:
+            L.append(f"· 주문: **지정가 ₩{limit_price:,.0f}** (직접 제시하신 가격) — 가격이 닿을 때까지 호가창에서 대기합니다")
+        elif offer:
+            L.append(f"· 주문: **지정가 ₩{limit_price:,.0f}** — 호가창을 보고 제가 제안하는 가격입니다: "
+                     f"제일 큰 {'매수벽' if side == 'BUY' else '매도벽'}이 ₩{offer['wall_price']:,.0f}에 "
+                     f"{offer['wall_qty']:,}주 대기 중이라 {'그 바로 위 한 틱에 줄을 섭니다' if side == 'BUY' else '그 바로 아래 한 틱에 줄을 섭니다'} · "
+                     f"바로 사려면 '시장가'라고 말씀하세요")
+        else:
+            L.append("· 주문: **시장가** — 지금 가격에 바로 체결됩니다")
         if side == "SELL":
             L.append(f"· 보유: {pos:,}주")
         if score_ko:
@@ -326,22 +420,29 @@ def finish(db, word: str) -> Optional[str]:
     except Exception:
         pass
     from services.paper_desk import place_order
-    res = place_order(db, p["code"], p["side"], int(p["qty"]), order_type="market",
-                      source="chatbot", ref_price=p.get("px"), direct=True)
+    _ot = p.get("order_type") or "market"
+    res = place_order(db, p["code"], p["side"], int(p["qty"]), order_type=_ot,
+                      limit_price=p.get("limit_price"), source="chatbot",
+                      ref_price=p.get("px"), direct=True)
+    if _ot == "limit" and res.get("ok") and res.get("status") == "OPEN":
+        # queued in the book — the trading loop fills it when the price touches
+        lp = p.get("limit_price") or 0
+        side_word = "매수" if p["side"] == "BUY" else "매도"
+        L = ([f"🕐 **Order queued — {p['side']} {p['name']} {p['qty']:,} shares, LIMIT ₩{lp:,.0f}**",
+              "It is now waiting in the book and fills AUTOMATICALLY the moment the price touches "
+              f"₩{lp:,.0f}. I'll record it as a 💬 chatbot order when it fills."]
+             if en else
+             [f"🕐 **대기 주문 접수 — {side_word} {p['name']} {p['qty']:,}주 · 지정가 ₩{lp:,.0f}**",
+              f"호가창에 줄을 섰습니다. 가격이 ₩{lp:,.0f}에 닿는 순간 자동으로 체결되고 "
+              f"💬 챗봇 주문으로 기록됩니다."])
+        L += ["", _desk_links(en)]
+        return "\n".join(L)
     if not res.get("ok"):
         err = res.get("error") or "unknown"
         log.warning(f"chat_trade order failed: {err}")
         return (f"⚠️ 주문 실패: {err}" if not en else f"⚠️ Order failed: {err}")
     fill = res.get("fill_price") or res.get("live_price") or p.get("px")
     pos = _position_qty(db, p["code"])
-    # VERIFY button (boss 2026-08-25, right after his first live chat order: "below
-    # you should put button then I can go to the second menu and see is it actually
-    # bought or not") — the six live on the Live Kiwoom Desk, everything else on the
-    # Checklist Reco Desk
-    _six = p["code"] in _SIX
-    _dest = "/testing/live" if _six else "/testing/reco"
-    _dest_ko = "Live Kiwoom Desk" if _six else "체크리스트 추천 데스크"
-    _dest_en = "Live Kiwoom Desk" if _six else "Checklist Reco Desk"
     L = []
     if en:
         L.append(f"✅ **Filled — {p['side']} {p['name']} {p['qty']:,} shares @ ₩{fill:,.0f}** "
@@ -350,7 +451,7 @@ def finish(db, word: str) -> Optional[str]:
             L.append(f"💰 Realized P&L: ₩{res['realized_pnl']:,.0f} ({res.get('realized_pnl_pct', 0):+.2f}%)")
         L.append(f"📒 Position now: {pos:,} shares · recorded as a 💬 chatbot order in the desk history.")
         L.append("")
-        L.append(f"[📡 Verify it on the desk → {_dest_en}](nav:{_dest})")
+        L.append(_desk_links(True))
     else:
         L.append(f"✅ **체결 — {side_ko} {p['name']} {p['qty']:,}주 @ ₩{fill:,.0f}** "
                  f"(총 ~₩{fill * p['qty']:,.0f})")
@@ -358,9 +459,19 @@ def finish(db, word: str) -> Optional[str]:
             L.append(f"💰 실현 손익: ₩{res['realized_pnl']:,.0f} ({res.get('realized_pnl_pct', 0):+.2f}%)")
         L.append(f"📒 현재 보유: {pos:,}주 · 데스크 기록에 💬 챗봇(chatbot) 주문으로 남았습니다.")
         L.append("")
-        L.append(f"[📡 실제로 샀는지 확인하기 → {_dest_ko}](nav:{_dest})")
+        L.append(_desk_links(False))
     return "\n".join(L)
 
 
 # the boss's pinned six — they trade (and are verified) on the Live Kiwoom Desk
 _SIX = frozenset(("000660", "005930", "035420", "017670", "042660", "034020"))
+
+
+def _desk_links(en: bool) -> str:
+    """BOTH menus, always (boss 2026-08-26: 'it is offering after buying only menu 2 —
+    it should offer both')."""
+    if en:
+        return ("[📡 Menu 1 — Live Kiwoom Desk](nav:/testing/live) · "
+                "[📡 Menu 2 — Checklist Reco Desk](nav:/testing/reco)")
+    return ("[📡 메뉴1 — Live Kiwoom Desk](nav:/testing/live) · "
+            "[📡 메뉴2 — 체크리스트 추천 데스크](nav:/testing/reco)")
