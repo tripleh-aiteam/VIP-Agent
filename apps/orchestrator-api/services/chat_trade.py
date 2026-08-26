@@ -120,6 +120,43 @@ def _position_qty(db, code: str) -> int:
         return 0
 
 
+def _next_open_kst():
+    """The nearest KRX opening moment (09:00 KST on the next trading weekday)."""
+    from datetime import datetime, timedelta, timezone
+    KST = timezone(timedelta(hours=9))
+    n = datetime.now(KST)
+    if n.weekday() < 5 and (n.hour, n.minute) < (9, 0):
+        d = n
+    else:
+        d = n + timedelta(days=1)
+        while d.weekday() >= 5:
+            d += timedelta(days=1)
+    return d.replace(hour=9, minute=0, second=0, microsecond=0), n
+
+
+_WD_KO = "월화수목금토일"
+_WD_EN = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def closed_reply(side: str, en: bool) -> str:
+    """The polite off-hours refusal with the nearest opening time (boss 2026-08-26:
+    'if I ask outside of market hours it should say I could not buy/sell, I could
+    help when market is open, then tell nearest opening time')."""
+    nxt, now = _next_open_kst()
+    hrs = (nxt - now).total_seconds() / 3600
+    wait = (f"약 {hrs:.0f}시간 후" if hrs >= 1.5 else f"약 {hrs * 60:.0f}분 후")
+    wait_en = (f"in about {hrs:.0f} hours" if hrs >= 1.5 else f"in about {hrs * 60:.0f} minutes")
+    act = "매수/매도" if side == "BOTH" else ("매수" if side == "BUY" else "매도")
+    act_en = "buy or sell" if side == "BOTH" else side.lower()
+    if en:
+        return (f"🌙 The market is closed right now, so I can't {act_en} for you — I can help "
+                f"as soon as it opens.\n⏰ Nearest opening: **{_WD_EN[nxt.weekday()]} "
+                f"{nxt.month}/{nxt.day} 09:00 KST** ({wait_en}). KRX trades 09:00–15:30, Mon–Fri.")
+    return (f"🌙 지금은 장외 시간이라 {act}를 도와드릴 수 없습니다 — 장이 열리면 바로 도와드릴게요.\n"
+            f"⏰ 가장 가까운 개장: **{nxt.month}월 {nxt.day}일({_WD_KO[nxt.weekday()]}) 09:00 KST** "
+            f"({wait}). KRX 정규장은 평일 09:00~15:30입니다.")
+
+
 def stash_offer(code: str, name: str, en: bool) -> None:
     """A BUY verdict's '도와드릴까요?' offer — the next '네' opens the order preview
     (which then needs its own '네' to execute; money keeps its two-step gate)."""
@@ -141,6 +178,14 @@ def build_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
 
 def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
                   all_: bool, en: bool) -> Optional[str]:
+    # market-hours gate FIRST — no order form outside the session
+    try:
+        from services.kiwoom_tape import market_open
+        if not market_open():
+            _PENDING.clear()
+            return closed_reply(side, en)
+    except Exception:
+        pass
     cmd = {"code": code, "name": name, "side": side, "qty": qty_asked, "all_": all_}
     from services.paper_desk import BUY_COST_PCT, SELL_COST_PCT, _live_price
     px, kw_name = _live_price(code)
@@ -266,6 +311,13 @@ def finish(db, word: str) -> Optional[str]:
         return (f"🚫 취소했습니다 — {side_ko} {p['name']} {p['qty']:,}주 주문은 실행되지 않았습니다."
                 if not en else
                 f"🚫 Cancelled — the {p['side']} {p['name']} {p['qty']:,}-share order was NOT executed.")
+    # the market may have closed between the preview and the "네"
+    try:
+        from services.kiwoom_tape import market_open
+        if not market_open():
+            return closed_reply(p["side"], en)
+    except Exception:
+        pass
     from services.paper_desk import place_order
     res = place_order(db, p["code"], p["side"], int(p["qty"]), order_type="market",
                       source="chat", ref_price=p.get("px"), direct=True)
