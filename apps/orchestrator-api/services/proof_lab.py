@@ -208,6 +208,13 @@ VARIANTS: list[dict] = [
      # condition. The measured bans stay on record for the real-money day:
      # red-exit surrender-2 +178.6M/yr, +117M/yr with the one-pardon variant.
      "surrender": None,
+     # COURT 2026-08-26 night, deployed for the 08-27 open:
+     # spike-exhaustion guard (한전기술 +15% case; measured +13.3M/yr desk-wide):
+     # a day already up 8% takes no NEW entries
+     "spike_guard": 8,
+     # the boss's buying-zone law, his 3-red form (measured cost ~0): in the
+     # bottom zone the +1% ladder holds until 3 consecutive rises confirm the turn
+     "bot_ladder": "3red",
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
      # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
@@ -263,6 +270,13 @@ VARIANTS: list[dict] = [
      # condition. The measured bans stay on record for the real-money day:
      # red-exit surrender-2 +178.6M/yr, +117M/yr with the one-pardon variant.
      "surrender": None,
+     # COURT 2026-08-26 night, deployed for the 08-27 open:
+     # spike-exhaustion guard (한전기술 +15% case; measured +13.3M/yr desk-wide):
+     # a day already up 8% takes no NEW entries
+     "spike_guard": 8,
+     # the boss's buying-zone law, his 3-red form (measured cost ~0): in the
+     # bottom zone the +1% ladder holds until 3 consecutive rises confirm the turn
+     "bot_ladder": "3red",
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
      # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
@@ -331,6 +345,13 @@ VARIANTS: list[dict] = [
      # condition. The measured bans stay on record for the real-money day:
      # red-exit surrender-2 +178.6M/yr, +117M/yr with the one-pardon variant.
      "surrender": None,
+     # COURT 2026-08-26 night, deployed for the 08-27 open:
+     # spike-exhaustion guard (한전기술 +15% case; measured +13.3M/yr desk-wide):
+     # a day already up 8% takes no NEW entries
+     "spike_guard": 8,
+     # the boss's buying-zone law, his 3-red form (measured cost ~0): in the
+     # bottom zone the +1% ladder holds until 3 consecutive rises confirm the turn
+     "bot_ladder": "3red",
      "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      "trend": {"climb": 1.05, "dd": 0.4, "win": 30},
@@ -1481,6 +1502,12 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            # checklist's top-N at that moment, per the recorded
                            # rank timeline. Times before the day's first
                            # snapshot get grace; exits are never gated.
+            elif (v.get("spike_guard") and closes[0]
+                  and (c / closes[0] - 1) * 100 >= float(v["spike_guard"])):
+                pass       # COURT 2026-08-26 (spike-exhaustion guard, the
+                           # 한전기술 case: +15% in 23 min, then the burst door
+                           # boarded the exhaustion 3 times into stops): a day
+                           # already up spike_guard% takes no NEW entries
             elif (v.get("ctx") and s.get("daily_pos") is not None
                   and v["ctx"].get("no_buy_top") is not None
                   and s["daily_pos"] >= v["ctx"]["no_buy_top"]):
@@ -1517,11 +1544,11 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            and stop_low[si] is not None and c < stop_low[si]
                            and up[si] >= 3)
                   and not (v.get("drip", {}).get("reboard")
-                           and reb_pk[si] and up[si] >= 3)):
+                           and reb_pk[si] and up[si] >= int(v.get("reboard_ups", 3)))):
                 pass
             elif (v.get("dip")
                   and not (v.get("drip", {}).get("reboard")
-                           and reb_pk[si] and up[si] >= 3)
+                           and reb_pk[si] and up[si] >= int(v.get("reboard_ups", 3)))
                   and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]
                   <= last_exit[si]):
                 # the 3rd-red re-board is EXEMPT from one-per-dip (boss
@@ -1680,14 +1707,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                            and up[si] >= 3)
                                    or bool(v.get("drip", {}).get("reboard")
                                            and reb_pk[si]
-                                           and up[si] >= 3)))
+                                           and up[si] >= int(v.get("reboard_ups", 3)))))
                 # boss 2026-08-21 09:4x, the 하이닉스 09:34 case: "after the
                 # 3-blue sale it should buy again at the 3rd RED" - the climb
                 # resumed is proven by 3 consecutive rises, not by beating the
                 # old peak (that waited 3 minutes and paid 1,723,000 for what
                 # the 3rd red offered cheaper)
                 if (v.get("drip", {}).get("reboard") and reb_pk[si]
-                        and up[si] >= 3):
+                        and up[si] >= int(v.get("reboard_ups", 3))):
                     reb_pk[si] = None    # one re-board per sold ride
                 if v.get("dip") and not _via_trend:
                     _std = _dip_state(s, v["dip"].get("win_sec", 600))
@@ -1892,6 +1919,28 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 _guard = 0
                 while pos["qty"] > 0 and _guard < 30:
                     _guard += 1
+                    # COURT 2026-08-26 (bot_ladder): "in the buying zone do not
+                    # sell - wait" (the boss's standing law the ladder ignored,
+                    # 한화오션 11 slices at dp 0.18). In the bottom zone the
+                    # rung sells hold until armed: 'valve' = peak +2% over base
+                    # (his old valve), '3red' = 3 consecutive rises seen (his
+                    # 2026-08-26 formulation).
+                    if v.get("bot_ladder"):
+                        _dpl9 = s.get("daily_pos")
+                        if v.get("zone_live") and s.get("year_lo") is not None:
+                            _ylb, _yhb = s.get("year_lo"), s.get("year_hi")
+                            if _yhb and _ylb is not None and _yhb > _ylb:
+                                _dpl9 = max(0.0, min(1.5, (c - _ylb) / (_yhb - _ylb)))
+                        _sbl9 = (v.get("ctx") or {}).get("sell_bot")
+                        if (_dpl9 is not None and _sbl9 is not None
+                                and _dpl9 <= _sbl9):
+                            if v["bot_ladder"] == "3red":
+                                if up[si] >= 3:
+                                    pos["lad_arm"] = True
+                                if not pos.get("lad_arm"):
+                                    break
+                            elif pos.get("pr_pk", 0) < pos["base"] * 1.02:
+                                break
                     # his band (15:0x): a rung may fill from +0.85% of its level
                     # ("if it increases between 0.85 and 1.05 we can sell 10%") -
                     # rungs arm at +0.85%, +1.85%, +2.85%, ... spacing stays 1%
@@ -1972,6 +2021,15 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _blues9 = _pr.get("blues", 2)
                     _sc9 = v.get("ctx") or {}
                     _dps9 = s.get("daily_pos")
+                    # COURT 2026-08-26 (zone_live): the per-day zone snapshot
+                    # means a stock bought below the top line can NEVER read as
+                    # "selling zone" later the same day - which is why the
+                    # top-zone full exit fired 0 times in a year. This variant
+                    # computes the zone from the CURRENT price per bar.
+                    if v.get("zone_live") and s.get("year_lo") is not None:
+                        _yl9, _yh9 = s.get("year_lo"), s.get("year_hi")
+                        if _yh9 and _yl9 is not None and _yh9 > _yl9:
+                            _dps9 = max(0.0, min(1.5, (c - _yl9) / (_yh9 - _yl9)))
                     if _dps9 is not None and _sc9.get("sell_top") is not None \
                             and _dps9 >= _sc9["sell_top"]:
                         _blues9 = _sc9.get("top_blues", max(2, _blues9 - 1))
