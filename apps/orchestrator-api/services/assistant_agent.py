@@ -6208,6 +6208,17 @@ def _spell_normalize(q: Optional[str]) -> Optional[str]:
     if not q or not _re.search(r"[a-zA-Z]", q):
         return q
     import difflib
+
+    # a DIGIT inside a word is a fat-finger ("top 5 st5rock" → 'st'+'5'+'rock' was
+    # invisible to every detector, 2026-08-26): join the letters, fuzzy-fix, keep
+    # standalone numbers ("top 5") untouched
+    def _fix_inword_digit(m):
+        joined = (m.group(1) + m.group(2)).lower()
+        if joined in _SPELL_SET:
+            return joined
+        c = difflib.get_close_matches(joined, _SPELL_VOCAB, n=1, cutoff=0.8)
+        return c[0] if c else m.group(0)
+    q = _re.sub(r"\b([A-Za-z]{2,8})\d([A-Za-z]{2,8})\b", _fix_inword_digit, q)
     out = []
     changed = False
     for tok in _re.split(r"([^A-Za-z]+)", q):
@@ -8794,6 +8805,22 @@ def _run_agent_impl(
 
     # If the LLM chose to answer directly, return it
     if decision.get("answer") and not decision.get("tool"):
+        # THE LECTURE IS NOT THE ANSWER (boss 2026-08-26: 'top 5 st5rock' got "the
+        # checklist recommendation handles this... let me know if you'd like me to
+        # run it") — when the LLM says the checklist handles it, RUN the checklist.
+        _ans0 = str(decision.get("answer") or "")
+        if _re.search(r"checklist.{0,60}(handles|handle|relies|engine)", _ans0, _re.I) \
+                or "체크리스트 추천이 처리" in _ans0:
+            try:
+                from services.checklist_reco import build as _cr_build9
+                _cr9 = _cr_build9(db, n=5, transcript=transcript, lang=lang)
+                if _cr9.get("ok") and _cr9.get("reply"):
+                    return {"intent": "checklist_reco", "language": lang,
+                            "reply": _cr9["reply"], "action": None, "speak": True,
+                            "transcript": transcript, "tool_used": "checklist_reco",
+                            "process": _cr9.get("process")}
+            except Exception:
+                pass
         # UNIVERSAL NO-APOLOGY GUARD (boss 2026-08-25 "must answer in all cases"): a
         # refusal about a NAMED stock is replaced with what we actually know.
         if _looks_refusal(str(decision.get("answer") or "")):
