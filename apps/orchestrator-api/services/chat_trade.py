@@ -352,6 +352,19 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
         offer = _book_offer(code, side)
         if offer:
             limit_price = offer["limit"]
+            # PRICE-BASED cap (boss 2026-08-26: "do not add 30 minutes limitation —
+            # add price-based limitation, like for skhynix 2000 and others 1000"):
+            # the auto offer never queues more than 2 ticks from the live price
+            # (2 ticks = ₩2,000 on SK하이닉스, ₩1,000 on NAVER-class — his numbers)
+            _cap = 2 * _tick(px)
+            if side == "BUY" and px - limit_price > _cap:
+                limit_price = px - _cap
+                offer["mode"] = "cap"
+                offer["cap"] = _cap
+            elif side == "SELL" and limit_price - px > _cap:
+                limit_price = px + _cap
+                offer["mode"] = "cap"
+                offer["cap"] = _cap
     order_type = "limit" if limit_price else "market"
     total = (limit_price or px) * qty
     _PENDING.clear()
@@ -399,6 +412,10 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
              f"· Live price: ₩{px:,.0f} → total ~₩{total:,.0f} (fee {fee}%)"]
         if price_asked:
             L.append(f"· Order: **LIMIT ₩{limit_price:,.0f}** (your price) — waits in the book until touched")
+        elif offer and offer.get("mode") == "cap":
+            L.append(f"· Order: **LIMIT ₩{limit_price:,.0f}** — price-cap rule: we never queue "
+                     f"more than ₩{offer.get('cap', 0):,.0f} from the live price, so the order "
+                     f"stays close enough to actually fill · say 'market' for instant fill")
         elif offer and offer.get("mode") == "top":
             L.append(f"· Order: **LIMIT ₩{limit_price:,.0f}** — front of the book "
                      f"(the best {'bid' if side == 'BUY' else 'ask'}): the big wall is too far "
@@ -428,6 +445,10 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
              f"· 현재가: ₩{px:,.0f} → 예상 금액 ~₩{total:,.0f} (수수료 {fee}%)"]
         if price_asked:
             L.append(f"· 주문: **지정가 ₩{limit_price:,.0f}** (직접 제시하신 가격) — 가격이 닿을 때까지 호가창에서 대기합니다")
+        elif offer and offer.get("mode") == "cap":
+            L.append(f"· 주문: **지정가 ₩{limit_price:,.0f}** — 가격 제한 규칙: 현재가에서 "
+                     f"₩{offer.get('cap', 0):,.0f} 이상 떨어진 곳에는 줄을 서지 않습니다 "
+                     f"(체결될 수 있는 거리 유지) · 바로 {'사려면' if side == 'BUY' else '팔려면'} '시장가'라고 말씀하세요")
         elif offer and offer.get("mode") == "top":
             L.append(f"· 주문: **지정가 ₩{limit_price:,.0f}** — 호가 1순위"
                      f"({'최우선 매수호가' if side == 'BUY' else '최우선 매도호가'})에 줄을 섭니다: "
