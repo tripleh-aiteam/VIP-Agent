@@ -2185,6 +2185,17 @@ def _fundamentals_reply(transcript: Optional[str], lang: str, db=None) -> Option
     return out
 
 
+def _is_adviceish(transcript: Optional[str]) -> bool:
+    """'그럼 지금 사도 돼?' is a buy/sell advice ask even with no stock named — it must
+    reach the checklist advice (with the context stock), never the confirm-chat LLM,
+    which hallucinated '투자 조언은 제공해드릴 수 없습니다' (2026-08-26 audit)."""
+    try:
+        from services.checklist_advice import kind
+        return kind(transcript) is not None
+    except Exception:
+        return False
+
+
 def _is_cancelish(transcript: Optional[str]) -> bool:
     """A cancel-order intent ('cancle naver which I bought') must reach the chat
     order desk, not the portfolio lane (2026-08-26)."""
@@ -6992,6 +7003,7 @@ def _run_agent_impl(
             and not attachment_ids and not confirmed_tool
             and (_CONFIRM_RE.search(transcript) or _is_ctx_math)
             and not any(k in transcript.lower() for k in _CONFIRM_SKIP)
+            and not _is_adviceish(transcript)
             and not _confirm_wants_fresh_data(transcript)
             and not _confirm_is_topic_switch(transcript)):
         _cf = (_ctx_percent_math(transcript, lang, history) if _is_ctx_math else None) \
@@ -7232,6 +7244,16 @@ def _run_agent_impl(
         except Exception as e:
             log.warning(f"readiness failed: {str(e)[:120]}")
 
+    # CONTEXT STOCK for follow-ups (boss 2026-08-26: "if I ask skhynix it must
+    # understand next question without naming skhynix") — the most recent stock in
+    # the conversation stands in when the new question names none.
+    _ctx_stock = None
+    try:
+        if history and not _all_stocks_in_query(transcript):
+            _ctx_stock = _recent_stock_name(history)
+    except Exception:
+        pass
+
     # === 🧾 CHAT ORDER DESK (boss 2026-08-25: "if we say then buy samsung electronics
     # is it possible?") — an imperative BUY/SELL command becomes a real desk order via
     # a two-turn confirmation. The confirm word ('네/yes') is checked FIRST so it is
@@ -7257,6 +7279,20 @@ def _run_agent_impl(
                         "action": None, "speak": True, "transcript": transcript,
                         "tool_used": "chat_trade"}
             _ctp = _ct.build_preview(db, transcript, lang)
+            # "buy it" after a skhynix turn — the context stock completes the command
+            if not _ctp and _ctx_stock:
+                _cs9 = _ctx_stock
+                if not _re.search(r"[가-힣]", transcript or ""):
+                    # an EN command must not inherit a Korean name (it forced the
+                    # whole confirmation into Korean)
+                    try:
+                        from services.stock_resolver import display_name_en, resolve_one
+                        _c9, _n9 = resolve_one(_ctx_stock)
+                        if _c9:
+                            _cs9 = display_name_en(_c9)
+                    except Exception:
+                        pass
+                _ctp = _ct.build_preview(db, f"{transcript} {_cs9}", lang)
             if _ctp:
                 return {"intent": "chat_trade_confirm", "language": lang, "reply": _ctp,
                         "action": None, "speak": True, "transcript": transcript,
@@ -7300,8 +7336,10 @@ def _run_agent_impl(
     if not confirmed_tool and not attachment_ids and not _is_movers_q(transcript):
         try:
             from services import checklist_advice as _ca
-            if _ca.kind(transcript) and _all_stocks_in_query(transcript):
-                _adv = _ca.build(db, transcript, lang)
+            if _ca.kind(transcript) and (_all_stocks_in_query(transcript) or _ctx_stock):
+                _adv_tx = (transcript if _all_stocks_in_query(transcript)
+                           else f"{_ctx_stock} {transcript}")
+                _adv = _ca.build(db, _adv_tx, lang)
                 if _adv and _adv.get("reply"):
                     return {"intent": "checklist_advice", "language": lang,
                             "reply": _adv["reply"], "action": None, "speak": True,
@@ -7324,10 +7362,13 @@ def _run_agent_impl(
 
     # === ❓ WHY-DID-IT-MOVE lane (deep audit 2026-08-25) — before the analyst LLM,
     # which invented a 2024 sell-off story for this exact question shape. ===
-    if not confirmed_tool and not attachment_ids and _is_why_move_q(transcript) \
+    _wm_tx = transcript
+    if _ctx_stock and not _all_stocks_in_query(transcript):
+        _wm_tx = f"{_ctx_stock} {transcript}"     # "why did it drop?" follow-up
+    if not confirmed_tool and not attachment_ids and _is_why_move_q(_wm_tx) \
             and not _is_future_outlook(transcript):
         try:
-            _wr, _wtr = _why_move_reply(transcript, lang, db)
+            _wr, _wtr = _why_move_reply(_wm_tx, lang, db)
             if _wr:
                 return {"intent": "stock_why_move", "language": lang, "reply": _wr,
                         "action": None, "speak": True, "transcript": transcript,
