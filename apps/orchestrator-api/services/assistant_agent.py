@@ -7305,6 +7305,45 @@ def _run_agent_impl(
         except Exception as e:
             log.warning(f"readiness failed: {str(e)[:120]}")
 
+    # === ⏰ MARKET SCHEDULE ("when market will open?" got 'in about 16 hours' from
+    # the LLM while the bell was ONE hour away — 2026-08-27). Pure clock math. ===
+    _t_mkt = (transcript or "").lower()
+    if (not confirmed_tool
+            and (any(k in _t_mkt for k in ("market", "장이", "장은", "증시", "개장", "마감",
+                                           "휴장", "폐장", "krx"))
+                 or _re.search(r"(^|\s)장(이|은|을)?(\s|\?|$)", _t_mkt))
+            and any(k in _t_mkt for k in ("when", "언제", "몇 시", "몇시", "open", "close",
+                                          "열려", "열어", "열리", "닫"))
+            and not _all_stocks_in_query(transcript)):
+        try:
+            from services.chat_trade import _next_open_kst
+            from services.kiwoom_tape import market_open
+            _en0 = not _re.search(r"[가-힣]", transcript or "")
+            if market_open():
+                _now9 = _dt_now_kst()
+                _mins = (15 * 60 + 30) - (_now9.hour * 60 + _now9.minute)
+                _rep0 = ((f"🟢 지금 장이 열려 있습니다 (KRX 정규장 09:00~15:30 KST). "
+                          f"마감까지 약 {_mins // 60}시간 {_mins % 60}분 남았습니다.") if not _en0 else
+                         (f"🟢 The market is OPEN right now (KRX 09:00–15:30 KST). "
+                          f"It closes in about {_mins // 60}h {_mins % 60}m."))
+            else:
+                nxt, _now0 = _next_open_kst()
+                _hrs = (nxt - _now0).total_seconds() / 3600
+                _wt = (f"약 {_hrs:.0f}시간 후" if _hrs >= 1.5 else f"약 {_hrs * 60:.0f}분 후")
+                _wt_en = (f"in about {_hrs:.0f} hours" if _hrs >= 1.5
+                          else f"in about {_hrs * 60:.0f} minutes")
+                _WD0 = "월화수목금토일"
+                _rep0 = ((f"🌙 지금은 장외 시간입니다. 다음 개장: {nxt.month}월 {nxt.day}일"
+                          f"({_WD0[nxt.weekday()]}) 09:00 KST ({_wt}). 정규장은 평일 09:00~15:30입니다.")
+                         if not _en0 else
+                         (f"🌙 The market is closed. Next open: {nxt.strftime('%a %m/%d')} "
+                          f"09:00 KST ({_wt_en}). Regular hours 09:00–15:30 KST, Mon–Fri."))
+            return {"intent": "market_schedule", "language": lang, "reply": _rep0,
+                    "action": None, "speak": True, "transcript": transcript,
+                    "tool_used": "market_schedule"}
+        except Exception as e:
+            log.warning(f"market-schedule lane failed: {str(e)[:120]}")
+
     # === 🤖 WHICH LLM AM I? (boss 2026-08-26: "tell me right now which LLM I am
     # using in the chatbot") — answered from the live config, no guessing. ===
     _t_llm = (transcript or "").lower()
@@ -8181,6 +8220,15 @@ def _run_agent_impl(
                 and not _is_future_outlook(transcript)
                 and not _is_stock_advice(transcript, agent_id)
                 and not _wants_recommendation(transcript)
+            )
+            # SHORT CASUAL messages ("hello", "고마워", "3+5는?") paid an embedding +
+            # cross-region pgvector round trip for hits they never need (boss
+            # 2026-08-27: "normal question also takes a long time")
+            or (
+                len(transcript.strip()) <= 25
+                and not _all_stocks_in_query(transcript)
+                and not any(k in transcript.lower() for k in
+                            ("file", "파일", "knowledge", "지식", "기억", "아는", "know"))
             )
         )
     )
