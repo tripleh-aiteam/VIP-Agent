@@ -236,21 +236,36 @@ def _agent_command_impl(body: AgentCommandBody, db: Session):
         bypasses LLM and runs the write action.
     """
     from services.assistant_agent import run_agent
-    return run_agent(
-        db,
-        transcript=body.transcript or "",
-        language=body.language or "auto",
-        current_path=body.current_path,
-        selected_id=body.selected_id,
-        history=body.history,
-        confirmed_tool=body.confirmed_tool,
-        confirmed_args=body.confirmed_args,
-        attachment_ids=body.attachment_ids,
-        forced_model=body.model,
-        user_id=body.user_id or "boss",
-        agent_id=body.agentId or "vip",
-        page_context=body.page_context,
-    )
+    try:
+        return run_agent(
+            db,
+            transcript=body.transcript or "",
+            language=body.language or "auto",
+            current_path=body.current_path,
+            selected_id=body.selected_id,
+            history=body.history,
+            confirmed_tool=body.confirmed_tool,
+            confirmed_args=body.confirmed_args,
+            attachment_ids=body.attachment_ids,
+            forced_model=body.model,
+            user_id=body.user_id or "boss",
+            agent_id=body.agentId or "vip",
+            page_context=body.page_context,
+        )
+    except Exception as e:
+        # 'Failed: HTTP 500' must NEVER reach the boss's screen (2026-08-26) — an
+        # internal error becomes a polite retry line and a full traceback in the log.
+        import traceback
+        from services.logger import log as _log9
+        _log9.error(f"chat/agent crashed: {str(e)[:200]}\n{traceback.format_exc()[-1500:]}")
+        _ko9 = bool(__import__("re").search(r"[가-힣]", body.transcript or ""))
+        return {"intent": "error", "language": body.language or "auto",
+                "reply": ("잠깐 내부 문제가 있었어요 — 방금 질문을 한 번만 다시 보내주세요. "
+                          "(오류는 기록해 두었습니다)" if _ko9 else
+                          "A brief internal hiccup — please resend that last message once. "
+                          "(The error is logged.)"),
+                "action": None, "speak": True, "transcript": body.transcript,
+                "tool_used": None}
 
 
 @router.post("/agent/stream")
