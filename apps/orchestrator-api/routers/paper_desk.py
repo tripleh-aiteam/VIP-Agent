@@ -840,7 +840,7 @@ def _chat_fam_entries(code_set: set, day8: str = ""):
         _ensure(db)
         recs = db.execute(_sqt(
             "SELECT ticker, name, side, qty, fill_price, realized_pnl_pct, created_at "
-            "FROM paper_desk_orders WHERE COALESCE(source,'') IN ('chat','chatbot') "
+            "FROM paper_desk_orders WHERE (COALESCE(source,'') IN ('chat','chatbot') OR COALESCE(source,'') LIKE '%-chat') "
             "AND status='FILLED' ORDER BY id")).fetchall()
         # KOSPI ONLY on the boards (boss 2026-08-26: "please remove 에코프로비엠
         # from both menus — yesterday I requested do not use Kosdaq"): KOSDAQ/ETF
@@ -912,6 +912,37 @@ def _chat_fam_entries(code_set: set, day8: str = ""):
             if cur["buys"] and net > 0:
                 qty = sum(q for _p, q, _t in cur["buys"]) or 1
                 entry = sum(p * q for p, q, _t in cur["buys"]) / qty
+                # the SHARED position may have been flattened by the ENGINE (15:19
+                # close-out / algo sells) — a chat trip must not keep showing
+                # 'holding' when the desk truly holds nothing (boss 2026-08-26:
+                # 'Please sell 💬 LG전자' vs '보유 수량이 없습니다' contradiction)
+                try:
+                    _rq = db.execute(_sqt(
+                        "SELECT qty FROM paper_desk_positions WHERE ticker=:t"),
+                        {"t": c}).scalar()
+                except Exception:
+                    _rq = None
+                if not _rq or int(_rq) <= 0:
+                    _es = db.execute(_sqt(
+                        "SELECT fill_price, filled_at FROM paper_desk_orders "
+                        "WHERE ticker=:t AND side='SELL' AND status='FILLED' "
+                        "ORDER BY id DESC LIMIT 1"), {"t": c}).fetchone()
+                    if _es and _es[0]:
+                        try:
+                            _et = _es[1].astimezone(KST).strftime("%H:%M:%S") if _es[1] else ""
+                        except Exception:
+                            _et = ""
+                        exitp = float(_es[0])
+                        net_pct = round((exitp / entry - 1) * 100 - 0.23, 2) if entry else 0.0
+                        rows_out.append({
+                            "rule": "chatbot", "rule_ko": "💬 챗봇", "idx": 90 + len(rows_out),
+                            "code": c, "name": f"💬 {name}", "buy_t": cur["buys"][0][2],
+                            "sell_t": _et, "entry": entry, "exit": exitp, "qty": net,
+                            "result": "win" if net_pct > 0 else "loss" if net_pct < 0 else "flat",
+                            "net_pct": net_pct,
+                            "parts": {"buys": [[p, q, t] for p, q, t in cur["buys"]],
+                                      "sells": [[exitp, net, _et, 0, 0, exitp > entry, entry]]}})
+                        continue
                 last = None
                 try:
                     from services.paper_desk import _live_price
@@ -936,7 +967,7 @@ def _chat_fam_entries(code_set: set, day8: str = ""):
         # buy yet please add like waiting icon") — shown as waiting entries
         opens = db.execute(_sqt(
             "SELECT ticker, name, side, qty, limit_price, created_at FROM paper_desk_orders "
-            "WHERE COALESCE(source,'') IN ('chat','chatbot') AND status='OPEN' "
+            "WHERE (COALESCE(source,'') IN ('chat','chatbot') OR COALESCE(source,'') LIKE '%-chat') AND status='OPEN' "
             "AND order_type='limit' ORDER BY id")).fetchall()
         for r in opens:
             c = r[0]
@@ -1064,7 +1095,7 @@ def chat_orders(limit: int = Query(30), db: Session = Depends(get_db)):
     rows = db.execute(text(
         "SELECT id, ticker, name, side, qty, status, fill_price, realized_pnl, "
         "  realized_pnl_pct, created_at FROM paper_desk_orders "
-        "WHERE COALESCE(source,'') IN ('chat','chatbot') ORDER BY id DESC LIMIT :n"),
+        "WHERE (COALESCE(source,'') IN ('chat','chatbot') OR COALESCE(source,'') LIKE '%-chat') ORDER BY id DESC LIMIT :n"),
         {"n": int(limit)}).fetchall()
     from datetime import timedelta, timezone
     _KST9 = timezone(timedelta(hours=9))

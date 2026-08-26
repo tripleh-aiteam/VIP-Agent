@@ -186,7 +186,7 @@ def order_status_reply(db, transcript: Optional[str], lang: str) -> Optional[str
     KST = timezone(timedelta(hours=9))
     rows = db.execute(_sqt(
         "SELECT name, ticker, side, qty, status, limit_price, fill_price, created_at "
-        "FROM paper_desk_orders WHERE COALESCE(source,'') IN ('chat','chatbot') "
+        "FROM paper_desk_orders WHERE (COALESCE(source,'') IN ('chat','chatbot') OR COALESCE(source,'') LIKE '%-chat') "
         "ORDER BY id DESC LIMIT 8")).fetchall()
     if not rows:
         return None
@@ -481,9 +481,38 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
     pos = _position_qty(db, code)
     if side == "SELL":
         if pos <= 0:
-            return (f"⚠️ **{name}** 보유 수량이 없습니다 — 팔 것이 없어 주문을 만들지 않았습니다."
+            # SAY WHERE THE SHARES WENT (boss 2026-08-26: the desk still showed
+            # 💬 LG전자 while the 15:19 bell had already sold it — '없습니다' alone
+            # read as a contradiction)
+            _gone = ""
+            try:
+                from datetime import timedelta as _td7, timezone as _tz7
+                from sqlalchemy import text as _sq7
+                _ls = db.execute(_sq7(
+                    "SELECT fill_price, filled_at, COALESCE(source,'') FROM paper_desk_orders "
+                    "WHERE ticker=:t AND side='SELL' AND status='FILLED' "
+                    "ORDER BY id DESC LIMIT 1"), {"t": code}).fetchone()
+                if _ls:
+                    _tm7 = ""
+                    try:
+                        _tm7 = _ls[1].astimezone(_tz7(_td7(hours=9))).strftime("%H:%M") if _ls[1] else ""
+                    except Exception:
+                        pass
+                    _who = ("챗봇 주문" if str(_ls[2]) in ("chat", "chatbot")
+                            else "장 마감 자동 정리" if "chat" in str(_ls[2])
+                            else "알고리즘 자동 매도")
+                    _who_en = ("your chatbot order" if str(_ls[2]) in ("chat", "chatbot")
+                               else "the closing-bell auto-sell" if "chat" in str(_ls[2])
+                               else "the algorithm's auto-sell")
+                    _gone = (f" 마지막 매도: {_tm7} @ ₩{float(_ls[0] or 0):,.0f} ({_who}) — "
+                             f"이미 전량 매도된 상태입니다." if not en else
+                             f" Last sell: {_tm7} @ ₩{float(_ls[0] or 0):,.0f} ({_who_en}) — "
+                             f"the position was already fully sold.")
+            except Exception:
+                pass
+            return ((f"⚠️ **{name}** 보유 수량이 없습니다 — 팔 것이 없어 주문을 만들지 않았습니다.{_gone}")
                     if not en else
-                    f"⚠️ We hold no **{name}** — nothing to sell, so no order was created.")
+                    (f"⚠️ We hold no **{name}** — nothing to sell, so no order was created.{_gone}"))
         if pct:
             qty = max(1, min(pos, round(pos * pct / 100)))
         elif cmd["all_"]:

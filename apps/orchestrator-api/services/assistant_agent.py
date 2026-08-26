@@ -2246,7 +2246,7 @@ def _my_chat_orders_reply(db, transcript: Optional[str], lang: str) -> Optional[
     from sqlalchemy import text as _sqt
     rows = db.execute(_sqt(
         "SELECT name, side, qty, status, fill_price, limit_price, realized_pnl, created_at "
-        "FROM paper_desk_orders WHERE COALESCE(source,'') IN ('chat','chatbot') "
+        "FROM paper_desk_orders WHERE (COALESCE(source,'') IN ('chat','chatbot') OR COALESCE(source,'') LIKE '%-chat') "
         "ORDER BY id DESC LIMIT 40")).fetchall()
     today8 = _dt_now_kst().strftime("%Y%m%d")
     L = []
