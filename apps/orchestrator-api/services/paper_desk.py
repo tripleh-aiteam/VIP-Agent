@@ -295,6 +295,18 @@ def _fill(db, order_id: int, ticker: str, name: str, side: str, qty: int, px: fl
     if side == "BUY":
         cost = px * qty * (1 + BUY_COST_PCT / 100)
         if cost > cash + 1e-6:
+            # 💬 the boss's own chat orders know no ceiling — it is fake money (boss
+            # 2026-08-26: "with fake money there should not be limitations"). Print the
+            # shortfall into BOTH cash and start_cash so every P&L number stays honest.
+            _src9 = db.execute(text(
+                "SELECT source FROM paper_desk_orders WHERE id=:i"), {"i": order_id}).scalar()
+            if str(_src9 or "") in ("chat", "chatbot"):
+                _short = cost - cash
+                db.execute(text(
+                    "UPDATE paper_desk_account SET cash=cash+:s, start_cash=start_cash+:s "
+                    "WHERE id=1"), {"s": _short})
+                cash += _short
+        if cost > cash + 1e-6:
             db.execute(text(
                 "UPDATE paper_desk_orders SET status='REJECTED', note='잔고 부족 (insufficient cash)' "
                 "WHERE id=:i"), {"i": order_id})

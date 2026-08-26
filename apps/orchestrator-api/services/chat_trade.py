@@ -114,7 +114,9 @@ def parse(transcript: Optional[str]) -> Optional[dict]:
         return None
     code, name = stocks[0]
     qty = None
-    qm = re.search(r"(\d[\d,]*)\s*(?:주|shares?|share|개)", tl)
+    # "100 stock(s)" counts too (boss 2026-08-26: 'buy Skhynix 100 stock' fell back
+    # to the budget default of 5 — fake money must never shrink his number)
+    qm = re.search(r"(\d[\d,]*)\s*(?:주|shares?|share|stocks?|개)", tl)
     if not qm:
         qm = re.search(r"\b(\d{1,6})\b\s*$", tl)     # trailing bare number: "buy samsung 10"
     if qm:
