@@ -5425,12 +5425,21 @@ _PORTFOLIO_RE = _re.compile(
     r"|\bmy (stocks?|positions?|portfolio|holdings?|trades?)\b|what do (i|we) (own|hold)"
     r"|did (i|we) buy|on the t[yh]?rade\b|paper (account|desk|portfolio)"
     r"|내(가)?.{0,8}(샀|산 |산\?|보유|가진|들고)|보유(한|중인|하고 있는)?\s*(종목|주식)|포트폴리오"
-    r"|모의투자.{0,12}(보유|종목|몇|현황|얼마)|뭐\s*샀|몇\s*(종목|개).{0,12}(샀|보유|들고)",
+    r"|모의투자.{0,12}(보유|종목|몇|현황|얼마)|뭐\s*샀|몇\s*(종목|개).{0,12}(샀|보유|들고)"
+    # 'Do I have a naver right now?' (boss 2026-08-26: the question 'do I OWN
+    # this stock' was mis-routed into the full position-advice engine) — plain
+    # ownership questions read the desk, they never ask the adviser
+    r"|\bdo (i|we) (still )?(have|own|hold)\b|\bam i (still )?holding\b"
+    r"|\bare we (still )?holding\b|\bhave (i|we) (got|bought)\b"
+    r"|(가지고|갖고|들고)\s*있|보유\s*(중|하고\s*있|했)|(아직|지금).{0,10}(있어|있나|있니)",
     _re.IGNORECASE)
 
 
-def _paper_portfolio_reply(db, lang: str, agent_id: str = "vip") -> Optional[str]:
-    """The boss's 모의투자 desk holdings, live-priced — real numbers from paper_desk.state."""
+def _paper_portfolio_reply(db, lang: str, agent_id: str = "vip",
+                           focus_text: str = "") -> Optional[str]:
+    """The boss's 모의투자 desk holdings, live-priced — real numbers from paper_desk.state.
+    If the question names a specific stock ('do I have a naver right now?'),
+    the answer LEADS with yes/no for that stock (boss 2026-08-26)."""
     en = str(lang or "").lower().startswith("en")
     try:
         from services.paper_desk import state as _pd_state
@@ -5447,6 +5456,30 @@ def _paper_portfolio_reply(db, lang: str, agent_id: str = "vip") -> Optional[str
         except Exception:
             return "-"
     L = []
+    # named-stock lead: '예/아니요' first, list after
+    if focus_text:
+        try:
+            from services.stock_resolver import resolve_one
+            _fc9, _fn9 = resolve_one(focus_text)
+        except Exception:
+            _fc9, _fn9 = None, None
+        if _fc9:
+            _hit9 = next((p for p in poss
+                          if str(p.get("ticker")) == str(_fc9)), None)
+            if _hit9:
+                if en:
+                    L.append(f"**✅ Yes — you hold {_hit9.get('name')}: "
+                             f"{_hit9.get('qty'):,} share(s) @ avg ₩{_w(_hit9.get('avg_price'))}"
+                             + (f" · now ₩{_w(_hit9.get('live_price'))} · P&L {_hit9.get('unrealized_pnl_pct'):+.2f}%"
+                                if _hit9.get("live_price") else "") + "**\n")
+                else:
+                    L.append(f"**✅ 네 — {_hit9.get('name')} 보유 중입니다: "
+                             f"{_hit9.get('qty'):,}주 @ 평단 {_w(_hit9.get('avg_price'))}원"
+                             + (f" · 현재가 {_w(_hit9.get('live_price'))}원 · 평가손익 {_hit9.get('unrealized_pnl_pct'):+.2f}%"
+                                if _hit9.get("live_price") else "") + "**\n")
+            else:
+                L.append((f"**❌ No — you don't hold {_fn9 or _fc9} right now.**\n" if en
+                          else f"**❌ 아니요 — {_fn9 or _fc9}은(는) 현재 보유하고 있지 않습니다.**\n"))
     if en:
         L.append(f"**🧾 Your paper-trading desk — {len(poss)} position(s) right now**")
         if not poss:
@@ -6751,7 +6784,7 @@ def _run_agent_impl(
     # === MY PORTFOLIO — 'how many stocks am I holding?' → the 모의투자 desk's real state.
     if (not confirmed_tool and not attachment_ids and transcript
             and _PORTFOLIO_RE.search(transcript)):
-        _pf = _paper_portfolio_reply(db, lang, agent_id)
+        _pf = _paper_portfolio_reply(db, lang, agent_id, focus_text=transcript)
         if _pf:
             return {"intent": "paper_portfolio", "language": lang, "reply": _pf,
                     "action": None, "speak": True, "transcript": transcript,
