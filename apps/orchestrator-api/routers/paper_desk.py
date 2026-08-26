@@ -800,11 +800,50 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
         # pot - it defaults to the boss's six (menu 1 semantics)
         codes = "000660,005930,017670,034020,035420,042660"
         _nc = codes
-    return _swr(("fam", family, tick, period, day or _kd9(), frm, to, gate,
-                 auto, _nc), 20.0,
+    res = _swr(("fam", family, tick, period, day or _kd9(), frm, to, gate,
+                auto, _nc), 20.0,
                 lambda: _fam_compute(family, tick, period, day, frm, to, gate,
                                      auto, codes),
                 placeholder={"ok": False, "computing": True})
+    # 💬 the chatbot's own orders ride along INSIDE the history (boss 2026-08-26:
+    # "simple recognition symbol... in both menu 1 and 2 and also in all 3 algo") —
+    # desk-scoped, display-only, never counted in any rule's stats
+    try:
+        res = {**res, "chat_rows": _chat_rows_for(set(codes.split(",")))}
+    except Exception:
+        pass
+    return res
+
+
+def _chat_rows_for(code_set: set) -> list[dict]:
+    from datetime import timedelta, timezone
+    from sqlalchemy import text as _sqt
+    from db.base import SessionLocal
+    KST = timezone(timedelta(hours=9))
+    out = []
+    db = SessionLocal()
+    try:
+        from services.paper_desk import _ensure
+        _ensure(db)
+        rows = db.execute(_sqt(
+            "SELECT ticker, name, side, qty, status, fill_price, realized_pnl, "
+            "  realized_pnl_pct, created_at FROM paper_desk_orders "
+            "WHERE COALESCE(source,'') IN ('chat','chatbot') ORDER BY id DESC LIMIT 40")).fetchall()
+        for r in rows:
+            if r[0] not in code_set:
+                continue
+            _at = None
+            try:
+                _at = r[8].astimezone(KST).strftime("%Y-%m-%d %H:%M") if r[8] is not None else None
+            except Exception:
+                _at = str(r[8])[:16] if r[8] is not None else None
+            out.append({"code": r[0], "name": r[1], "side": r[2], "qty": int(r[3] or 0),
+                        "status": r[4], "px": (float(r[5]) if r[5] is not None else None),
+                        "pnl": (float(r[6]) if r[6] is not None else None),
+                        "pnl_pct": (float(r[7]) if r[7] is not None else None), "at": _at})
+    finally:
+        db.close()
+    return out[:20]
 
 
 @router.get("/live/daily-chart")
@@ -906,12 +945,20 @@ def chat_orders(limit: int = Query(30), db: Session = Depends(get_db)):
         "  realized_pnl_pct, created_at FROM paper_desk_orders "
         "WHERE COALESCE(source,'') IN ('chat','chatbot') ORDER BY id DESC LIMIT :n"),
         {"n": int(limit)}).fetchall()
+    from datetime import timedelta, timezone
+    _KST9 = timezone(timedelta(hours=9))
+
+    def _kat(v):
+        try:
+            return v.astimezone(_KST9).strftime("%Y-%m-%d %H:%M") if v is not None else None
+        except Exception:
+            return str(v)[:16] if v is not None else None
     return {"ok": True, "orders": [
         {"id": r[0], "ticker": r[1], "name": r[2], "side": r[3], "qty": int(r[4] or 0),
          "status": r[5], "fill_price": (float(r[6]) if r[6] is not None else None),
          "realized_pnl": (float(r[7]) if r[7] is not None else None),
          "realized_pnl_pct": (float(r[8]) if r[8] is not None else None),
-         "at": (str(r[9])[:19] if r[9] is not None else None)} for r in rows]}
+         "at": _kat(r[9])} for r in rows]}
 
 
 @router.get("/live/news-stamps")

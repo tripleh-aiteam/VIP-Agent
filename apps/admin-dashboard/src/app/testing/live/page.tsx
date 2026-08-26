@@ -1151,7 +1151,10 @@ export default function LiveDeskPage() {
                   partial?: boolean };
   type FamTrades = { ok: boolean; rows: FamRow[]; trips: number; wins: number;
                      losses: number; win_pct: number; net_won: number;
-                     ep_wins?: number; ep_losses?: number; win_pct_ep?: number };
+                     ep_wins?: number; ep_losses?: number; win_pct_ep?: number;
+                     chat_rows?: { code: string; name: string; side: string; qty: number;
+                                   status: string; px: number | null; pnl: number | null;
+                                   pnl_pct: number | null; at: string | null }[] };
   const [famOpen, setFamOpen] = useState(true);
   // history filters (boss 2026-08-13: "searching bar/filtering - only particular
   // company, or time, or winning and losing") - applies to BOTH algorithms
@@ -2449,6 +2452,29 @@ export default function LiveDeskPage() {
                   {famBusy ? t("갱신 중…", "updating…") : famOpen ? t("닫기 ▲", "close ▲") : t("펼치기 ▼", "open ▼")}
                 </span>
               </div>
+              {/* 💬 chatbot orders INSIDE the trading history (boss 2026-08-26: "simple
+                  recognition symbol... in both menu 1 and 2 and also in all 3 algo") —
+                  desk-scoped rows shown under every algo tab, never counted in stats */}
+              {famOpen && fam && (fam.chat_rows?.length ?? 0) > 0 && (
+                <div className="mt-1 space-y-0.5">
+                  {fam.chat_rows!.map((c, ci) => (
+                    <div key={ci} className="flex items-center gap-2 flex-wrap text-[11.5px]">
+                      <span className="font-bold px-1.5 py-0.5 rounded text-white text-[10px]"
+                        style={{ background: "#0277bd" }}>💬 chatbot</span>
+                      <b style={{ color: c.side === "BUY" ? "#2e7d32" : "#b02a2a" }}>
+                        {c.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")}</b>
+                      <b className="text-[var(--text-primary)]">{c.name}</b>
+                      <span className="text-[var(--text-secondary)]">
+                        {c.qty.toLocaleString()}{t("주", " sh")}
+                        {c.px ? ` @ ₩${c.px.toLocaleString()}` : ""} · {c.status}
+                        {c.pnl != null && ` · ${c.pnl >= 0 ? "+" : ""}₩${Math.round(c.pnl).toLocaleString()}`}
+                        {c.at ? ` · ${c.at.slice(5, 16)}` : ""} ·{" "}
+                        {t("채팅으로 주문 — 알고리즘 아님", "ordered by chat — not an algorithm")}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {famOpen && fam && (fam.rows.length > 0
                   || ((fam as { holding?: unknown[] }).holding?.length ?? 0) > 0) && (
                 <>
