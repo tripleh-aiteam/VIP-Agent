@@ -255,30 +255,48 @@ def closed_reply(side: str, en: bool) -> str:
             f"({wait}). KRX 정규장은 평일 09:00~15:30입니다.")
 
 
+def has_cancel_word(t: str) -> bool:
+    """'취소' / 'cancel' — typo-tolerant ('cancle' reached the portfolio lane and got
+    a holdings lecture, boss 2026-08-26)."""
+    if re.search(r"취소|cancel", t):
+        return True
+    import difflib
+    return any(difflib.get_close_matches(w, ("cancel",), n=1, cutoff=0.75)
+               for w in re.findall(r"[a-z]{4,9}", t))
+
+
 def cancel_open(db, transcript: Optional[str], lang: str) -> Optional[str]:
-    """'NAVER 주문 취소' / 'cancel my naver order' — cancels the chatbot's OPEN
-    (queued, unfilled) limit orders; with no stock named, all of them. The bare
-    '취소/no' still belongs to the confirmation flow, so this needs an explicit
-    order word (주문/order/대기/waiting)."""
+    """'NAVER 주문 취소' / 'cancel my naver order' / 'I want to cancle naver which I
+    bought' — cancels the chatbot's OPEN (queued) limit orders. A named stock with a
+    matching open order is enough; without a stock, an order word (주문/order/대기)
+    cancels all. Bare '취소/no' still belongs to the confirmation flow."""
     t = (transcript or "").lower()
-    if not t or not re.search(r"취소|cancel", t):
-        return None
-    if not any(k in t for k in ("주문", "order", "대기", "waiting", "queue")):
+    if not t or not has_cancel_word(t):
         return None
     en = not re.search(r"[가-힣]", transcript or "") and bool(re.search(r"[a-zA-Z]", transcript or ""))
     from sqlalchemy import text as _sqt
     from services.assistant_agent import _all_stocks_in_query
     stocks = _all_stocks_in_query(transcript)
-    q = ("UPDATE paper_desk_orders SET status='CANCELLED' "
+    explicit = any(k in t for k in ("주문", "order", "대기", "waiting", "queue"))
+    if not stocks and not explicit:
+        return None
+    q = ("SELECT id, name, side, qty, limit_price FROM paper_desk_orders "
          "WHERE COALESCE(source,'') IN ('chat','chatbot') AND status='OPEN'")
     params = {}
     if stocks:
         q += " AND ticker=:t"
         params["t"] = stocks[0][0]
-    rows = db.execute(_sqt(q + " RETURNING id, name, side, qty, limit_price"), params).fetchall()
-    db.commit()
+    rows = db.execute(_sqt(q), params).fetchall()
     if not rows:
-        return ("취소할 대기 주문이 없습니다." if not en else "No waiting orders to cancel.")
+        if not explicit and not stocks:
+            return None
+        nm = stocks[0][1] if stocks else ""
+        return ((f"{nm}에 취소할 대기 주문이 없습니다." if nm else "취소할 대기 주문이 없습니다.")
+                if not en else
+                (f"No waiting orders on {nm} to cancel." if nm else "No waiting orders to cancel."))
+    ids = ",".join(str(int(r[0])) for r in rows)
+    db.execute(_sqt(f"UPDATE paper_desk_orders SET status='CANCELLED' WHERE id IN ({ids})"))
+    db.commit()
     L = [(f"🚫 대기 주문 {len(rows)}건을 취소했습니다:" if not en
           else f"🚫 Cancelled {len(rows)} waiting order(s):")]
     for r in rows:

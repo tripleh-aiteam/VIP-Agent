@@ -2185,6 +2185,16 @@ def _fundamentals_reply(transcript: Optional[str], lang: str, db=None) -> Option
     return out
 
 
+def _is_cancelish(transcript: Optional[str]) -> bool:
+    """A cancel-order intent ('cancle naver which I bought') must reach the chat
+    order desk, not the portfolio lane (2026-08-26)."""
+    try:
+        from services.chat_trade import has_cancel_word
+        return has_cancel_word((transcript or "").lower())
+    except Exception:
+        return False
+
+
 def _is_my_chat_orders_q(transcript: Optional[str]) -> bool:
     t = (transcript or "").lower()
     if not t:
@@ -6899,6 +6909,7 @@ def _run_agent_impl(
     # portfolio — its own lane below answers from the order record (2026-08-26).
     if (not confirmed_tool and not attachment_ids and transcript
             and not _is_my_chat_orders_q(transcript)
+            and not _is_cancelish(transcript)
             and _PORTFOLIO_RE.search(transcript)):
         _pf = _paper_portfolio_reply(db, lang, agent_id, focus_text=transcript)
         if _pf:
@@ -6994,7 +7005,8 @@ def _run_agent_impl(
             # no ML in advice) — this ML-backed lane keeps only what that engine
             # doesn't claim
             from services import checklist_advice as _ca_gate
-            if is_position_question(transcript) and not _ca_gate.kind(transcript):
+            if (is_position_question(transcript) and not _ca_gate.kind(transcript)
+                    and not _is_cancelish(transcript)):
                 from services.position_advice import advise as _pos_advise
                 _adv = _pos_advise(db, parse(transcript))
                 if _adv.get("ok"):
