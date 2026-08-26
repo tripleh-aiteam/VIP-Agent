@@ -391,8 +391,105 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
     net_pct?: number; exit_why?: string; rule?: string;
     parts?: { sells?: unknown[][] } };
   const [fam9, setFam9] = useState<"d1" | "d2" | "d3">("d2");
-  const [menu9, setMenu9] = useState<"m1" | "m2">("m2");
+  const [menu9, setMenu9] = useState<"m1" | "m2" | "demo">("m2");
   const [open9, setOpen9] = useState(false);
+  // 🎭 DEMO MODE (boss 2026-08-26: "make menu3 with 두산 data imitate, I wanna
+  // see how it is processing even after market"): replays 두산에너빌리티's REAL
+  // 1-minute bars from the last session bar-by-bar like a movie while a demo
+  // 알고2 trades them - dip-door buy, +1% rungs selling 10%, -1% stop, 15:19
+  // bell. Clearly labeled a replay; prices are never invented.
+  const [dBars9, setDBars9] = useState<{ hhmm: string; open: number; high: number;
+    low: number; close: number }[]>([]);
+  const [dPos9, setDPos9] = useState(0);          // replay cursor
+  const [dSpeed9, setDSpeed9] = useState(3);      // bars per tick
+  const [dRun9, setDRun9] = useState(false);
+  const dState9 = useRef<{ base: number | null; qty: number; k: number;
+    ev: string[]; lo: number | null }>({ base: null, qty: 0, k: 0, ev: [], lo: null });
+  useEffect(() => {
+    if (menu9 !== "demo" || dBars9.length) return;
+    api<{ bars?: { hhmm: string; open: number; high: number; low: number;
+      close: number }[] }>("/paper-desk/live/tape?code=034020&period=60&bars=900")
+      .then((d) => { if (d?.bars?.length) setDBars9(d.bars); })
+      .catch(() => {});
+  }, [menu9, dBars9.length]);
+  useEffect(() => {
+    if (menu9 !== "demo" || !dRun9 || !dBars9.length) return;
+    const h = setInterval(() => {
+      setDPos9((p) => {
+        let np = Math.min(p + dSpeed9, dBars9.length);
+        const st = dState9.current;
+        for (let i = Math.max(1, p); i < np; i++) {
+          const b = dBars9[i], hh = String(b.hhmm).slice(0, 5);
+          if (st.base === null) {
+            // demo dip door: fell >=0.7% from the last 10 bars' high, then an up bar
+            const win = dBars9.slice(Math.max(0, i - 10), i);
+            const hi = Math.max(...win.map((x) => x.high));
+            if (hi && (hi - b.close) / hi >= 0.007 && b.close > dBars9[i - 1].close) {
+              st.base = b.close; st.qty = 100; st.k = 0; st.lo = null;
+              st.ev.unshift(`🟢 ${hh} 매수 100주 @ ${Math.round(b.close).toLocaleString()} (급락 후 반등 문)`);
+            }
+          } else {
+            const stop = st.base * 0.99;
+            const rung = st.base * (1 + ((st.k + 1) * 1.0 - 0.15) / 100);
+            if (b.low <= stop) {
+              st.ev.unshift(`🔴 ${hh} 전량 매도 ${st.qty}주 @ ${Math.round(stop).toLocaleString()} (-1% 손절선 터치)`);
+              st.base = null; st.qty = 0; st.k = 0;
+            } else if (b.high >= rung && st.qty > 10) {
+              st.qty -= 10; st.k += 1;
+              st.ev.unshift(`🟠 ${hh} +${st.k}% 계단 매도 10주 @ ${Math.round(rung).toLocaleString()} (남은 ${st.qty}주)`);
+            }
+            if (st.base !== null && hh >= "15:19") {
+              st.ev.unshift(`🔔 ${hh} 종 — 전량 매도 ${st.qty}주 @ ${Math.round(b.close).toLocaleString()} (15:19 장 마감)`);
+              st.base = null; st.qty = 0; st.k = 0;
+            }
+          }
+        }
+        if (np >= dBars9.length) setDRun9(false);
+        return np;
+      });
+    }, 700);
+    return () => clearInterval(h);
+  }, [menu9, dRun9, dSpeed9, dBars9]);
+  const dCv9 = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    if (menu9 !== "demo") return;
+    const c = dCv9.current;
+    const bs = dBars9.slice(Math.max(0, dPos9 - 90), dPos9);
+    if (!c || !bs.length) return;
+    const st = dState9.current;
+    const W = c.clientWidth, H = c.clientHeight;
+    c.width = W * 2; c.height = H * 2;
+    const g = c.getContext("2d");
+    if (!g) return;
+    g.scale(2, 2); g.clearRect(0, 0, W, H);
+    const stop = st.base ? st.base * 0.99 : null;
+    const rung = st.base ? st.base * (1 + ((st.k + 1) * 1.0 - 0.15) / 100) : null;
+    const lo = Math.min(...bs.map((b) => b.low), stop ?? Infinity) * 0.999;
+    const hi = Math.max(...bs.map((b) => b.high), rung ?? 0, st.base ?? 0) * 1.001;
+    const y = (v: number) => 8 + (hi - v) / Math.max(1e-9, hi - lo) * (H - 30);
+    const bw = (W - 56) / bs.length;
+    bs.forEach((b, i) => {
+      const x = 56 + i * bw + bw / 2;
+      const up = b.close >= b.open;
+      g.strokeStyle = g.fillStyle = up ? "#d32f2f" : "#1565c0";
+      g.beginPath(); g.moveTo(x, y(b.high)); g.lineTo(x, y(b.low)); g.stroke();
+      g.fillRect(x - Math.max(1, bw * 0.3), y(Math.max(b.open, b.close)),
+                 Math.max(2, bw * 0.6), Math.max(1, Math.abs(y(b.open) - y(b.close))));
+      if (i % 20 === 0) { g.fillStyle = "#888"; g.font = "9px sans-serif";
+        g.fillText(String(b.hhmm).slice(0, 5), x - 12, H - 6); }
+    });
+    const line = (v: number, col: string, lab: string) => {
+      g.strokeStyle = col; g.setLineDash([5, 3]);
+      g.beginPath(); g.moveTo(56, y(v)); g.lineTo(W - 2, y(v)); g.stroke();
+      g.setLineDash([]); g.fillStyle = col; g.font = "10px sans-serif";
+      g.fillText(lab, 2, y(v) + 3);
+    };
+    if (st.base) {
+      if (stop) line(stop, "#c62828", `-1% ${Math.round(stop).toLocaleString()}`);
+      if (rung) line(rung, "#2e7d32", `+${st.k + 1}% ${Math.round(rung).toLocaleString()}`);
+      line(st.base, "#9e9e9e", `기준 ${Math.round(st.base).toLocaleString()}`);
+    }
+  }, [menu9, dPos9, dBars9]);
   const [holds9, setHolds9] = useState<Hold[]>([]);
   const [evts9, setEvts9] = useState<string[]>([]);
   const [bars9, setBars9] = useState<Record<string, { hhmm: string; open: number;
@@ -523,14 +620,17 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
       {open9 && (
         <>
           <div className="mt-1.5 flex gap-1 flex-wrap">
-            {(["m1", "m2"] as const).map((m) => (
+            {(["m1", "m2", "demo"] as const).map((m) => (
               <button key={m} onClick={() => setMenu9(m)}
                 className="px-2 py-0.5 rounded border text-[10.5px]"
-                style={menu9 === m ? { background: "#1565c0", color: "#fff", borderColor: "#1565c0", fontWeight: 700 }
-                                   : { borderColor: "rgba(21,101,192,0.4)", color: "#1565c0" }}>
-                {m === "m1" ? t("메뉴1 (6종목)", "Menu 1 (the six)") : t("메뉴2 (체크리스트)", "Menu 2 (checklist)")}</button>
+                style={menu9 === m ? { background: m === "demo" ? "#6a1b9a" : "#1565c0", color: "#fff",
+                                       borderColor: m === "demo" ? "#6a1b9a" : "#1565c0", fontWeight: 700 }
+                                   : { borderColor: "rgba(21,101,192,0.4)", color: m === "demo" ? "#6a1b9a" : "#1565c0" }}>
+                {m === "m1" ? t("메뉴1 (6종목)", "Menu 1 (the six)")
+                 : m === "m2" ? t("메뉴2 (체크리스트)", "Menu 2 (checklist)")
+                 : t("🎭 데모 (두산 재생)", "🎭 Demo (Doosan replay)")}</button>
             ))}
-            {(["d1", "d2", "d3"] as const).map((f) => (
+            {menu9 !== "demo" && (["d1", "d2", "d3"] as const).map((f) => (
               <button key={f} onClick={() => setFam9(f)}
                 className="px-2 py-0.5 rounded border text-[10.5px]"
                 style={fam9 === f ? { background: "#1565c0", color: "#fff", borderColor: "#1565c0", fontWeight: 700 }
@@ -538,7 +638,37 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
                 {t(`알고${f[1]}`, `Algo ${f[1]}`)}</button>
             ))}
           </div>
-          {holds9.length === 0 ? (
+          {menu9 === "demo" ? (
+            <div className="mt-2">
+              <div className="flex items-center gap-2 flex-wrap text-[10.5px]">
+                <b style={{ color: "#6a1b9a" }}>
+                  {t("🎭 데모 — 두산에너빌리티 실제 1분봉 재생 + 알고2 규칙 시연 (실전 판정과 미세하게 다를 수 있는 간이 재현)",
+                     "🎭 DEMO — replaying Doosan's REAL 1-min bars + Algo2 rules (simplified re-enactment)")}</b>
+                <button onClick={() => setDRun9((r) => !r)}
+                  className="px-2.5 py-0.5 rounded border font-bold"
+                  style={{ background: dRun9 ? "#fff" : "#6a1b9a", color: dRun9 ? "#6a1b9a" : "#fff", borderColor: "#6a1b9a" }}>
+                  {dRun9 ? t("⏸ 일시정지", "⏸ pause") : t("▶ 재생", "▶ play")}</button>
+                <button onClick={() => { setDPos9(0); dState9.current = { base: null, qty: 0, k: 0, ev: [], lo: null }; }}
+                  className="px-2 py-0.5 rounded border" style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
+                  ⏮ {t("처음부터", "restart")}</button>
+                {[1, 3, 10].map((s) => (
+                  <button key={s} onClick={() => setDSpeed9(s)}
+                    className="px-2 py-0.5 rounded border"
+                    style={dSpeed9 === s ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
+                                         : { borderColor: "#6a1b9a", color: "#6a1b9a" }}>×{s}</button>
+                ))}
+                <span className="tabular-nums opacity-70">
+                  {dBars9.length ? `${t("재생 시각", "clock")} ${String((dBars9[Math.max(0, dPos9 - 1)] || {}).hhmm || "").slice(0, 5)} · ${dPos9}/${dBars9.length}${t("봉", " bars")}` : t("두산 데이터 로딩…", "loading Doosan bars…")}</span>
+              </div>
+              <canvas ref={dCv9} className="w-full mt-1 rounded border"
+                style={{ height: 220, borderColor: "rgba(106,27,154,0.3)" }} />
+              <div className="mt-1 max-h-[140px] overflow-y-auto leading-relaxed tabular-nums text-[10.5px]">
+                {dState9.current.ev.length
+                  ? dState9.current.ev.slice(0, 20).map((e, i) => <div key={i}>{e}</div>)
+                  : <div className="opacity-60">{t("▶ 재생을 누르면 하루가 흘러가며 매수/매도가 여기 찍힙니다", "press ▶ and the day plays out — buys/sells print here")}</div>}
+              </div>
+            </div>
+          ) : holds9.length === 0 ? (
             <div className="mt-2 text-[var(--text-muted)]">
               {t("지금 보유 포지션이 없습니다 — 장중에 문이 열리면 이 자리에서 실시간으로 봅니다. (종 15:19 이후는 항상 빈손이 정상)",
                  "No open positions right now — when a door opens during the session you watch it here live. (After the 15:19 bell, empty hands are the law)")}</div>
@@ -547,6 +677,7 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
               {holds9.slice(0, 8).map((h) => <Chart key={h.code} h={h} />)}
             </div>
           )}
+          {menu9 !== "demo" && (
           <div className="mt-2">
             <b style={{ color: "#1565c0" }}>{t("오늘의 이벤트 (최신순)", "Today's events (newest first)")}</b>
             <div className="mt-0.5 max-h-[130px] overflow-y-auto leading-relaxed tabular-nums">
@@ -554,6 +685,7 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
                             : <div className="opacity-60">{t("아직 이벤트 없음", "no events yet")}</div>}
             </div>
           </div>
+          )}
         </>
       )}
     </div>
