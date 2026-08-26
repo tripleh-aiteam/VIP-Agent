@@ -33,6 +33,11 @@ def kind(transcript: Optional[str]) -> Optional[str]:
     t = (transcript or "").lower()
     if not t:
         return None
+    # COUNTING/INVENTORY questions are never advice ("how many stock I am holding
+    # now?" got a SELL verdict for the context stock — boss 2026-08-26)
+    if any(k in t for k in ("how many", "how much do i", "몇 종목", "몇 개", "몇개",
+                            "list my", "what did i buy", "뭐 샀", "보유 현황")):
+        return None
     sell = any(k in t for k in _SELL_KW)
     buy = any(k in t for k in _BUY_KW)
     if sell and buy:

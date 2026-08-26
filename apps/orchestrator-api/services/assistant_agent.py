@@ -5555,7 +5555,7 @@ _CONFIRM_SKIP = ("살까", "사야", "팔까", "팔아야", "추천", "전망", 
 # 몇 개야?' must read the 모의투자 desk's REAL holdings, not fall into the picks scanner
 # (2026-07-09 screenshot: 'how many stock' keyword hijacked an ownership question).
 _PORTFOLIO_RE = _re.compile(
-    r"(how many|which|what).{0,36}\b(i|we)('ve| have)?\s*(bought|hold|own|holding|has bought)"
+    r"(how many|which|what).{0,36}\b(i|we)('ve| have| am| are)?\s*(bought|hold|own|holding|has bought)"
     r"|\bmy (stocks?|positions?|portfolio|holdings?|trades?)\b|what do (i|we) (own|hold)"
     r"|did (i|we) buy|on the t[yh]?rade\b|paper (account|desk|portfolio)"
     r"|내(가)?.{0,8}(샀|산 |산\?|보유|가진|들고)|보유(한|중인|하고 있는)?\s*(종목|주식)|포트폴리오"
