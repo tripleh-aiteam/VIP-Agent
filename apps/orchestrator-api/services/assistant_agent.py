@@ -7295,6 +7295,33 @@ def _run_agent_impl(
         except Exception as e:
             log.warning(f"readiness failed: {str(e)[:120]}")
 
+    # === 🤖 WHICH LLM AM I? (boss 2026-08-26: "tell me right now which LLM I am
+    # using in the chatbot") — answered from the live config, no guessing. ===
+    _t_llm = (transcript or "").lower()
+    if (not confirmed_tool
+            and any(k in _t_llm for k in ("which llm", "what llm", "which model", "what model",
+                                          "어떤 모델", "무슨 모델", "어떤 llm", "무슨 llm", "모델 뭐"))
+            and any(k in _t_llm for k in ("using", "are you", "you use", "쓰고", "사용", "뭐"))):
+        try:
+            from services.llm_client import DEFAULT_MODEL_NAME, _env as _lenv, _last_used
+            _sel = (forced_model or "").strip() or _lenv("LLM_MODEL") or DEFAULT_MODEL_NAME
+            _en9 = not _re.search(r"[가-힣]", transcript or "")
+            _rep9 = ((f"🤖 **지금 이 대화의 모델: {_sel}**\n"
+                      f"· 마지막 실제 LLM 호출: {_last_used.get('provider')} ({_last_used.get('model')})\n"
+                      f"· 가격·주문·추천·과거 데이터 답변은 LLM 없이 규칙 엔진이 직접 처리합니다 — 어떤 모델을 써도 동일\n"
+                      f"· 폴백 순서: 선택 모델 → Groq(무료) → Gemini Flash(무료) → OpenAI → Ollama — "
+                      f"무료 한도가 끝나면 다음으로 자동 전환되며 중단 없이 이어집니다") if not _en9 else
+                     (f"🤖 **Model for this conversation: {_sel}**\n"
+                      f"· Last actual LLM call: {_last_used.get('provider')} ({_last_used.get('model')})\n"
+                      f"· Prices, orders, picks and history are answered by the rules engine with NO LLM — identical on any model\n"
+                      f"· Fallback chain: your pick → Groq (free) → Gemini Flash (free) → OpenAI → Ollama — "
+                      f"when a free tier runs out it switches to the next automatically, no crash"))
+            return {"intent": "llm_info", "language": lang, "reply": _rep9,
+                    "action": None, "speak": True, "transcript": transcript,
+                    "tool_used": "llm_info"}
+        except Exception as e:
+            log.warning(f"llm-info lane failed: {str(e)[:120]}")
+
     # CONTEXT STOCK for follow-ups (boss 2026-08-26: "if I ask skhynix it must
     # understand next question without naming skhynix") — the most recent stock in
     # the conversation stands in when the new question names none.
