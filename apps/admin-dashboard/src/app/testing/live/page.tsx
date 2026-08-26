@@ -38,7 +38,7 @@ const COL_HELP: Record<string, [string, string, string, string]> = {
     "종목 이름입니다. 📌 표시는 점수와 상관없이 항상 데스크에 넣는 고정 종목(SK하이닉스·삼성전자)이라는 뜻입니다. 나머지는 그날 점수로 뽑힌 상위 5개입니다.",
     "The stock's name. 📌 means it is a fixed name (SK하이닉스, 삼성전자) that goes on the desk regardless of its score. The rest are the day's top five by score."],
   score: ["평균 점수 — 계산식", "Average score - the formula",
-    "평균 점수 = (시장 + 이슈·수급 + 종목선정 + 실행·관리) ÷ 4. 네 칸 각각이 100점 만점으로 채점되고 단순 평균합니다. 각 칸의 계산: 시장 = 체크리스트 #11~25 등 시장 항목의 O 가중 비율(방향×2·악재×2·급락일×3, 나머지 ×1) · 이슈·수급 = #31·32·34·43의 가중 합 · 종목선정 = #46~75 자동분(추세25+유동성20+유연성20+위치15+모멘텀10)÷90 · 실행·관리 = #76·79·82·83의 O 비율. 종목명(🧮)을 클릭하면 이 종목의 전체 계산이 항목 단위까지 펼쳐집니다. 그날 이전 자료만 사용합니다.",
+    "합산제 (2026-08-26 확정): 100개 항목 각각의 가중치(측정+논문 근거)를 통과분만큼 더한 값이 최종 점수 — 평균이 아닙니다. 최대 배점: 볼륨 가족 15 (#46:5+#47:4+#21:4+#69:2) · 외국인 6 · 정배열 5 · 집행 관문 8 · 엔진 법 항목 28은 모든 거래에 강제되므로 부여. 기본 최대 92 + 뉴스 레이어 8 = 100. 종목명(🧮)을 클릭하면 항목 단위 계산이 펼쳐집니다.",
     "Average = (Market + Issue/Supply + Stock selection + Execution mgmt) / 4. Each of the four columns is scored out of 100 and plainly averaged. Per column: Market = weighted share of O over checklist #11-25 & market-grade items (direction x2, bad news x2, plunge x3, others x1) - Issue/Supply = weighted sum of #31/32/34/43 - Stock selection = the automated #46-75 (trend25+liquidity20+flexibility20+levels15+momentum10)/90 - Execution = share of O over #76/79/82/83. Click a company name (the calculator mark) to unfold its full item-level calculation. Only data from before the day is used."],
   trend: ["추세 — 비중 25 (가장 중요)", "trend - weight 25 (the biggest)",
     "값이 위로 질서 있게 움직이고 있는가. ① 5일선 > 20일선 > 60일선 정배열(35%) ② 1년 동안 얼마나 곧게 움직였는지, 위아래로 흔들리지 않고 한 방향으로 가는 성질(25%) ③ 20일 신고가 여부(20%) ④ 최근 20일선 위에서 보낸 날의 비율(20%). 우리 규칙은 3번 오르면 사기 때문에 위로 가는 종목에서만 통합니다.",
@@ -202,6 +202,7 @@ const CELL: React.CSSProperties = { border: "1px solid var(--border-default)" };
 
 // every place the board names a rule goes through this one function
 function ruleName(id: string): string {
+  if (id === "chatbot") return "💬 chatbot";
   if (id === "D1") return "시나리오1";
   if (id === "D2") return "시나리오2";
   if (id === "D3") return "시나리오3";
@@ -506,7 +507,7 @@ function InspectionRoom({ t }: { t: (ko: string, en: string) => string }) {
           </div>
           {cats9 && (
             <div className="mt-1 tabular-nums font-bold" style={{ color: "#6a1b9a" }}>
-              {t("점수", "score")}: ① {cats9.market ?? "—"} + ② {cats9.issue != null ? Math.round(cats9.issue) : "—"} + ③ {cats9.stock_sel ?? "—"} + ④ {cats9.exec ?? "—"} ÷ 4 = {cats9.avg ?? "—"}
+              {t("점수(합산제)", "score (sum)")}: <b>{cats9.avg ?? "—"}</b> {t("· 참고 칸", "· ref columns")}: ① {cats9.market ?? "—"} · ② {cats9.issue != null ? Math.round(cats9.issue) : "—"} · ③ {cats9.stock_sel ?? "—"} · ④ {cats9.exec ?? "—"}
               {adj9 != null && <> {adj9 >= 0 ? "+" : "−"} {t("실시간", "live")} {Math.abs(adj9)} = <span style={{ fontSize: "1.1em" }}>{live9}</span></>}
               {" · "}
               {inTop9
@@ -600,56 +601,6 @@ function RecoLiveCheckPanel({ t, lang }: { t: (ko: string, en: string) => string
             </div>
           );
         })}
-      </div>
-    </div>
-  );
-}
-
-// 💬 CHATBOT ORDERS (boss 2026-08-26: "if we buy/sell using chatbot then it should
-// have some recognition... you can put the word chatbot"): the boss's own chat-placed
-// trades, clearly badged, on both desks. Hidden while empty.
-function ChatOrdersPanel({ t }: { t: (ko: string, en: string) => string }) {
-  type CO = { id: number; ticker: string; name: string; side: string; qty: number;
-              status: string; fill_price: number | null; realized_pnl: number | null;
-              realized_pnl_pct: number | null; at: string | null };
-  const [rows, setRows] = useState<CO[]>([]);
-  useEffect(() => {
-    let live = true;
-    const load = () => api<{ orders: CO[] }>("/paper-desk/chat-orders?limit=20")
-      .then((d) => { if (live) setRows(d.orders || []); }).catch(() => {});
-    load();
-    const h = setInterval(load, 20000);
-    return () => { live = false; clearInterval(h); };
-  }, []);
-  if (!rows.length) return null;
-  return (
-    <div className="mt-3 rounded-xl border px-4 py-2" style={{ borderColor: "#0277bd", background: "rgba(2,119,189,0.05)" }}>
-      <div className="flex items-center gap-2">
-        <b className="text-[13px]" style={{ color: "#0277bd" }}>
-          💬 {t("챗봇 주문 — 채팅으로 산/판 기록", "chatbot orders — bought/sold by chat")}
-        </b>
-        <span className="text-[10px] text-[var(--text-muted)]">
-          {t("챗봇에서 \"삼성전자 매수\"라고 말해 체결된 주문들", "orders filled by saying \"buy X\" to the chatbot")}
-        </span>
-      </div>
-      <div className="mt-1.5 space-y-1">
-        {rows.map((o) => (
-          <div key={o.id} className="flex items-center gap-2 flex-wrap text-[12px]">
-            <span className="font-bold px-1.5 py-0.5 rounded text-white text-[10.5px]"
-              style={{ background: "#0277bd" }}>💬 chatbot</span>
-            <b style={{ color: o.side === "BUY" ? "#2e7d32" : "#b02a2a" }}>
-              {o.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")}</b>
-            <b className="text-[var(--text-primary)]">{o.name}</b>
-            <span className="text-[var(--text-secondary)]">
-              {o.qty.toLocaleString()}{t("주", " sh")}
-              {o.fill_price ? ` @ ₩${o.fill_price.toLocaleString()}` : ""} · {o.status}
-              {o.realized_pnl != null &&
-                ` · ${o.realized_pnl >= 0 ? "+" : ""}₩${Math.round(o.realized_pnl).toLocaleString()}` +
-                (o.realized_pnl_pct != null ? ` (${o.realized_pnl_pct >= 0 ? "+" : ""}${o.realized_pnl_pct.toFixed(2)}%)` : "")}
-              {o.at ? ` · ${o.at.slice(5, 16)}` : ""}
-            </span>
-          </div>
-        ))}
       </div>
     </div>
   );
@@ -1151,10 +1102,7 @@ export default function LiveDeskPage() {
                   partial?: boolean };
   type FamTrades = { ok: boolean; rows: FamRow[]; trips: number; wins: number;
                      losses: number; win_pct: number; net_won: number;
-                     ep_wins?: number; ep_losses?: number; win_pct_ep?: number;
-                     chat_rows?: { code: string; name: string; side: string; qty: number;
-                                   status: string; px: number | null; pnl: number | null;
-                                   pnl_pct: number | null; at: string | null }[] };
+                     ep_wins?: number; ep_losses?: number; win_pct_ep?: number };
   const [famOpen, setFamOpen] = useState(true);
   // history filters (boss 2026-08-13: "searching bar/filtering - only particular
   // company, or time, or winning and losing") - applies to BOTH algorithms
@@ -1847,9 +1795,9 @@ export default function LiveDeskPage() {
                           return (
                             <td className="text-right px-3 font-extrabold" style={{ color: "#1565c0" }}
                               title={adj9 != null
-                                ? t(`4칸 평균 ${base9} + 실시간(4초, 가격·구간·뉴스) ${adj9 >= 0 ? "+" : ""}${adj9} = ${live9} — 종목명 클릭(🧮)이 전체 계산식`,
-                                    `4-column average ${base9} + live adj (4s: price/zone/news) ${adj9 >= 0 ? "+" : ""}${adj9} = ${live9} - click the name (🧮) for the full formula`)
-                                : t("평균 = (시장 + 이슈·수급 + 종목선정 + 실행·관리) ÷ 계산된 칸 수",
+                                ? t(`합산 점수 ${base9} + 실시간(4초, 가격·구간·뉴스·거래량) ${adj9 >= 0 ? "+" : ""}${adj9} = ${live9} — 종목명 클릭(🧮)이 전체 계산식`,
+                                    `sum score ${base9} + live adj (4s: price/zone/news/volume) ${adj9 >= 0 ? "+" : ""}${adj9} = ${live9} - click the name (🧮) for the full formula`)
+                                : t("합산제 — 통과 항목의 가중치 합 (평균 아님, 2026-08-26 항목별 점수)",
                                     "average = the four columns ÷ their count")}>
                               {live9 ?? base9}
                               {adj9 != null && adj9 !== 0 && (
@@ -1891,11 +1839,11 @@ export default function LiveDeskPage() {
                       const mi9 = (dpick as unknown as { market_items?: { no: number; q: string;
                         q_en?: string; ok: boolean | null; d: string; w?: number }[] } | null)?.market_items || [];
                       const W9: [string, string, string, number][] = [
-                        ["trend", "추세 (50·51·52·58)", "trend (50·51·52·58)", 25],
-                        ["liquidity", "유동성 (46·47·69)", "liquidity (46·47·69)", 20],
-                        ["flexibility", "유연성 (48)", "flexibility (48)", 20],
-                        ["levels", "위치 (62·63·67)", "levels (62·63·67)", 15],
-                        ["momentum", "모멘텀 (60·61)", "momentum (60·61)", 10]];
+                        ["liquidity", "볼륨 (46:5·47+69:6)", "volume (46:5·47+69:6)", 11],
+                        ["trend", "추세 (51:5·52:2·50:1·58:2)", "trend (51:5·52:2·50:1·58:2)", 10],
+                        ["flexibility", "유연성 (48:2)", "flexibility (48:2)", 2],
+                        ["levels", "위치 (62·63·67) — 0점", "levels (62·63·67) - 0 pts", 0],
+                        ["momentum", "모멘텀 (60·61) — 0점", "momentum (60·61) - 0 pts", 0]];
                       const parts9: [string, string, number | null | undefined][] = [
                         ["시장", "market", c9?.market], ["이슈·수급", "issue/supply", c9?.issue],
                         ["종목선정", "stock sel.", c9?.stock_sel], ["실행·관리", "exec mgmt", c9?.exec]];
@@ -1910,11 +1858,12 @@ export default function LiveDeskPage() {
                           <div><b style={{ color: "#e65100" }}>🧮 {r.name} — {t("점수 계산식 전체 (왼쪽 열부터 순서대로)", "the full score calculation, column by column left to right")}</b></div>
                           {c9 && (
                             <div className="mt-1 tabular-nums">
-                              <b style={{ color: "#e65100" }}>{t("평균 점수", "average score")}</b> = (
+                              <b style={{ color: "#e65100" }}>{t("합산 점수 (항목별 가중치 합산제, 2026-08-26)", "SUM score (per-item weights, 2026-08-26)")}</b> = <b style={{ color: "#1565c0" }}>{c9.avg ?? "—"}</b>
+                              <span className="opacity-70"> {t(`— 통과한 항목의 점수를 그대로 더한 값 (기본 최대 92 + 뉴스 레이어 8). 참고 칸: `, `— passed items' points added up (base max 92 + news layer 8). Reference columns: `)}
                               {parts9.map(([ko9, en9, v9], i9) => (
-                                <span key={i9}>{i9 > 0 ? " + " : ""}
-                                  {lang === "ko" ? ko9 : en9} <b className="text-[var(--text-primary)]">{v9 ?? "—"}</b></span>
-                              ))}) ÷ {nn9} = <b style={{ color: "#1565c0" }}>{c9.avg ?? "—"}</b>
+                                <span key={i9}>{i9 > 0 ? " · " : ""}
+                                  {lang === "ko" ? ko9 : en9} {v9 != null ? Math.round(v9) : "—"}</span>
+                              ))}</span>
                               {(() => {
                                 const lv9 = rankHead9?.rows?.find((x) => x.code === r.code)?.avg;
                                 const ad9 = lv9 != null && c9.avg != null
@@ -2176,7 +2125,6 @@ export default function LiveDeskPage() {
       {deskView === "reco" && <SafeBox label="live-check"><RecoLiveCheckPanel t={t} lang={lang} /></SafeBox>}
       {deskView === "reco" && <SafeBox label="inspection-room"><InspectionRoom t={t} /></SafeBox>}
       {deskView === "reco" && <SafeBox label="auto/semi"><RecoTradeModePanel t={t} /></SafeBox>}
-      <SafeBox label="chat-orders"><ChatOrdersPanel t={t} /></SafeBox>
       {/* GO/NO-GO board removed at the boss's order (2026-08-25) — code preserved. */}
       {/* THE ALGORITHM CHOICE, its own bar above the panel (boss 2026-08-11: it was
           buried under the history table inside the toolbar and unreachable) */}
@@ -2452,29 +2400,6 @@ export default function LiveDeskPage() {
                   {famBusy ? t("갱신 중…", "updating…") : famOpen ? t("닫기 ▲", "close ▲") : t("펼치기 ▼", "open ▼")}
                 </span>
               </div>
-              {/* 💬 chatbot orders INSIDE the trading history (boss 2026-08-26: "simple
-                  recognition symbol... in both menu 1 and 2 and also in all 3 algo") —
-                  desk-scoped rows shown under every algo tab, never counted in stats */}
-              {famOpen && fam && (fam.chat_rows?.length ?? 0) > 0 && (
-                <div className="mt-1 space-y-0.5">
-                  {fam.chat_rows!.map((c, ci) => (
-                    <div key={ci} className="flex items-center gap-2 flex-wrap text-[11.5px]">
-                      <span className="font-bold px-1.5 py-0.5 rounded text-white text-[10px]"
-                        style={{ background: "#0277bd" }}>💬 chatbot</span>
-                      <b style={{ color: c.side === "BUY" ? "#2e7d32" : "#b02a2a" }}>
-                        {c.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")}</b>
-                      <b className="text-[var(--text-primary)]">{c.name}</b>
-                      <span className="text-[var(--text-secondary)]">
-                        {c.qty.toLocaleString()}{t("주", " sh")}
-                        {c.px ? ` @ ₩${c.px.toLocaleString()}` : ""} · {c.status}
-                        {c.pnl != null && ` · ${c.pnl >= 0 ? "+" : ""}₩${Math.round(c.pnl).toLocaleString()}`}
-                        {c.at ? ` · ${c.at.slice(5, 16)}` : ""} ·{" "}
-                        {t("채팅으로 주문 — 알고리즘 아님", "ordered by chat — not an algorithm")}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
               {famOpen && fam && (fam.rows.length > 0
                   || ((fam as { holding?: unknown[] }).holding?.length ?? 0) > 0) && (
                 <>

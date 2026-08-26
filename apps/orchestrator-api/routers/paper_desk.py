@@ -805,52 +805,111 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
                 lambda: _fam_compute(family, tick, period, day, frm, to, gate,
                                      auto, codes),
                 placeholder={"ok": False, "computing": True})
-    # 💬 the chatbot's own orders ride along INSIDE the history (boss 2026-08-26:
-    # "simple recognition symbol... in both menu 1 and 2 and also in all 3 algo") —
-    # desk-scoped, display-only, never counted in any rule's stats
+    # 💬 chatbot trades live IN the same history as the algos' (boss 2026-08-26:
+    # "show trading history together with auto and with chatbot buyers/sellers") —
+    # completed chat trips join the rows, open chat positions join the holding
+    # block, all in the exact same row shape the table already renders.
     try:
-        res = {**res, "chat_rows": _chat_rows_for(set(codes.split(",")))}
-    except Exception:
-        pass
+        if res.get("ok"):
+            _crows, _chold = _chat_fam_entries(set(codes.split(",")))
+            if _crows or _chold:
+                res = {**res, "rows": _crows + list(res.get("rows") or []),
+                       "holding": list(res.get("holding") or []) + _chold}
+    except Exception as _ce:
+        from services.logger import log as _lg
+        _lg.warning(f"chat fam merge failed: {str(_ce)[:120]}")
     return res
 
 
-def _chat_rows_for(code_set: set) -> list[dict]:
+def _chat_fam_entries(code_set: set):
+    """💬 chatbot orders reshaped into the SAME rows/holding forms the algo history
+    table renders (boss 2026-08-26: "show trading history together with auto and
+    with chatbot buyers/sellers") — FIFO trips per stock: sells close buys into
+    completed rows, a net-long remainder becomes a holding entry with the live
+    unrealized %. Menu 1 = the six's chat orders, menu 2 = every other stock's."""
     from datetime import timedelta, timezone
     from sqlalchemy import text as _sqt
     from db.base import SessionLocal
     KST = timezone(timedelta(hours=9))
-    out = []
+    _sixset = {"000660", "005930", "017670", "034020", "035420", "042660"}
+    _is_menu1 = code_set == _sixset
+    rows_out, hold_out = [], []
     db = SessionLocal()
     try:
         from services.paper_desk import _ensure
         _ensure(db)
-        rows = db.execute(_sqt(
-            "SELECT ticker, name, side, qty, status, fill_price, realized_pnl, "
-            "  realized_pnl_pct, created_at FROM paper_desk_orders "
-            "WHERE COALESCE(source,'') IN ('chat','chatbot') ORDER BY id DESC LIMIT 40")).fetchall()
-        # menu 1 (the six) shows the six's chat orders; menu 2 shows EVERY other
-        # chat order — filtering menu 2 by the day's picks made the boss's LG전자
-        # buy invisible on BOTH desks (2026-08-26)
-        _sixset = {"000660", "005930", "017670", "034020", "035420", "042660"}
-        _is_menu1 = code_set == _sixset
-        for r in rows:
-            if _is_menu1 and r[0] not in _sixset:
+        recs = db.execute(_sqt(
+            "SELECT ticker, name, side, qty, fill_price, realized_pnl_pct, created_at "
+            "FROM paper_desk_orders WHERE COALESCE(source,'') IN ('chat','chatbot') "
+            "AND status='FILLED' ORDER BY id")).fetchall()
+        by_code: dict = {}
+        for r in recs:
+            c = r[0]
+            if (_is_menu1 and c not in _sixset) or (not _is_menu1 and c in _sixset):
                 continue
-            if not _is_menu1 and r[0] in _sixset:
-                continue
-            _at = None
-            try:
-                _at = r[8].astimezone(KST).strftime("%Y-%m-%d %H:%M") if r[8] is not None else None
-            except Exception:
-                _at = str(r[8])[:16] if r[8] is not None else None
-            out.append({"code": r[0], "name": r[1], "side": r[2], "qty": int(r[3] or 0),
-                        "status": r[4], "px": (float(r[5]) if r[5] is not None else None),
-                        "pnl": (float(r[6]) if r[6] is not None else None),
-                        "pnl_pct": (float(r[7]) if r[7] is not None else None), "at": _at})
+            by_code.setdefault(c, []).append(r)
+        for c, rs in by_code.items():
+            name = rs[-1][1] or c
+            trips, cur, net = [], {"buys": [], "sells": []}, 0
+            for r in rs:
+                try:
+                    t = r[6].astimezone(KST).strftime("%H:%M:%S") if r[6] is not None else ""
+                except Exception:
+                    t = ""
+                if r[2] == "BUY":
+                    cur["buys"].append([float(r[4] or 0), int(r[3] or 0), t])
+                    net += int(r[3] or 0)
+                else:
+                    cur["sells"].append([float(r[4] or 0), int(r[3] or 0), t])
+                    net -= int(r[3] or 0)
+                if net <= 0 and cur["buys"]:
+                    trips.append(cur)
+                    cur, net = {"buys": [], "sells": []}, 0
+            for i, tr in enumerate(trips):
+                qty = sum(q for _p, q, _t in tr["buys"]) or 1
+                entry = sum(p * q for p, q, _t in tr["buys"]) / qty
+                sq = sum(q for _p, q, _t in tr["sells"]) or 1
+                exitp = sum(p * q for p, q, _t in tr["sells"]) / sq
+                net_pct = round((exitp / entry - 1) * 100 - 0.23, 2) if entry else 0.0
+                left = qty
+                sells7 = []
+                for p, q, t in tr["sells"]:
+                    left = max(0, left - q)
+                    sells7.append([p, q, t, 0, left, p > entry, entry])
+                rows_out.append({
+                    "rule": "chatbot", "rule_ko": "💬 챗봇", "idx": i, "code": c,
+                    "name": name, "buy_t": tr["buys"][0][2],
+                    "sell_t": tr["sells"][-1][2] if tr["sells"] else "",
+                    "entry": entry, "exit": exitp, "qty": qty,
+                    "result": "win" if net_pct > 0 else "loss" if net_pct < 0 else "flat",
+                    "net_pct": net_pct,
+                    "parts": {"buys": [[p, q, t] for p, q, t in tr["buys"]],
+                              "sells": sells7}})
+            if cur["buys"] and net > 0:
+                qty = sum(q for _p, q, _t in cur["buys"]) or 1
+                entry = sum(p * q for p, q, _t in cur["buys"]) / qty
+                last = None
+                try:
+                    from services.paper_desk import _live_price
+                    last, _n2 = _live_price(c)
+                except Exception:
+                    pass
+                up = round((float(last) / entry - 1) * 100, 2) if (last and entry) else None
+                h = {"rule": "chatbot", "code": c, "name": name,
+                     "buy_t": cur["buys"][0][2], "entry": entry,
+                     "last": float(last) if last else entry, "unreal_pct": up,
+                     "parts": {"buys": [[p, q, t] for p, q, t in cur["buys"]]}}
+                if cur["sells"]:
+                    left = net
+                    s7 = []
+                    for p, q, t in cur["sells"]:
+                        s7.append([p, q, t, 0, left, p > entry, entry])
+                    h["parts"]["sells"] = s7
+                    h["qty_left"] = net
+                hold_out.append(h)
     finally:
         db.close()
-    return out[:20]
+    return rows_out, hold_out
 
 
 @router.get("/live/daily-chart")
@@ -1552,8 +1611,49 @@ def _enrich_pick(res: dict, db) -> None:
                 _exec9 = None
         _cats9 = {"market": res.get("market_pct"), "issue": g.get("flows"),
                   "stock_sel": ssel, "exec": _exec9}
-        _have9 = [v for v in _cats9.values() if v is not None]
-        _cats9["avg"] = round(sum(_have9) / len(_have9), 1) if _have9 else None
+        # THE SUM LAW (boss 2026-08-26: "no average - the sum of all item
+        # scores is the final score", per-item weights from the proof document
+        # measured on 2x250 days + literature). Base max 92; the remaining 8
+        # news-layer points act through the live 4-second adjustment.
+        # ⚙️ engine-law items (28 pts) are granted - the engine enforces them
+        # on every trade, identically for every stock.
+        try:
+            _pts9 = 28.0                              # engine-enforced items
+            _MW9 = {11: 1, 12: 2, 13: 0.5, 14: 1, 15: 0.5, 16: 1, 17: 0.5,
+                    18: 0.5, 19: 0.5, 20: 0.5, 21: 4, 22: 2, 24: 0.5,
+                    25: 0.5, 28: 0.5, 30: 0.5, 33: 0.5, 36: 0.5, 37: 0.5,
+                    39: 0.5, 95: 2, 100: 1}
+            for _mi9 in (res.get("market_items") or []):
+                if _mi9.get("ok"):
+                    _pts9 += _MW9.get(_mi9.get("no"), 0)
+            _dt9x = r.get("detail") or {}
+            def _sub9(grp, idx):
+                try:
+                    return float((_dt9x.get(grp) or [])[idx].get("s") or 0)
+                except Exception:
+                    return 0.0
+            # 31/32/34/43 (flows), 46/47+69 (volume family), 48, 51/52/50/58
+            _pts9 += 6 * _sub9("flows", 0) / 100 + 3 * _sub9("flows", 1) / 100 \
+                + 2 * _sub9("flows", 2) / 100 + 1 * _sub9("flows", 3) / 100
+            _pts9 += 5 * _sub9("liquidity", 0) / 100 + 6 * _sub9("liquidity", 1) / 100
+            _pts9 += 2 * _sub9("flexibility", 0) / 100
+            _pts9 += 5 * _sub9("trend", 0) / 100 + 2 * _sub9("trend", 1) / 100 \
+                + 1 * _sub9("trend", 2) / 100 + 2 * _sub9("trend", 3) / 100
+            _EW9 = {76: 2, 79: 2, 82: 2, 83: 2}
+            if _exec_items9:
+                for _ei9 in _exec_items9:
+                    if _ei9.get("ok"):
+                        _pts9 += _EW9.get(_ei9.get("no"), 0)
+            else:
+                _pts9 += 2      # #83 mechanical stop - engine-guaranteed for
+                                # every stock even when the per-stock exec trio
+                                # wasn't computed (only the top-10 get that
+                                # db-read; the top-5 seat race stays fair since
+                                # all contenders are inside the computed set)
+            _cats9["avg"] = round(_pts9, 1)
+        except Exception:
+            _have9 = [v for v in _cats9.values() if v is not None]
+            _cats9["avg"] = round(sum(_have9) / len(_have9), 1) if _have9 else None
         r["cats"] = _cats9
         if _exec_items9:
             r["exec_items"] = _exec_items9
