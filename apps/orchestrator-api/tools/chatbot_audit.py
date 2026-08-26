@@ -112,6 +112,24 @@ TESTS = [
      lambda i, r: ("💡" in r or "원하시면" in r, "KO offer")),
     ("offers", "삼성전자 살까?", None,
      lambda i, r: ("도와드릴까요" in r or "help you buy" in r or "🤝" in r, "advice offers the buy")),
+    # --- H. assistant work (orders / cancel / status / break-even) ---
+    # off-hours: the CORRECT behavior is the polite market-closed message with the
+    # nearest opening time; during market it is the order confirmation
+    ("assistant", "buy naver 3 shares", None,
+     lambda i, r: (("주문 확인" in r or "Order confirmation" in r)
+                   or ("Nearest opening" in r or "가장 가까운 개장" in r),
+                   "order form in-hours OR honest closed message off-hours")),
+    ("assistant", "NAVER 주문 취소", None,
+     lambda i, r: (i == "chat_trade" and no_refusal(r), "cancel answers from the record")),
+    ("assistant", "still holding or you already sold out?", None,
+     lambda i, r: (i == "chat_trade" and ("체결" in r or "filled" in r.lower()
+                                          or "대기" in r or "waiting" in r.lower()),
+                   "status from the order record")),
+    ("assistant", "삼성전자 본전가 얼마야?", None,
+     lambda i, r: (i == "chat_trade" and ("본전" in r or "보유 수량이 없어" in r),
+                   "break-even or honest no-position")),
+    ("assistant", "recommend me 3 stocks", None,
+     lambda i, r: (i == "checklist_reco" and "1." in r, "checklist picks with ranks")),
     # --- G. language purity ---
     ("language", "what happened to hanwha ocean this week?", None,
      lambda i, r: (no_think(r) and no_refusal(r)
