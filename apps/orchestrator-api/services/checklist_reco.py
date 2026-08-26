@@ -138,11 +138,14 @@ def _ranking() -> Optional[dict]:
 
 
 def _n_from(transcript: str, default: int = 3) -> int:
+    # cap 15 (boss 2026-08-26: he asked Top 10 and silently received Top 8 -
+    # the old cap of 8 clipped his number without a word; never shrink his ask
+    # quietly)
     m = re.search(r"(\d{1,2})\s*(?:개|종목|가지|stocks?|compan(?:y|ies)|picks?)", transcript or "", re.I)
     if not m:
-        m = re.search(r"\b([1-9])\b", transcript or "")
+        m = re.search(r"\b(\d{1,2})\b", transcript or "")
     try:
-        return max(1, min(int(m.group(1)), 8)) if m else default
+        return max(1, min(int(m.group(1)), 15)) if m else default
     except Exception:
         return default
 
