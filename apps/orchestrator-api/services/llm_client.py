@@ -360,11 +360,15 @@ def _keep_recent(m: dict) -> bool:
     provider-reported release year; Gemini (no API date) → major version >= 3 counts as 2026;
     unknown year → kept (never hide a model we can't date)."""
     if m["provider"] == "ollama":
-        # show exactly what is INSTALLED on this PC (boss 2026-08-26: "we have already
-        # local LLM qwen, can we use it") — the old blanket-hide predates his local
-        # qwen3/gemma4 zoo and his own fine-tuned models; uninstalled stubs stay hidden
+        # ONE local star in the picker (boss 2026-08-26: "just put the strongest
+        # which is in our server, fast and strong"): Qwen3-VL 30B-A3B MoE — measured
+        # 6.8s warm on the RTX 5090 vs 28.9s for dense qwen3:32b, near-32B quality,
+        # reads images. OLLAMA_PICKER_MODEL overrides ('all' lists every installed tag).
+        pick = _env("OLLAMA_PICKER_MODEL") or "qwen3-vl:30b-a3b-instruct-q4_K_M"
         tags = _disc_get("ollama_local") or []
-        return (m.get("real_model") or "") in tags
+        if pick == "all":
+            return (m.get("real_model") or "") in tags
+        return (m.get("real_model") or "") == pick and pick in tags
     y = _MODEL_YEAR.get(m["id"])
     if y is None:
         y = _MODEL_YEAR.get(m.get("real_model") or "")   # groq: friendly≠real, date by real too
