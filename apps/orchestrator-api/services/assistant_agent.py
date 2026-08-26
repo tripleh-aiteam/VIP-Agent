@@ -7134,6 +7134,11 @@ def _run_agent_impl(
                     return {"intent": "chat_trade", "language": lang, "reply": _ctr,
                             "action": None, "speak": True, "transcript": transcript,
                             "tool_used": "chat_trade"}
+            _ctq = _ct.qty_reply(db, transcript)
+            if _ctq:
+                return {"intent": "chat_trade_confirm", "language": lang, "reply": _ctq,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "chat_trade"}
             _ctx = _ct.cancel_open(db, transcript, lang)
             if _ctx:
                 return {"intent": "chat_trade", "language": lang, "reply": _ctx,

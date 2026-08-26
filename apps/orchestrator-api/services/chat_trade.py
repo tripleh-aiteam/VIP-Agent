@@ -26,8 +26,29 @@ from typing import Optional
 from services.logger import log
 
 _BUDGET_FILE = Path(__file__).resolve().parent.parent / "data" / "chat_trade_budget.json"
+_PENDING_FILE = Path(__file__).resolve().parent.parent / "data" / "chat_trade_pending.json"
 _PENDING: dict = {}          # one slot — a single-boss desk
 _TTL = 300.0                 # a preview is valid for 5 minutes
+
+
+def _save_pending() -> None:
+    """The pending slot survives orchestrator restarts (boss 2026-08-26: his 'yes'
+    to a buy offer fell to the LLM because a deploy restart wiped the offer)."""
+    try:
+        _PENDING_FILE.write_text(json.dumps(_PENDING), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _load_pending() -> None:
+    if _PENDING:
+        return
+    try:
+        d = json.loads(_PENDING_FILE.read_text(encoding="utf-8"))
+        if d and time.time() - float(d.get("ts") or 0) <= _TTL:
+            _PENDING.update(d)
+    except Exception:
+        pass
 
 
 def budget() -> int:
@@ -260,7 +281,9 @@ def stash_offer(code: str, name: str, en: bool) -> None:
     """A BUY verdict's '도와드릴까요?' offer — the next '네' opens the order preview
     (which then needs its own '네' to execute; money keeps its two-step gate)."""
     _PENDING.clear()
-    _PENDING.update({"offer": True, "code": code, "name": name, "ts": time.time(), "en": en})
+    _PENDING.update({"offer": True, "side": "BUY", "code": code, "name": name,
+                     "ts": time.time(), "en": en})
+    _save_pending()
 
 
 def build_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
@@ -324,6 +347,7 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
     _PENDING.update({"code": code, "name": name, "side": side, "qty": qty,
                      "px": px, "ts": time.time(), "en": en,
                      "order_type": order_type, "limit_price": limit_price})
+    _save_pending()
     b = budget()
     qty_note_ko = (f"직접 지정" if cmd["qty"] else
                    (f"보유 전량" if side == "SELL" else f"예산 ₩{b:,.0f} 기준 자동"))
@@ -408,13 +432,38 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
 
 _YES = frozenset(("yes", "y", "confirm", "ok", "okay", "go", "execute", "do it", "proceed",
                   "네", "예", "응", "그래", "실행", "실행해", "확인", "오케이", "ㅇㅋ",
-                  "좋아", "해줘", "진행", "진행해", "네실행", "예스"))
+                  "좋아", "해줘", "진행", "진행해", "네실행", "예스",
+                  # "yes please buy" — the boss's own phrasing when the offer stood
+                  "yesplease", "yesbuy", "yespleasebuy", "pleasebuy", "yessell",
+                  "네사줘", "네매수", "산다", "사자"))
 _NO = frozenset(("no", "n", "cancel", "stop", "dont", "don't", "아니", "아니요", "아니오",
                  "취소", "취소해", "안해", "안 해", "하지마", "하지 마", "노"))
 
 
+def qty_reply(db, transcript: Optional[str]) -> Optional[str]:
+    """'15 shares please' / '15주' / '15' while an offer or preview stands — the boss
+    is choosing the SIZE (2026-08-26: his '15 shares please' fell to the LLM). Builds
+    a fresh confirmation at that size for the pending stock/side."""
+    _load_pending()
+    if not _PENDING or time.time() - _PENDING.get("ts", 0) > _TTL:
+        return None
+    t = (transcript or "").strip().lower()
+    m = re.fullmatch(r"(\d[\d,]*)\s*(?:주|shares?|share|stocks?|개)?\s*"
+                     r"(?:please|주세요|요|로|사줘|매수|매도)?[.! ]*", t)
+    if not m:
+        return None
+    try:
+        qty = max(1, int(m.group(1).replace(",", "")))
+    except Exception:
+        return None
+    p = dict(_PENDING)
+    return _make_preview(db, p["code"], p.get("name") or p["code"],
+                         p.get("side") or "BUY", qty, False, bool(p.get("en")))
+
+
 def confirm_check(transcript: Optional[str]) -> Optional[str]:
     """'yes'/'no' when the message answers a FRESH pending order, else None."""
+    _load_pending()
     if not _PENDING or time.time() - _PENDING.get("ts", 0) > _TTL:
         return None
     t = re.sub(r"[\s.,!?~^]+", "", (transcript or "").lower())
@@ -429,10 +478,12 @@ def confirm_check(transcript: Optional[str]) -> Optional[str]:
 
 def finish(db, word: str) -> Optional[str]:
     """Execute or cancel the pending order. Clears the slot either way."""
+    _load_pending()
     if not _PENDING:
         return None
     p = dict(_PENDING)
     _PENDING.clear()
+    _save_pending()
     en = bool(p.get("en"))
     # the advice lane's OFFER ("매수 도와드릴까요?"): "네" opens the real order
     # preview (a fresh pending), "아니요" just drops it — nothing was ordered yet
