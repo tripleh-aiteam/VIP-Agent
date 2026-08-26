@@ -2528,9 +2528,14 @@ export default function LiveDeskPage() {
                                                    openRule(h.rule, null, h.code);
                                                    setTimeout(() => chartRef.current?.scrollIntoView(
                                                      { behavior: "smooth", block: "center" }), 150); }}>
-                                  {t3 ? <span className="text-[9.5px] font-bold" style={{ color: RED }}>▲ {String(t3).slice(0, 5)} </span> : null}
+                                  {/* a WAITING (unfilled) chat limit order must not wear the
+                                      bought-arrow — the ▲ made the queued NAVER look already
+                                      bought (boss 2026-08-26, twice) */}
+                                  {(h as unknown as { waiting?: boolean }).waiting
+                                    ? <span className="text-[9.5px] font-bold text-[var(--text-muted)]">🕐 {t3 ? String(t3).slice(0, 5) + " " : ""}{t("줄서는 가격 ", "queued at ")}</span>
+                                    : (t3 ? <span className="text-[9.5px] font-bold" style={{ color: RED }}>▲ {String(t3).slice(0, 5)} </span> : null)}
                                   ₩{Math.round(p2).toLocaleString()}
-                                  <span className="text-[9.5px] text-[var(--text-muted)]"> × {q2}{t("주", "sh")}</span></div>
+                                  <span className="text-[9.5px] text-[var(--text-muted)]"> × {q2}{t("주", "sh")}{(h as unknown as { waiting?: boolean }).waiting ? t(" (미체결)", " (not filled)") : ""}</span></div>
                               )) : <div>₩{Math.round(h.entry).toLocaleString()}</div>;
                             })()}</td>
                           <td className="px-2" style={{ ...CELL, color: "#e65100" }}>
