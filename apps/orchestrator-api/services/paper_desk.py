@@ -476,6 +476,23 @@ def manage_chat_positions(db) -> list[dict]:
         if not px:
             continue
         remain = min(qty0 - sold, held)
+        # 🔔 THE BELL (boss 2026-08-26: "need to sell 15:20 ok" — chat lots keep
+        # the desk's discipline): at 15:19, one minute before the closing
+        # auction kills the live price, every managed chat lot goes flat.
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        _nk9 = _dt.now(_tz(_td(hours=9)))
+        if _nk9.hour * 60 + _nk9.minute >= 15 * 60 + 19:
+            r = place_order(db, tk, "SELL", remain, "market",
+                            source="algo2-chat", direct=True)
+            if r.get("ok"):
+                fills.append({"ticker": tk, "name": nm, "why": "15:19 bell",
+                              "qty": remain, "px": r.get("live_price")})
+                db.execute(text(
+                    "UPDATE paper_desk_chat_lots SET sold_qty=sold_qty+:q, "
+                    "done=TRUE, updated_at=now() WHERE order_id=:i"),
+                    {"q": remain, "i": oid})
+                db.commit()
+            continue
         # −1% guard (vs THIS lot's own buy price): sell the lot's remainder
         if px <= base * 0.99:
             r = place_order(db, tk, "SELL", remain, "market",
