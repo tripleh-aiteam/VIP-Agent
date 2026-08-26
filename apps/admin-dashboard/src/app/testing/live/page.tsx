@@ -2539,6 +2539,18 @@ export default function LiveDeskPage() {
                               // the sold slices appeared here AND in the completed
                               // part - now they live only in the completed part).
                               // This cell: remaining shares + the live % vs cost.
+                              // 🕐 an OPEN chatbot limit order still queued in the book
+                              // (boss 2026-08-26: the unfilled NAVER buy was invisible)
+                              const w9 = (h as unknown as { waiting?: boolean; side?: string });
+                              if (w9.waiting) return (
+                                <div className="font-bold">
+                                  🕐 {w9.side === "SELL"
+                                    ? t("매도 주문 대기 — 지정가에 줄 서 있음 (아직 미체결)",
+                                        "SELL order waiting — queued at the limit price, not filled yet")
+                                    : t("매수 주문 대기 — 지정가에 줄 서 있음 (아직 미체결)",
+                                        "BUY order waiting — queued at the limit price, not filled yet")}
+                                </div>
+                              );
                               const hs = (h as unknown as { parts?: { sells?: unknown[] } }).parts?.sells;
                               const hl = (h as unknown as { qty_left?: number }).qty_left;
                               if (hs && hs.length) return (

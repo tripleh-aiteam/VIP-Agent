@@ -888,7 +888,7 @@ def _chat_fam_entries(code_set: set, day8: str = ""):
                     sells7.append([p, q, t, 0, left, p > entry, entry])
                 rows_out.append({
                     "rule": "chatbot", "rule_ko": "💬 챗봇", "idx": i, "code": c,
-                    "name": name, "buy_t": tr["buys"][0][2],
+                    "name": f"💬 {name}", "buy_t": tr["buys"][0][2],
                     "sell_t": tr["sells"][-1][2] if tr["sells"] else "",
                     "entry": entry, "exit": exitp, "qty": qty,
                     "result": "win" if net_pct > 0 else "loss" if net_pct < 0 else "flat",
@@ -905,7 +905,7 @@ def _chat_fam_entries(code_set: set, day8: str = ""):
                 except Exception:
                     pass
                 up = round((float(last) / entry - 1) * 100, 2) if (last and entry) else None
-                h = {"rule": "chatbot", "code": c, "name": name,
+                h = {"rule": "chatbot", "code": c, "name": f"💬 {name}",
                      "buy_t": cur["buys"][0][2], "entry": entry,
                      "last": float(last) if last else entry, "unreal_pct": up,
                      "parts": {"buys": [[p, q, t] for p, q, t in cur["buys"]]}}
@@ -917,6 +917,32 @@ def _chat_fam_entries(code_set: set, day8: str = ""):
                     h["parts"]["sells"] = s7
                     h["qty_left"] = net
                 hold_out.append(h)
+        # 🕐 OPEN limit orders still queued in the book (boss 2026-08-26: "I have
+        # bought naver but it is not come to Holding part... even though we did not
+        # buy yet please add like waiting icon") — shown as waiting entries
+        opens = db.execute(_sqt(
+            "SELECT ticker, name, side, qty, limit_price, created_at FROM paper_desk_orders "
+            "WHERE COALESCE(source,'') IN ('chat','chatbot') AND status='OPEN' "
+            "AND order_type='limit' ORDER BY id")).fetchall()
+        for r in opens:
+            c = r[0]
+            if (_is_menu1 and c not in _sixset) or (not _is_menu1 and c in _sixset):
+                continue
+            if day8:
+                try:
+                    if r[5] is None or r[5].astimezone(KST).strftime("%Y%m%d") != day8:
+                        continue
+                except Exception:
+                    continue
+            try:
+                t = r[5].astimezone(KST).strftime("%H:%M:%S") if r[5] is not None else ""
+            except Exception:
+                t = ""
+            lp = float(r[4] or 0)
+            hold_out.append({"rule": "chatbot", "code": c, "name": f"💬 {r[1] or c}",
+                             "buy_t": t, "entry": lp, "last": lp, "unreal_pct": None,
+                             "waiting": True, "side": r[2],
+                             "parts": {"buys": [[lp, int(r[3] or 0), t]]}})
     finally:
         db.close()
     return rows_out, hold_out
