@@ -714,6 +714,83 @@ function AdviceSimulation({ process, ts }: { process: NonNullable<AgentResponse[
 //  Workspace
 // ----------------------------------------------------------------------
 
+// 🕯 our OWN 1-minute chart, drawn from the desk's real tick tape — Korean time
+// by construction (boss 2026-08-26: the TradingView minute view kept showing
+// foreign session hours; our tape cannot lie about the clock). Only the
+// watched stocks have tape; others fall back to the TradingView view.
+function TapeMinuteChart({ base, code }: { base: string; code: string }) {
+  const cvs = useRef<HTMLCanvasElement | null>(null);
+  const [bars, setBars] = useState<{ hhmm: string; open: number; high: number;
+    low: number; close: number }[]>([]);
+  const [err, setErr] = useState<string>("");
+  useEffect(() => {
+    let live = true;
+    const load = () => fetch(`${base}/paper-desk/live/tape?code=${code}&period=60&bars=400`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!live) return;
+        const bs = d?.bars || [];
+        if (!bs.length) setErr("no-tape");
+        else { setErr(""); setBars(bs); }
+      })
+      .catch(() => { if (live) setErr("no-tape"); });
+    load();
+    const h = setInterval(load, 20000);
+    return () => { live = false; clearInterval(h); };
+  }, [base, code]);
+  useEffect(() => {
+    const c = cvs.current;
+    if (!c || !bars.length) return;
+    const W = c.clientWidth, H = c.clientHeight;
+    c.width = W * 2; c.height = H * 2;               // retina
+    const g = c.getContext("2d");
+    if (!g) return;
+    g.scale(2, 2);
+    g.clearRect(0, 0, W, H);
+    const padL = 56, padB = 22, padT = 10;
+    const lo = Math.min(...bars.map((b) => b.low));
+    const hi = Math.max(...bars.map((b) => b.high));
+    const y = (v: number) => padT + (hi - v) / Math.max(1e-9, hi - lo) * (H - padT - padB);
+    const bw = (W - padL - 8) / bars.length;
+    g.font = "10px sans-serif"; g.fillStyle = "#888"; g.strokeStyle = "rgba(128,128,128,0.15)";
+    for (let i = 0; i <= 4; i++) {
+      const v = lo + (hi - lo) * i / 4, yy = y(v);
+      g.beginPath(); g.moveTo(padL, yy); g.lineTo(W - 4, yy); g.stroke();
+      g.fillText(Math.round(v).toLocaleString(), 2, yy + 3);
+    }
+    bars.forEach((b, i) => {
+      const x = padL + i * bw + bw / 2;
+      const up = b.close >= b.open;
+      g.strokeStyle = up ? "#d32f2f" : "#1565c0";
+      g.fillStyle = up ? "#d32f2f" : "#1565c0";
+      g.beginPath(); g.moveTo(x, y(b.high)); g.lineTo(x, y(b.low)); g.stroke();
+      const t2 = y(Math.max(b.open, b.close)), b2 = y(Math.min(b.open, b.close));
+      g.fillRect(x - Math.max(1, bw * 0.35), t2, Math.max(2, bw * 0.7), Math.max(1, b2 - t2));
+      if (i % 60 === 0 || i === bars.length - 1) {
+        g.fillStyle = "#888";
+        g.fillText(String(b.hhmm).slice(0, 5), x - 14, H - 8);
+      }
+    });
+  }, [bars]);
+  if (err) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-[14px] text-gray-500 px-6 text-center">
+        이 종목은 감시 대상이 아니라 실시간 틱 데이터가 없습니다 — 위 버튼으로
+        TradingView 차트를 이용해 주세요. (감시 중인 18종목은 우리 테이프로 그립니다)
+      </div>
+    );
+  }
+  return (
+    <div className="flex-1 flex flex-col min-h-0">
+      <div className="px-3 py-1 text-[11px] text-gray-500">
+        🕯 1분봉 — 우리 데스크의 실제 체결 테이프 · 한국시간(KST) · 20초마다 갱신
+        {bars.length ? ` · ${String(bars[0].hhmm).slice(0, 5)}~${String(bars[bars.length - 1].hhmm).slice(0, 5)} · ${bars.length}봉` : ""}
+      </div>
+      <canvas ref={cvs} className="flex-1 w-full h-full" />
+    </div>
+  );
+}
+
 export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
   const router = useRouter();
   const base = apiBase.replace(/\/$/, "");
@@ -769,6 +846,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
   const [evidenceCode, setEvidenceCode] = useState<string | null>(null);
   const [evidenceMd, setEvidenceMd] = useState<string>("");
   const [evidenceShowData, setEvidenceShowData] = useState(false);   // chart-only default
+  const [evidenceMin, setEvidenceMin] = useState(false);   // 1분봉 = our own tape (KST)
   const evidenceLangRef = useRef("ko");
   evidenceLangRef.current = /[가-힣]/.test(lastQuestion || "") ? "ko" : "en";
   useEffect(() => {
@@ -1857,6 +1935,12 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
             <span className="flex items-center gap-2">
               {/* chart-only by default (boss 2026-08-24: "when we click evidence it
                   should show only chart — the checklist is already above") */}
+              <button onClick={() => setEvidenceMin(!evidenceMin)}
+                className={`px-3 py-1 text-[13px] font-bold rounded-lg border ${
+                  evidenceMin ? "bg-red-600 text-white border-red-600"
+                              : "text-red-600 border-red-300 hover:bg-red-50"}`}>
+                {evidenceMin ? "📅 일봉 (TradingView)" : "🕯 1분봉 (실데이터·한국시간)"}
+              </button>
               <button onClick={() => setEvidenceShowData(!evidenceShowData)}
                 className={`px-3 py-1 text-[13px] font-bold rounded-lg border ${
                   evidenceShowData ? "bg-blue-600 text-white border-blue-600"
@@ -1868,12 +1952,15 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
             </span>
           </div>
           <div className="flex flex-1 min-h-0">
+            {evidenceMin ? (
+              <TapeMinuteChart base={base} code={evidenceCode} />
+            ) : (
             <iframe
               key={evidenceCode}
               src={`https://s.tradingview.com/widgetembed/?symbol=KRX%3A${evidenceCode}&interval=D&theme=light&style=1&locale=kr&timezone=Asia%2FSeoul&withdateranges=1&hide_side_toolbar=0&allow_symbol_change=1`}
               className="border-0 h-full flex-1"
               title="TradingView chart"
-            />
+            />)}
             {evidenceShowData && (
               <div className="w-[420px] xl:w-[500px] shrink-0 overflow-y-auto px-5 py-3 text-[15px] leading-relaxed text-gray-900 border-l border-gray-200">
                 {evidenceMd
