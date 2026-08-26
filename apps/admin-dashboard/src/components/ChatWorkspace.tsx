@@ -1870,7 +1870,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
           <div className="flex flex-1 min-h-0">
             <iframe
               key={evidenceCode}
-              src={`https://s.tradingview.com/widgetembed/?symbol=KRX%3A${evidenceCode}&interval=D&theme=light&style=1&locale=kr&withdateranges=1&hide_side_toolbar=0&allow_symbol_change=1`}
+              src={`https://s.tradingview.com/widgetembed/?symbol=KRX%3A${evidenceCode}&interval=D&theme=light&style=1&locale=kr&timezone=Asia%2FSeoul&withdateranges=1&hide_side_toolbar=0&allow_symbol_change=1`}
               className="border-0 h-full flex-1"
               title="TradingView chart"
             />
