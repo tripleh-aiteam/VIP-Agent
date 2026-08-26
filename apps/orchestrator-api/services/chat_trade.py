@@ -423,9 +423,11 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
                      "order_type": order_type, "limit_price": limit_price})
     _save_pending()
     b = budget()
-    qty_note_ko = (f"직접 지정" if cmd["qty"] else
+    qty_note_ko = (f"보유의 {pct}%" if (pct and side == "SELL") else
+                   f"직접 지정" if cmd["qty"] else
                    (f"보유 전량" if side == "SELL" else f"예산 ₩{b:,.0f} 기준 자동"))
-    qty_note_en = ("as you specified" if cmd["qty"] else
+    qty_note_en = (f"{pct}% of the position" if (pct and side == "SELL") else
+                   "as you specified" if cmd["qty"] else
                    ("the whole position" if side == "SELL" else f"auto from the ₩{b:,.0f} budget"))
     # the SCORE in the confirmation (boss 2026-08-26: "must ask one more time, like do
     # you really wanna buy, like score like this, then after final approve")
