@@ -441,6 +441,15 @@ def _tick_inner(db, force: bool = False) -> dict[str, Any]:
             out["limit_fills"] = n
     except Exception:
         db.rollback()
+    # 알고2 SELL management for the boss's chat positions (boss 2026-08-26:
+    # "+1% sell 10% like this") — rides the same heartbeat as limit fills
+    try:
+        from services.paper_desk import manage_chat_positions
+        _cm9 = manage_chat_positions(db)
+        if _cm9:
+            out["chat_mgr_fills"] = _cm9
+    except Exception:
+        db.rollback()
     try:
         _reconcile_external(db, out)
     except Exception:

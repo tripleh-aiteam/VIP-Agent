@@ -414,6 +414,84 @@ def place_order(db, ticker: str, side: str, qty: int,
                     f"{'내려오면' if side == 'BUY' else '올라가면'} 체결"}
 
 
+_CHAT_MGR_DDL_DONE = {"v": False}
+
+
+def manage_chat_positions(db) -> list[dict]:
+    """알고2 SELL management for the boss's chat positions (boss 2026-08-26:
+    'please manage selling case in the Algo 2 case — if we gain 1% sell 10%
+    like this'). SELL side only — buying stays the boss's own hand:
+      · +1% ladder: rungs at +0.85%, +1.85%, +2.85%... each sells 10% of the
+        managed size, once (알고2's exact band rule)
+      · −1% guard: price at base×0.99 → sell everything, management ends
+    Applies to positions bought through the chatbot (order source chat/chatbot).
+    Re-buying more re-bases the ladder on the new blended average. Fills are
+    stamped source='algo2-chat' so the history shows the machine's hand."""
+    if not _mkt_open():
+        return []
+    if not _CHAT_MGR_DDL_DONE["v"]:
+        db.execute(text(
+            "CREATE TABLE IF NOT EXISTS paper_desk_chat_mgr ("
+            "ticker TEXT PRIMARY KEY, base DOUBLE PRECISION, qty0 INT, "
+            "k_up INT DEFAULT 0, updated_at TIMESTAMPTZ DEFAULT now())"))
+        db.commit()
+        _CHAT_MGR_DDL_DONE["v"] = True
+    fills: list[dict] = []
+    rows = db.execute(text(
+        "SELECT p.ticker, p.name, p.qty, p.avg_price FROM paper_desk_positions p "
+        "WHERE EXISTS (SELECT 1 FROM paper_desk_orders o WHERE o.ticker=p.ticker "
+        "AND o.side='BUY' AND o.source IN ('chat','chatbot'))")).fetchall()
+    live_tk = {r[0] for r in rows}
+    db.execute(text("DELETE FROM paper_desk_chat_mgr WHERE ticker != ALL(:t)"),
+               {"t": list(live_tk) or ["-"]})
+    for tk, nm, qty, avg in rows:
+        qty, avg = int(qty), float(avg)
+        if qty <= 0 or avg <= 0:
+            continue
+        st9 = db.execute(text(
+            "SELECT base, qty0, k_up FROM paper_desk_chat_mgr WHERE ticker=:t"),
+            {"t": tk}).first()
+        if st9 is None or abs(float(st9[0]) - avg) / avg > 0.002:
+            # first sight, or the boss bought more (blend moved) → (re)base
+            db.execute(text(
+                "INSERT INTO paper_desk_chat_mgr (ticker, base, qty0, k_up) "
+                "VALUES (:t, :b, :q, 0) ON CONFLICT (ticker) DO UPDATE "
+                "SET base=:b, qty0=:q, k_up=0, updated_at=now()"),
+                {"t": tk, "b": avg, "q": qty})
+            db.commit()
+            base, qty0, k_up = avg, qty, 0
+        else:
+            base, qty0, k_up = float(st9[0]), int(st9[1]), int(st9[2])
+        px, _src = _live_price(tk)
+        if not px:
+            continue
+        # −1% guard first: sell everything, management ends for this position
+        if px <= base * 0.99:
+            r = place_order(db, tk, "SELL", qty, "market",
+                            source="algo2-chat", direct=True)
+            if r.get("ok"):
+                fills.append({"ticker": tk, "name": nm, "why": "-1% guard",
+                              "qty": qty, "px": r.get("live_price")})
+                db.execute(text("DELETE FROM paper_desk_chat_mgr WHERE ticker=:t"),
+                           {"t": tk})
+                db.commit()
+            continue
+        # +1% ladder rung (알고2 band: arms at +0.85, +1.85, ...)
+        lvl = base * (1 + ((k_up + 1) * 1.0 - 0.15) / 100)
+        if px >= lvl:
+            q9 = min(max(1, int(qty0 * 0.10)), qty)
+            r = place_order(db, tk, "SELL", q9, "market",
+                            source="algo2-chat", direct=True)
+            if r.get("ok"):
+                fills.append({"ticker": tk, "name": nm, "why": f"+{k_up + 1}% rung",
+                              "qty": q9, "px": r.get("live_price")})
+                db.execute(text(
+                    "UPDATE paper_desk_chat_mgr SET k_up=k_up+1, updated_at=now() "
+                    "WHERE ticker=:t"), {"t": tk})
+                db.commit()
+    return fills
+
+
 def check_limit_orders(db) -> int:
     """Fill OPEN limit orders whose trigger the live price has touched. Returns fills."""
     _ensure(db)
