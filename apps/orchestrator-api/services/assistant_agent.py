@@ -1539,7 +1539,13 @@ def _requested_history_dates(q: Optional[str]):
     iso = _relative_date_iso(q)
     if iso:
         try:
-            return ("dates", [_date.fromisoformat(iso)])
+            _ds = [_date.fromisoformat(iso)]
+            # "yesterday AND today" in one question (boss 2026-08-26: 'yesterday and
+            # todays min, max of NAVER' answered only yesterday) — today's running
+            # session joins the same table
+            if ("오늘" in t or _re.search(r"\btoday", t)) and today not in _ds:
+                _ds.append(today)
+            return ("dates", _ds)
         except ValueError:
             pass
     return None
@@ -2174,6 +2180,110 @@ def _fundamentals_reply(transcript: Optional[str], lang: str, db=None) -> Option
     out += ("\n\n📦 출처: 시장 공시·증권사 컨센서스 데이터 (실시간 조회)" if not _en
             else "\n\n📦 Source: market disclosure & analyst consensus data (live)")
     return out
+
+
+def _is_my_chat_orders_q(transcript: Optional[str]) -> bool:
+    t = (transcript or "").lower()
+    if not t:
+        return False
+    who = "챗봇" in t or "chatbot" in t or "채팅으로" in t or "by chat" in t or "using chat" in t
+    act = any(k in t for k in ("샀", "산 ", "bought", "buy", "buys", "팔", "sold", "매수",
+                               "매도", "주문", "order", "trade"))
+    ask_ = "?" in t or any(k in t for k in ("뭐", "what", "which", "보여", "show", "list", "얼마"))
+    return who and act and ask_
+
+
+def _my_chat_orders_reply(db, transcript: Optional[str], lang: str) -> Optional[str]:
+    """Today's 💬 chatbot orders, straight from the record — fills, waiting, cancelled."""
+    en = not _re.search(r"[가-힣]", transcript or "") and bool(_re.search(r"[a-zA-Z]", transcript or ""))
+    from datetime import timedelta as _td9, timezone as _tz9
+    KST = _tz9(_td9(hours=9))
+    from sqlalchemy import text as _sqt
+    rows = db.execute(_sqt(
+        "SELECT name, side, qty, status, fill_price, limit_price, realized_pnl, created_at "
+        "FROM paper_desk_orders WHERE COALESCE(source,'') IN ('chat','chatbot') "
+        "ORDER BY id DESC LIMIT 40")).fetchall()
+    today8 = _dt_now_kst().strftime("%Y%m%d")
+    L = []
+    for r in rows:
+        try:
+            if r[7] is None or r[7].astimezone(KST).strftime("%Y%m%d") != today8:
+                continue
+            tm = r[7].astimezone(KST).strftime("%H:%M")
+        except Exception:
+            continue
+        side_ko = "매수" if r[1] == "BUY" else "매도"
+        px = r[4] or r[5]
+        st = {"FILLED": ("체결됨", "filled"), "OPEN": ("🕐 대기 중(미체결)", "🕐 waiting (not filled)"),
+              "CANCELLED": ("취소됨", "cancelled"), "REJECTED": ("거부됨", "rejected")}.get(
+                  str(r[3]), (str(r[3]), str(r[3])))
+        pnl = f" · 손익 ₩{float(r[6]):,.0f}" if (not en and r[6] is not None) else \
+              f" · P&L ₩{float(r[6]):,.0f}" if r[6] is not None else ""
+        L.append((f"· {tm} {side_ko} **{r[0]}** {int(r[2] or 0):,}주"
+                  + (f" @ ₩{float(px):,.0f}" if px else "") + f" — {st[0]}{pnl}") if not en else
+                 (f"· {tm} {r[1]} **{r[0]}** {int(r[2] or 0):,} sh"
+                  + (f" @ ₩{float(px):,.0f}" if px else "") + f" — {st[1]}{pnl}"))
+    if not L:
+        return ("오늘 챗봇으로 주문한 내역이 없습니다." if not en
+                else "No chatbot orders today.")
+    head = ("**💬 오늘 챗봇으로 하신 주문** (최신순)" if not en
+            else "**💬 Your chatbot orders today** (newest first)")
+    tail = ("\n\n대기 주문 취소는 \"종목명 주문 취소\"라고 말씀하세요." if not en
+            else "\n\nSay \"cancel <stock> order\" to cancel a waiting one.")
+    return head + "\n" + "\n".join(L) + tail
+
+
+_DESK_PNL_KW = ("수익", "손익", "이익", "벌었", "얼마 벌", "profit", "p&l", "pnl", "make today",
+                "made today", "money did", "earn")
+
+
+def _is_desk_pnl_q(transcript: Optional[str]) -> bool:
+    t = (transcript or "").lower()
+    if not t or not any(k in t for k in _DESK_PNL_KW):
+        return False
+    return any(k in t for k in ("오늘", "today", "데스크", "desk", "지금까지", "so far"))
+
+
+def _desk_pnl_reply(db, transcript: Optional[str], lang: str) -> Optional[str]:
+    """Today's desk money, from the order record: realized per source + open count."""
+    en = not _re.search(r"[가-힣]", transcript or "") and bool(_re.search(r"[a-zA-Z]", transcript or ""))
+    from datetime import timedelta as _td9, timezone as _tz9
+    KST = _tz9(_td9(hours=9))
+    from sqlalchemy import text as _sqt
+    rows = db.execute(_sqt(
+        "SELECT COALESCE(source,'manual'), realized_pnl, created_at FROM paper_desk_orders "
+        "WHERE status='FILLED' AND realized_pnl IS NOT NULL "
+        "ORDER BY id DESC LIMIT 4000")).fetchall()
+    today8 = _dt_now_kst().strftime("%Y%m%d")
+    by_src: dict = {}
+    for s, p, c in rows:
+        try:
+            if c is None or c.astimezone(KST).strftime("%Y%m%d") != today8:
+                continue
+        except Exception:
+            continue
+        k = "chatbot" if str(s) in ("chat", "chatbot") else str(s)
+        d = by_src.setdefault(k, {"n": 0, "pnl": 0.0})
+        d["n"] += 1
+        d["pnl"] += float(p or 0)
+    total = sum(d["pnl"] for d in by_src.values())
+    n_open = db.execute(_sqt("SELECT count(*) FROM paper_desk_positions WHERE qty > 0")).scalar() or 0
+    _tot_c = "#b02a2a" if total >= 0 else "#1565c0"  # noqa: F841 (color for future use)
+    L = [("**💰 오늘 데스크 실현 손익 (매도 완료 기준)**" if not en
+          else "**💰 Today's desk realized P&L (closed sells only)**"), ""]
+    if by_src:
+        for k in sorted(by_src, key=lambda x: -by_src[x]["pnl"]):
+            d = by_src[k]
+            lab = "💬 chatbot" if k == "chatbot" else k
+            L.append(f"· {lab}: ₩{d['pnl']:+,.0f} ({d['n']}{'건' if not en else ' sells'})")
+        L += ["", (f"**합계: ₩{total:+,.0f}**" if not en else f"**Total: ₩{total:+,.0f}**")]
+    else:
+        L.append("오늘 실현된(매도 완료) 손익이 아직 없습니다." if not en
+                 else "Nothing realized (no closed sells) yet today.")
+    L.append((f"현재 보유 {int(n_open)}종목 — 미실현 평가손익은 데스크 화면에서 실시간으로 보입니다."
+              if not en else
+              f"{int(n_open)} positions open now — unrealized P&L updates live on the desk pages."))
+    return "\n".join(L)
 
 
 def _looks_refusal(text: str) -> bool:
@@ -6782,7 +6892,10 @@ def _run_agent_impl(
                     "tool_used": "llm_confirm"}
 
     # === MY PORTFOLIO — 'how many stocks am I holding?' → the 모의투자 desk's real state.
+    # A CHATBOT-orders question ("what did I buy using chatbot?") is NOT the whole
+    # portfolio — its own lane below answers from the order record (2026-08-26).
     if (not confirmed_tool and not attachment_ids and transcript
+            and not _is_my_chat_orders_q(transcript)
             and _PORTFOLIO_RE.search(transcript)):
         _pf = _paper_portfolio_reply(db, lang, agent_id, focus_text=transcript)
         if _pf:
@@ -7033,6 +7146,33 @@ def _run_agent_impl(
                         "tool_used": "chat_trade"}
         except Exception as e:
             log.warning(f"chat trade lane failed: {str(e)[:120]}")
+
+    # === 💬 MY CHAT ORDERS ("오늘 내가 챗봇으로 뭐 샀지?" / "what did I buy using
+    # chatbot?") — answered from the ORDER RECORD, not the whole desk portfolio
+    # (deep audit 2026-08-26: it listed all 21 algo positions instead). ===
+    if not confirmed_tool and not attachment_ids and _is_my_chat_orders_q(transcript):
+        try:
+            _mco = _my_chat_orders_reply(db, transcript, lang)
+            if _mco:
+                return {"intent": "chat_orders", "language": lang, "reply": _mco,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "chat_orders"}
+        except Exception as e:
+            log.warning(f"my-chat-orders lane failed: {str(e)[:120]}")
+
+    # === 💰 DESK P&L TODAY ("how much profit did the desk make today?") — real
+    # numbers from the order record (deep audit 2026-08-26: the report lane
+    # apologized 'no data available'). ===
+    if (not confirmed_tool and not attachment_ids and _is_desk_pnl_q(transcript)
+            and not _all_stocks_in_query(transcript)):
+        try:
+            _dpl = _desk_pnl_reply(db, transcript, lang)
+            if _dpl:
+                return {"intent": "desk_pnl", "language": lang, "reply": _dpl,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "desk_pnl"}
+        except Exception as e:
+            log.warning(f"desk-pnl lane failed: {str(e)[:120]}")
 
     # === 🧭 CHECKLIST ADVICE (boss 2026-08-25: "when we ask any advise again ML is
     # coming out... it should analyze deeply using 100 checklist, news, then answer" +
