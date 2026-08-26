@@ -405,6 +405,15 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
   const [dRun9, setDRun9] = useState(false);
   const dState9 = useRef<{ base: number | null; qty: number; k: number;
     ev: string[]; lo: number | null }>({ base: null, qty: 0, k: 0, ev: [], lo: null });
+  // deep link from the hub card: /testing/live?demo=1 opens the theater playing
+  useEffect(() => {
+    try {
+      if (typeof window !== "undefined"
+          && new URLSearchParams(window.location.search).get("demo") === "1") {
+        setOpen9(true); setMenu9("demo"); setDRun9(true); setDSpeed9(3);
+      }
+    } catch { /* no-op */ }
+  }, []);
   useEffect(() => {
     if (menu9 !== "demo" || dBars9.length) return;
     api<{ bars?: { hhmm: string; open: number; high: number; low: number;

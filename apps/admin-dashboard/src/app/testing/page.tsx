@@ -54,6 +54,22 @@ export default function TestingIndex() {
             </Link>
           </div>
         </div>
+
+        {/* ---- 🎭 Demo Theater — after-hours replay of the agent's handling (boss 2026-08-26) ---- */}
+        <div className="rounded-2xl border-2 p-5" style={{ borderColor: "#6a1b9a", background: "rgba(106,27,154,0.04)" }}>
+          <div className="text-[18px] font-extrabold" style={{ color: "#6a1b9a" }}>
+            🎭 {t("데모 시어터 — 에이전트의 매매를 재생으로 본다", "Demo Theater — watch the agent trade, replayed")}
+          </div>
+          <p className="mt-2 text-[13px] leading-relaxed text-[var(--text-secondary)]">
+            {t("장이 닫혀 있어도 봅니다: 두산에너빌리티의 실제 1분봉 하루가 영화처럼 재생되고, 알고2가 그 위에서 실시간으로 매매합니다 — 급락 문이 열려 매수, +1%마다 초록 계단선에서 10% 매도, 빨간 -1% 선 터치 시 전량, 15:19 종. 재생/일시정지/×1·×3·×10 배속. 실제 가격 재생 + 규칙 시연 — 지어낸 숫자는 없습니다.",
+               "Watch even when the market is closed: Doosan's REAL 1-minute day replays like a movie while Algo 2 trades it live on screen — the dip door buys, every +1% green rung sells 10%, the red -1% line sells all, the 15:19 bell. Play/pause, ×1·×3·×10 speed. Real prices + rule re-enactment — nothing invented.")}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link prefetch={true} href="/testing/live?demo=1" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: "#6a1b9a" }}>
+              {t("데모 시어터 열기", "Open the demo theater")}
+            </Link>
+          </div>
+        </div>
       </div>
 
       <p className="mt-6 text-[11.5px] text-[var(--text-muted)]">
