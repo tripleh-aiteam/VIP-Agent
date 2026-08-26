@@ -6228,8 +6228,14 @@ _SPELL_VOCAB = (
     "months", "week", "weeks", "days", "current", "hold", "wait", "which", "what",
     "much", "many", "good", "best", "queue", "limit", "trade", "trading", "bought",
     "sold", "please", "again", "change", "changes", "money", "increase", "decrease",
+    "last", "past", "recent", "first",
 )
 _SPELL_SET = frozenset(_SPELL_VOCAB)
+# stubborn frequent typos that score below the 0.8 fuzzy bar ("lasy 4 days" answered
+# with the CURRENT price, boss 2026-08-26) — a direct map is safer than lowering it
+_SPELL_DIRECT = {"lasy": "last", "laast": "last", "yersterday": "yesterday",
+                 "tommorow": "tomorrow", "tommorrow": "tomorrow", "wich": "which",
+                 "prise": "price", "prive": "price", "shuld": "should"}
 
 
 def _spell_normalize(q: Optional[str]) -> Optional[str]:
@@ -6252,6 +6258,10 @@ def _spell_normalize(q: Optional[str]) -> Optional[str]:
     for tok in _re.split(r"([^A-Za-z]+)", q):
         tl = tok.lower()
         if tok.isalpha() and tok.isascii() and 4 <= len(tok) <= 12 and tl not in _SPELL_SET:
+            if tl in _SPELL_DIRECT:
+                out.append(_SPELL_DIRECT[tl])
+                changed = True
+                continue
             m = difflib.get_close_matches(tl, _SPELL_VOCAB, n=1, cutoff=0.75)
             # 0.75-0.8 band only for pure transpositions ('waht'→'what', 'mnay'→'many'):
             # same letters, same length. 'tell' can never become 'sell' this way.
