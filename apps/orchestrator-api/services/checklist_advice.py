@@ -262,8 +262,14 @@ def _buy(db, code: str, name: str, en: bool) -> dict:
                " → 가격이 내릴 수 있어 조심해야 합니다" if bad else "") if not en else \
               (" → the price may rise, good for buying" if good else
                " → the price may fall, be careful" if bad else "")
-        L.append((f"4. 뉴스: [{_stp}] {str(s0.get('title', ''))[:60]} ({_tm} 발표){eff}") if not en
-                 else (f"4. News: [{_stp}] {str(s0.get('title', ''))[:60]} (published {_tm}){eff}"))
+        # the headline is a LINK when we have one (boss 2026-08-26: "it says
+        # there is a bad news but it did not give me link for reading")
+        _ttl9 = str(s0.get("title", ""))[:60]
+        _lnk9 = str(s0.get("link") or s0.get("url") or "").strip()
+        if _lnk9.startswith("http"):
+            _ttl9 = f"[{_ttl9}]({_lnk9})"
+        L.append((f"4. 뉴스: [{_stp}] {_ttl9} ({_tm} 발표){eff}") if not en
+                 else (f"4. News: [{_stp}] {_ttl9} (published {_tm}){eff}"))
     else:
         L.append(("4. 뉴스: 특별한 뉴스 없음" if not en else "4. News: nothing special today"))
     # 5. weak items, briefly
