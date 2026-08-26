@@ -164,6 +164,120 @@ def parse(transcript: Optional[str]) -> Optional[dict]:
             "pct": pct, "price": price, "market": market}
 
 
+_STATUS_KW = ("sold out", "did it sell", "is it sold", "filled", "체결됐", "체결 됐", "체결이",
+              "팔렸", "아직 보유", "still holding", "order status", "주문 상태", "주문 어떻게",
+              "did i sell", "sold yet", "bought yet", "샀어?", "샀나")
+
+
+def is_status_q(transcript: Optional[str]) -> bool:
+    t = (transcript or "").lower()
+    return bool(t) and any(k in t for k in _STATUS_KW)
+
+
+def order_status_reply(db, transcript: Optional[str], lang: str) -> Optional[str]:
+    """'still holding or you already sold out?' — answered from the ORDER RECORD
+    (2026-08-26: the analyst LLM hijacked this, talked about the WRONG stock and said
+    'I don't disclose personal positions')."""
+    if not is_status_q(transcript):
+        return None
+    en = not re.search(r"[가-힣]", transcript or "") and bool(re.search(r"[a-zA-Z]", transcript or ""))
+    from datetime import timedelta, timezone
+    from sqlalchemy import text as _sqt
+    KST = timezone(timedelta(hours=9))
+    rows = db.execute(_sqt(
+        "SELECT name, ticker, side, qty, status, limit_price, fill_price, created_at "
+        "FROM paper_desk_orders WHERE COALESCE(source,'') IN ('chat','chatbot') "
+        "ORDER BY id DESC LIMIT 8")).fetchall()
+    if not rows:
+        return None
+    L = []
+    for r in rows[:4]:
+        try:
+            tm = r[7].astimezone(KST).strftime("%H:%M") if r[7] is not None else ""
+        except Exception:
+            tm = ""
+        side_ko = "매수" if r[2] == "BUY" else "매도"
+        if r[4] == "OPEN":
+            px = None
+            try:
+                from services.paper_desk import _live_price
+                px, _n = _live_price(r[1])
+            except Exception:
+                pass
+            lp = float(r[5] or 0)
+            gap = ""
+            if px and lp:
+                d = (lp - float(px)) if r[2] == "BUY" else (float(px) - lp)
+                need = abs(d)
+                gap = ((f" · 현재가 ₩{px:,.0f} — ₩{need:,.0f} {'내려오면' if r[2] == 'BUY' else '올라오면'} 체결"
+                        if d < 0 else " · 다음 틱에 체결될 자리입니다") if not en else
+                       (f" · now ₩{px:,.0f} — fills on a ₩{need:,.0f} "
+                        f"{'dip' if r[2] == 'BUY' else 'rise'}" if d < 0
+                        else " · at the touch — should fill on the next tick"))
+            L.append((f"🕐 {side_ko} {r[0]} {int(r[3] or 0):,}주 — **아직 체결 안 됐습니다** "
+                      f"(지정가 ₩{lp:,.0f} 대기, {tm} 접수){gap}") if not en else
+                     (f"🕐 {r[2]} {r[0]} {int(r[3] or 0):,} sh — **NOT filled yet** "
+                      f"(limit ₩{lp:,.0f} waiting, placed {tm}){gap}"))
+        elif r[4] == "FILLED":
+            L.append((f"✅ {side_ko} {r[0]} {int(r[3] or 0):,}주 — 체결 완료 @ ₩{float(r[6] or 0):,.0f} ({tm})")
+                     if not en else
+                     (f"✅ {r[2]} {r[0]} {int(r[3] or 0):,} sh — filled @ ₩{float(r[6] or 0):,.0f} ({tm})"))
+    if not L:
+        return None
+    head = "**💬 챗봇 주문 상태 (최신순)**" if not en else "**💬 Your chatbot orders (newest first)**"
+    return head + "\n" + "\n".join(L)
+
+
+_BREAKEVEN_KW = ("본전", "break even", "breakeven", "break-even", "minimum price",
+                 "least price", "손해 없이", "손해 안", "안 잃", "not lose", "can gain",
+                 "to gain", "얼마에 팔아야")
+
+
+def breakeven_reply(db, transcript: Optional[str], lang: str,
+                    ctx_code: Optional[str] = None) -> Optional[str]:
+    """'what is the minimum price if we sell we can gain' = the BREAK-EVEN price of the
+    position (2026-08-26: the LLM answered best-bid mechanics and ignored that the
+    queued sell was BELOW the average cost)."""
+    t = (transcript or "").lower()
+    if not t or not any(k in t for k in _BREAKEVEN_KW):
+        return None
+    if not any(k in t for k in ("sell", "팔", "매도", "gain", "본전", "잃")):
+        return None
+    en = not re.search(r"[가-힣]", transcript or "") and bool(re.search(r"[a-zA-Z]", transcript or ""))
+    from services.assistant_agent import _all_stocks_in_query
+    stocks = _all_stocks_in_query(transcript)
+    code = stocks[0][0] if stocks else ctx_code
+    if not code:
+        return None
+    from sqlalchemy import text as _sqt
+    r = db.execute(_sqt("SELECT name, qty, avg_price FROM paper_desk_positions WHERE ticker=:t"),
+                   {"t": code}).fetchone()
+    if not r or int(r[1] or 0) <= 0:
+        return (f"보유 수량이 없어 본전가를 계산할 수 없습니다." if not en
+                else "We hold no shares of it — no break-even to compute.")
+    name, qty, avg = r[0], int(r[1]), float(r[2])
+    be = avg * (1 + (BUY_COST_PCT + SELL_COST_PCT) / 100)
+    px = None
+    try:
+        from services.paper_desk import _live_price
+        px, _n = _live_price(code)
+    except Exception:
+        pass
+    L = [(f"🧮 **{name} 본전 계산** (보유 {qty:,}주)" if not en
+          else f"🧮 **{name} break-even** ({qty:,} sh held)"),
+         (f"· 평균 매수가: ₩{avg:,.0f}" if not en else f"· Average cost: ₩{avg:,.0f}"),
+         (f"· 본전 매도가(수수료 {BUY_COST_PCT + SELL_COST_PCT}% 포함): **₩{be:,.0f}** — 이보다 높게 팔아야 이익입니다"
+          if not en else
+          f"· Break-even sell price (incl. {BUY_COST_PCT + SELL_COST_PCT}% fees): **₩{be:,.0f}** — sell above this to gain")]
+    if px:
+        d = (float(px) / be - 1) * 100
+        L.append((f"· 현재가 ₩{px:,.0f} → 본전 대비 {d:+.2f}% — 지금 팔면 {'이익' if d > 0 else '손해'}입니다")
+                 if not en else
+                 (f"· Now ₩{px:,.0f} → {d:+.2f}% vs break-even — selling now is a "
+                  f"{'gain' if d > 0 else 'LOSS'}"))
+    return "\n".join(L)
+
+
 def _tick(price: float) -> int:
     """KRX tick size for a price."""
     p = float(price or 0)
@@ -456,6 +570,26 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
         score_en = " · ".join(pe) if pe else None
     except Exception:
         pass
+    # ⚠️ LOSS WARNING on sells below break-even (2026-08-26: a whole-position sell
+    # queued BELOW the average cost and the bot never said a word)
+    be_ko = be_en = None
+    if side == "SELL":
+        try:
+            from sqlalchemy import text as _sqt2
+            _pr = db.execute(_sqt2(
+                "SELECT avg_price FROM paper_desk_positions WHERE ticker=:t"),
+                {"t": code}).fetchone()
+            if _pr and _pr[0]:
+                _avg = float(_pr[0])
+                _be = _avg * (1 + (BUY_COST_PCT + SELL_COST_PCT) / 100)
+                _sp = limit_price or px
+                if _sp and float(_sp) < _be:
+                    be_ko = (f"⚠️ 본전가는 약 ₩{_be:,.0f}(평단 ₩{_avg:,.0f} + 수수료)입니다 — "
+                             f"이 가격에 팔면 손해 보는 매도입니다.")
+                    be_en = (f"⚠️ Break-even is ~₩{_be:,.0f} (avg cost ₩{_avg:,.0f} + fees) — "
+                             f"selling at this price is a LOSS.")
+        except Exception:
+            pass
     side_ko = "매수" if side == "BUY" else "매도"
     if en:
         L = [f"🧾 **Order confirmation — {side} {name} ({code})**",
@@ -487,6 +621,8 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
             L.append(f"· {score_en}")
         if warn_en:
             L.append(warn_en)
+        if be_en:
+            L.append(be_en)
         L += ["", f"**Do you really want to {side.lower()}?** Reply **yes** to execute · "
               "**no** to cancel (valid 5 min). Fills as a 💬 chatbot order on the paper "
               "desk at the real live price."]
@@ -519,6 +655,8 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
             L.append(f"· {score_ko}")
         if warn_ko:
             L.append(warn_ko)
+        if be_ko:
+            L.append(be_ko)
         L += ["", f"**정말 {side_ko}할까요?** 실행하려면 **네**, 취소는 **아니요** 라고 답해 주세요 "
               "(5분간 유효). 실제 실시간 가격으로 페이퍼 데스크에 💬 챗봇(chatbot) 주문으로 기록됩니다."]
     return "\n".join(L)
