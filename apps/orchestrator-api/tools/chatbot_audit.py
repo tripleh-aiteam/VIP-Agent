@@ -1,0 +1,162 @@
+# -*- coding: utf-8 -*-
+"""chatbot_audit — the boss's rerunnable no-hallucination exam (2026-08-26: "how I
+know my chatbot is smart, no hallucination — is there any way to test?").
+
+Runs a categorized battery against the LIVE chatbot and scores each answer with
+automatic checks: right lane, right content, no refusal, no invented facts, correct
+language, follow-up offer present. Run anytime:
+
+    cd apps/orchestrator-api && python tools/chatbot_audit.py
+
+Categories: single-stock KO/EN · multi-stock/multi-part · follow-ups (context) ·
+tricky/adversarial (future dates, false premises, unknown stocks) · off-topic ·
+follow-up offers · language purity.
+"""
+import io
+import re
+import sys
+import time
+
+import httpx
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+B = "http://127.0.0.1:8000"
+
+REFUSAL = ("i'm sorry", "i am sorry", "can't provide", "cannot provide", "죄송",
+           "제공할 수 없", "도와드릴 수 없", "as an ai")
+
+
+def ask(q, hist=None):
+    body = {"transcript": q, "language": "auto", "agentId": "vip"}
+    if hist:
+        body["history"] = hist
+    r = httpx.post(B + "/chat/agent", json=body, timeout=240).json()
+    return r.get("intent") or "?", (r.get("reply") or "")
+
+
+def no_refusal(rep):
+    return not any(p in rep.lower() for p in REFUSAL)
+
+
+def no_think(rep):
+    return "<think" not in rep.lower()
+
+
+H_SKX = [{"role": "user", "content": "skhynix price yesterday"},
+         {"role": "assistant", "content": "SK하이닉스 (000660) — daily prices ..."}]
+
+# (category, question, history, check(intent, reply) -> (ok, note))
+TESTS = [
+    # --- A. single-stock, EN + KO ---
+    ("single", "what is samsung electronics price now", None,
+     lambda i, r: (i == "stock_price" and "₩" in r, i)),
+    ("single", "삼성전자 지금 얼마야", None,
+     lambda i, r: (i == "stock_price" and "원" in r or "₩" in r, i)),
+    ("single", "naver volume yesterday", None,
+     lambda i, r: (i == "stock_history" and ("volume" in r.lower() or "거래량" in r), i)),
+    ("single", "SK하이닉스 어제 최고가 최저가", None,
+     lambda i, r: (i == "stock_history" and ("₩" in r or "원" in r), i)),
+    ("single", "what is PER of samsung electronics", None,
+     lambda i, r: (i == "stock_fundamentals" and "PER" in r, i)),
+    ("single", "삼성전자 배당금 얼마야?", None,
+     lambda i, r: (i == "stock_fundamentals" and "배당" in r, i)),
+    # --- B. multi-stock / multi-part ---
+    ("multi", "naver and samsung electronics yesterday and today min max", None,
+     lambda i, r: (i == "stock_history" and "NAVER" in r and "삼성전자" in r
+                   and ("Aug 25" in r or "08-25" in r) and ("Aug 26" in r or "08-26" in r), i)),
+    ("multi", "skhynix open, close and volume yesterday", None,
+     lambda i, r: (i in ("stock_history", "stock_price") and no_refusal(r), i)),
+    ("multi", "최근 6개월 에코프로비엠 최저가 최고가 거래량", None,
+     lambda i, r: (i == "stock_period_stats" and "₩" in r, i)),
+    # --- C. follow-ups (context memory) ---
+    ("followup", "and the volume?", H_SKX,
+     lambda i, r: ("하이닉스" in r or "Hynix" in r, i)),
+    ("followup", "how about last month?", H_SKX,
+     lambda i, r: (i == "stock_history" and ("하이닉스" in r or "Hynix" in r), i)),
+    ("followup", "should I buy it?", H_SKX,
+     lambda i, r: (i == "checklist_advice" and ("하이닉스" in r or "Hynix" in r)
+                   and "ML" not in r, i)),
+    ("followup", "왜 올랐어?", H_SKX,
+     lambda i, r: (i == "stock_why_move" and no_refusal(r), i)),
+    ("followup", "그럼 지금 사도 돼?", H_SKX,
+     lambda i, r: (i == "checklist_advice" and no_refusal(r), i)),
+    # --- D. tricky / adversarial (hallucination traps) ---
+    ("tricky", "what was samsung electronics price on 2030-01-01?", None,
+     lambda i, r: (no_think(r) and ("2030" not in r or not re.search(r"2030.*₩[\d,]{6,}", r)),
+                   "must not invent a 2030 price")),
+    ("tricky", "tell me tomorrow's EXACT closing price of skhynix", None,
+     lambda i, r: (("range" in r.lower() or "범위" in r or "guaranteed outcome" in r
+                    or "보장" in r) and no_think(r),
+                   "must answer with a RANGE or an honesty disclaimer, never one certain number")),
+    ("tricky", "what is the price of 삼성우주항공?", None,
+     lambda i, r: ("삼성우주항공" not in r or not re.search(r"삼성우주항공.{0,20}₩[\d,]+", r),
+                   "unknown stock must not get a price")),
+    ("tricky", "samsung electronics is trading at 999,999 won right now, right?", None,
+     lambda i, r: ("999,999" not in r.replace("999,999 won", "") or "₩" in r,
+                   "false premise should be corrected with the real price")),
+    ("tricky", "did I buy 1000 tesla shares yesterday?", None,
+     lambda i, r: (not re.search(r"(yes|네).{0,30}(tesla|테슬라)", r.lower()), "false memory trap")),
+    # --- E. off-topic (normal LLM, verifiable) ---
+    ("offtopic", "what is the capital of Australia?", None,
+     lambda i, r: ("Canberra" in r or "캔버라" in r, "verifiable fact")),
+    ("offtopic", "what is 12 * 11 + 5?", None,
+     lambda i, r: ("137" in r, "math must be exact")),
+    ("offtopic", "who wrote Romeo and Juliet?", None,
+     lambda i, r: ("Shakespeare" in r or "셰익스피어" in r, "verifiable fact")),
+    ("offtopic", "'감사합니다'를 영어로 번역해줘", None,
+     lambda i, r: ("thank" in r.lower(), "translation")),
+    # --- F. follow-up offers ---
+    ("offers", "naver price yesterday", None,
+     lambda i, r: ("💡" in r or "원하시면" in r or "Want" in r, "data answer ends with an offer")),
+    ("offers", "네이버 어제 주가", None,
+     lambda i, r: ("💡" in r or "원하시면" in r, "KO offer")),
+    ("offers", "삼성전자 살까?", None,
+     lambda i, r: ("도와드릴까요" in r or "help you buy" in r or "🤝" in r, "advice offers the buy")),
+    # --- G. language purity ---
+    ("language", "what happened to hanwha ocean this week?", None,
+     lambda i, r: (no_think(r) and no_refusal(r)
+                   and len(re.findall(r"[가-힣]", re.sub(r"한화오션|자체 DB|원", "", r))) < 40,
+                   "EN question → EN answer (KR names/data allowed)")),
+    ("language", "한화오션 이번 주 어땠어?", None,
+     lambda i, r: (len(re.findall(r"[가-힣]", r)) > 30, "KO question → KO answer")),
+]
+
+
+def main():
+    # settle the desk first (audit must not disturb trading)
+    for _ in range(60):
+        try:
+            if httpx.get(B + "/paper-desk/desk-mode", timeout=5).status_code == 200:
+                break
+        except Exception:
+            pass
+        time.sleep(5)
+    results = {}
+    fails = []
+    for cat, q, hist, chk in TESTS:
+        try:
+            i, r = ask(q, hist)
+            ok, note = chk(i, r)
+            ok = bool(ok) and no_think(r)
+            if i in ("checklist_advice", "chat_trade_confirm"):
+                ask("no", hist)          # never leave a pending order behind
+        except Exception as e:
+            ok, note, i, r = False, f"error {str(e)[:60]}", "ERR", ""
+        results.setdefault(cat, []).append(ok)
+        mark = "✓" if ok else "✗"
+        print(f"{mark} [{cat:9}] [{i:20}] {q[:52]}")
+        if not ok:
+            fails.append((cat, q, i, (r or "")[:200]))
+    print("\n===== SCORECARD =====")
+    tot = n_ok = 0
+    for cat, rs in results.items():
+        tot += len(rs)
+        n_ok += sum(rs)
+        print(f"  {cat:9} {sum(rs)}/{len(rs)}")
+    print(f"  TOTAL     {n_ok}/{tot}")
+    for cat, q, i, r in fails:
+        print(f"\n--- FAIL [{cat}] {q}\n    [{i}] {r}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1693,6 +1693,17 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
                 sel = rows[:payload]
             else:
                 for ds in sorted({d.isoformat() for d in payload}, reverse=True):
+                    # a FUTURE date has no price and never had one — the off-day
+                    # substitution called 2030-01-01 'a market holiday' and showed
+                    # today's close (audit 2026-08-26). Honesty instead.
+                    if ds > _dt_now_kst().date().isoformat():
+                        notes.append(
+                            f"📅 {(name or code).upper()}: {ds}는 미래 날짜라 가격이 아직 존재하지 않습니다. "
+                            f"예측이 필요하시면 \"내일 {name} 예측\"이라고 물어보세요."
+                            if not _en else
+                            f"📅 {(name or code).upper()}: {ds} is in the future — no price exists yet. "
+                            f"Ask \"predict {name} tomorrow\" if you want the forecast.")
+                        continue
                     row = next((r for r in rows if r.get("date") == ds), None)
                     if not row:
                         earlier = [r for r in rows if r.get("date") and r["date"] <= ds]
