@@ -494,6 +494,18 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
                             "groups": r.get("groups")}
                            for r in sorted(rank["rows"], key=lambda r: -(r.get("score") or 0))],
             "picked": [r["code"] for r, _l, _t in top], "n": len(top)}
+    # ANSWER FIRST (boss 2026-08-26: "it should first show top 10 result, then
+    # it should show why it is like this"): the reply leads with [RESULT]; the
+    # 100-item evidence card follows under a 'why this ranking' divider.
+    try:
+        _ri9 = next(i for i, x in enumerate(L)
+                    if "[RESULT]" in str(x) or "[결과]" in str(x))
+        _hd9 = 2 if (len(L) > 1 and str(L[1]).startswith("🌙")) else 1
+        _why9 = ["", ("――― why this ranking — the 100-item evidence ―――" if en
+                      else "――― 왜 이 순위인가 — 100문항 근거 ―――"), ""]
+        L = L[:_hd9] + [""] + L[_ri9:] + _why9 + L[_hd9:_ri9]
+    except StopIteration:
+        pass
     return {"ok": True, "reply": "\n".join(L), "picks": [r["code"] for r, _l, _t in top],
             "process": proc}
 
