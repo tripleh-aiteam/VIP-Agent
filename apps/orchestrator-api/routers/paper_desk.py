@@ -842,9 +842,25 @@ def _chat_fam_entries(code_set: set, day8: str = ""):
             "SELECT ticker, name, side, qty, fill_price, realized_pnl_pct, created_at "
             "FROM paper_desk_orders WHERE COALESCE(source,'') IN ('chat','chatbot') "
             "AND status='FILLED' ORDER BY id")).fetchall()
+        # KOSPI ONLY on the boards (boss 2026-08-26: "please remove 에코프로비엠
+        # from both menus — yesterday I requested do not use Kosdaq"): KOSDAQ/ETF
+        # chat trips no longer render in the trading history. The order RECORDS
+        # stay untouched in the database — display filter only, never deletion.
+        _tks9 = list({r[0] for r in recs})
+        _mkt9: dict = {}
+        if _tks9:
+            try:
+                for _c9, _m9 in db.execute(_sqt(
+                        "SELECT code, market FROM krx_stocks WHERE code = ANY(:t)"),
+                        {"t": _tks9}).fetchall():
+                    _mkt9[_c9] = str(_m9 or "").upper()
+            except Exception:
+                _mkt9 = {}
         by_code: dict = {}
         for r in recs:
             c = r[0]
+            if _mkt9 and _mkt9.get(c, "") != "KOSPI":
+                continue
             # NO menu split (boss 2026-08-26: "why only menu1, it must be on both") —
             # the boss's own trades follow him to whichever desk he is looking at
             # only the SELECTED day's orders (boss 2026-08-26: old days leaked into
@@ -924,6 +940,13 @@ def _chat_fam_entries(code_set: set, day8: str = ""):
             "AND order_type='limit' ORDER BY id")).fetchall()
         for r in opens:
             c = r[0]
+            try:
+                _m8 = db.execute(_sqt(
+                    "SELECT market FROM krx_stocks WHERE code=:c"), {"c": c}).scalar()
+                if str(_m8 or "").upper() != "KOSPI":
+                    continue          # KOSDAQ/ETF never on the boards (boss 08-26)
+            except Exception:
+                pass
             if day8:
                 try:
                     if r[5] is None or r[5].astimezone(KST).strftime("%Y%m%d") != day8:
