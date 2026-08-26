@@ -2167,7 +2167,10 @@ def _fundamentals_reply(transcript: Optional[str], lang: str, db=None) -> Option
                            f"🎯 Analyst consensus target: **₩{tm}** (mean rating {rm}/5 · "
                            f"as of {f.get('consensus_date')}){up}")]
                 for r in (f.get("researches") or [])[:2]:
-                    L.append(f"   · {r.get('broker')}: {r.get('title')} ({r.get('date')})")
+                    _ru9 = str(r.get("url") or r.get("link") or "").strip()
+                    _rt9 = (f"[{r.get('title')}]({_ru9})" if _ru9.startswith("http")
+                            else r.get("title"))
+                    L.append(f"   · {r.get('broker')}: {_rt9} ({r.get('date')})")
                 L.append("_컨센서스는 참고용입니다 — 저희 매매 판단은 100체크리스트+알고리즘 기준입니다._"
                          if not _en else
                          "_Consensus is reference only — our trading decisions follow the "
