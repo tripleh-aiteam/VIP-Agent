@@ -6164,6 +6164,98 @@ def _answer_multi_part(db, parts: list[str], language, current_path, selected_id
             "tool_used": "multi_part"}
 
 
+# ===== ✏️ UNIVERSAL SPELL NORMALIZATION (boss 2026-08-26: "it should not care
+# spelling error, like we use normal LLM") — one layer before routing, so EVERY
+# keyword lane tolerates typos instead of each learning them one by one. Only
+# high-confidence corrections (≥0.8) of unknown 4-12 letter words into the trading
+# vocabulary; stock-name-ish tokens are left for the resolver's own fuzzy. =====
+_SPELL_VOCAB = (
+    "buy", "sell", "stock", "stocks", "share", "shares", "price", "prices", "order",
+    "orders", "cancel", "yesterday", "today", "tomorrow", "volume", "chart", "checklist",
+    "recommend", "recommendation", "candidate", "candidates", "profit", "holding",
+    "waiting", "market", "should", "would", "could", "want", "think", "minimum",
+    "maximum", "open", "close", "high", "low", "news", "score", "history", "month",
+    "months", "week", "weeks", "days", "current", "hold", "wait", "which", "what",
+    "much", "many", "good", "best", "queue", "limit", "trade", "trading", "bought",
+    "sold", "please", "again", "change", "changes", "money", "increase", "decrease",
+)
+_SPELL_SET = frozenset(_SPELL_VOCAB)
+
+
+def _spell_normalize(q: Optional[str]) -> Optional[str]:
+    if not q or not _re.search(r"[a-zA-Z]", q):
+        return q
+    import difflib
+    out = []
+    changed = False
+    for tok in _re.split(r"([^A-Za-z]+)", q):
+        tl = tok.lower()
+        if tok.isalpha() and tok.isascii() and 4 <= len(tok) <= 12 and tl not in _SPELL_SET:
+            m = difflib.get_close_matches(tl, _SPELL_VOCAB, n=1, cutoff=0.75)
+            # 0.75-0.8 band only for pure transpositions ('waht'→'what', 'mnay'→'many'):
+            # same letters, same length. 'tell' can never become 'sell' this way.
+            if m and difflib.SequenceMatcher(None, tl, m[0]).ratio() < 0.8 \
+                    and sorted(tl) != sorted(m[0]):
+                m = None
+            if m:
+                try:                      # never "correct" a stock name/alias
+                    from services import stock_resolver as _sr9
+                    _sr9._build()
+                    if tl in _sr9._ALIAS or difflib.get_close_matches(
+                            tl, list(_sr9._ALIAS.keys()), n=1, cutoff=0.8):
+                        out.append(tok)
+                        continue
+                except Exception:
+                    pass
+                out.append(m[0])
+                changed = True
+                continue
+        out.append(tok)
+    return "".join(out) if changed else q
+
+
+# 💡 FOLLOW-UP OFFERS (boss 2026-08-26: "add some techniques that it can follow with
+# people, like 'would you like to do this?'") — data answers end with a natural next
+# step. Lanes that already offer (advice, orders, reco) are left alone.
+_FOLLOWUP_BY_INTENT = {
+    "stock_history": ("원하시면 다른 기간이나 다른 종목도 바로 보여드릴게요 — 예: \"삼성전자 최근 3개월\".",
+                      "Want another period or stock? Just say e.g. \"samsung last 3 months\"."),
+    "stock_period_stats": ("다른 기간·종목이 필요하시면 말씀만 하세요 — 예: \"1년치 SK하이닉스\".",
+                           "Need a different window or stock? e.g. \"skhynix last 1 year\"."),
+    "stock_fundamentals": ("목표가·배당·PER 등 더 궁금한 항목을 이어서 물어보세요.",
+                           "Ask for more — e.g. \"target price?\" or \"dividend?\"."),
+    "top_movers": ("이 중 하나 판단해 드릴까요? — 예: \"1등 살까?\"",
+                   "Want a verdict on one of these? e.g. \"should I buy the top one?\""),
+    "stock_why_move": ("지금 사도 될지 판단해 드릴까요? \"살까?\"라고 물어보세요.",
+                       "Want a buy verdict on it? Just ask \"should I buy it?\""),
+    "desk_pnl": ("종목별 상세는 \"오늘 챗봇으로 뭐 샀지?\"라고 물어보시면 됩니다.",
+                 "For the detail, ask \"what did I buy today?\""),
+    "market_direction": ("오늘의 추천이 궁금하시면 \"3종목 추천해줘\"라고 말씀하세요.",
+                         "Want today's picks? Say \"recommend 3 stocks\"."),
+}
+_FOLLOWUP_MARKERS = ("도와드릴까요", "원하시면", "말씀하세요", "물어보세요", "드릴게요", "볼까요",
+                     "Want me", "Want another", "Want a", "Would you like", "Just say",
+                     "Just ask", "Say \"", "e.g. \"")
+
+
+def _append_followup(result: dict, transcript: Optional[str] = None) -> None:
+    try:
+        it = result.get("intent")
+        rep = result.get("reply") or ""
+        if it not in _FOLLOWUP_BY_INTENT or not rep or len(rep) < 30:
+            return
+        if any(m in rep for m in _FOLLOWUP_MARKERS):
+            return
+        ko, en = _FOLLOWUP_BY_INTENT[it]
+        # language by the QUESTION (the EN answer's '자체 DB' footer has Hangul and
+        # fooled a reply-based check)
+        _q = transcript or ""
+        _is_en = bool(_re.search(r"[a-zA-Z]", _q)) and not _re.search(r"[가-힣]", _q)
+        result["reply"] = rep.rstrip() + "\n\n💡 " + (en if _is_en else ko)
+    except Exception:
+        pass
+
+
 def run_agent(
     db: Session,
     transcript: str,
@@ -6183,6 +6275,8 @@ def run_agent(
     memory persistence (writes each turn to chat_sessions/chat_messages
     under channel='assistant_overlay' so recall_history can find it
     later). Persistence is best-effort and never blocks the response."""
+    # ✏️ one spell pass before anything reads the text (boss 2026-08-26)
+    transcript = _spell_normalize(transcript) or transcript
     # MULTI-PART: 'A? 그리고 B? 그리고 C?' → answer EVERY sub-question (was: only the last).
     # BUT a single PREDICTION question restated with two '?' ('what will price be tomorrow?
     # How many percent up or down?') is ONE question — don't split it, or it misses the
@@ -6227,6 +6321,9 @@ def run_agent(
             result["reply"] = _append_krw_to_usd(str(result["reply"]))
     except Exception:
         pass
+    # 💡 a natural next-step offer on data answers (boss 2026-08-26)
+    if isinstance(result, dict):
+        _append_followup(result, transcript)
     # LANGUAGE GUARD — English question MUST get an English answer (and vice versa).
     # Catches the case where a delegated (stock-backend) reply comes back in Korean.
     # Skipped for llm_task: 'translate to Korean' answers ARE Korean on purpose.
