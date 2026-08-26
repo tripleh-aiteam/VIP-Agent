@@ -52,6 +52,13 @@ def kind(transcript: Optional[str]) -> Optional[str]:
             return "buy"
         if "sell" in toks:
             return "sell"
+    # "I wanna buy LG — do you think is it good right now?" (boss 2026-08-26): an
+    # opinion word next to a buy/sell verb is an advice ask
+    if any(w in toks for w in ("think", "good", "opinion", "wise", "smart")):
+        if "buy" in toks:
+            return "buy"
+        if "sell" in toks:
+            return "sell"
     return None
 
 

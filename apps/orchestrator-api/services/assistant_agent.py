@@ -6075,7 +6075,11 @@ def run_agent(
     # Catches the case where a delegated (stock-backend) reply comes back in Korean.
     # Skipped for llm_task: 'translate to Korean' answers ARE Korean on purpose.
     try:
-        if isinstance(result, dict) and result.get("reply") and result.get("intent") != "llm_task":
+        # chat_trade previews/fills are deterministic order text — an LLM translation
+        # pass mangled one ('매수' → '구매', reworded quantities; 2026-08-26). Money
+        # text never rides through a translator.
+        if isinstance(result, dict) and result.get("reply") \
+                and result.get("intent") not in ("llm_task", "chat_trade", "chat_trade_confirm"):
             fixed = _enforce_reply_language(str(result["reply"]), language, transcript)
             if fixed:
                 result["reply"] = fixed

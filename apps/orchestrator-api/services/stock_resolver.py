@@ -72,6 +72,9 @@ _SLANG: dict[str, str] = {
     "sk이노": "096770", "sk이노베이션": "096770",
     "현대로템": "064350",
     "lg전자": "066570", "엘지전자": "066570", "lg electronics": "066570",
+    # bare "LG" (boss 2026-08-26: "I wanna buy Lg stock" resolved nothing and fell to
+    # the LLM) — retail shorthand for LG전자; longer LG names consume their spans first
+    "lg": "066570", "lg stock": "066570", "엘지": "066570",
     "크래프톤": "259960", "krafton": "259960",
     "kt": "030200",
 }

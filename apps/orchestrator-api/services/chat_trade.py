@@ -57,7 +57,11 @@ _KO_SELL = ("팔아줘", "팔아 줘", "팔아", "팔자", "매도해", "매도�
 # question/advice phrasings are NEVER a command ("매수해도 돼?", "should I buy...")
 _ADVICE_BLOCK = ("should", "할까", "살까", "팔까", "괜찮", "어때", "can i", "may i", "could i",
                  "worth", "좋을까", "어떨까", "할지", "해도", "될까", "돼?", "돼요", "됩니까",
-                 "why", "왜", "언제", "when", "how much should", "which", "what")
+                 "why", "왜", "언제", "when", "how much should", "which", "what",
+                 # "I wanna buy X — do you think it's good?" is an OPINION ask, not an
+                 # order (boss 2026-08-26 dialog)
+                 "do you think", "you think", " think", "is it good", "good time",
+                 "good idea", "good right now", "opinion")
 
 
 def parse(transcript: Optional[str]) -> Optional[dict]:
@@ -168,10 +172,13 @@ def build_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
     cmd = parse(transcript)
     if not cmd:
         return None
-    en = str(lang or "").lower().startswith("en")
-    if not en and not re.search(r"[가-힣]", transcript or "") \
-            and re.search(r"[a-zA-Z]", transcript or ""):
-        en = True
+    # ANY Hangul in the command → Korean preview ("buy lg 1주" once got the EN preview,
+    # which the language guard then LLM-translated into '구매/귀하가' — order text with
+    # money numbers must never ride through a translator)
+    if re.search(r"[가-힣]", transcript or ""):
+        en = False
+    else:
+        en = str(lang or "").lower().startswith("en") or bool(re.search(r"[a-zA-Z]", transcript or ""))
     return _make_preview(db, cmd["code"], cmd["name"], cmd["side"], cmd["qty"],
                          cmd["all_"], en)
 

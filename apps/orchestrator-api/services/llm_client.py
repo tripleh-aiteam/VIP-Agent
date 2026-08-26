@@ -813,7 +813,37 @@ def _call_gemini(model: str, system_prompt: str, messages: list[dict],
 # Main entry ??chat_completion_sync
 # ---------------------------------------------------------------------------
 
+_THINK_RE = re.compile(r"<think>.*?</think>", re.S | re.I)
+
+
+def _strip_think(text: str) -> str:
+    """Reasoning models (Groq gpt-oss, qwen…) can emit their chain-of-thought as a
+    literal <think>…</think> block — one LEAKED into the boss's chat verbatim,
+    system-prompt excerpts included (2026-08-26). Closed blocks are cut out; an
+    UNCLOSED block (truncated output) is pure reasoning with no answer, so the
+    whole thing is dropped and the caller's normal failure handling takes over."""
+    if not text or "<think" not in text.lower():
+        return text
+    out = _THINK_RE.sub("", text).strip()
+    if "<think" in out.lower():          # unclosed / truncated reasoning
+        out = out[:out.lower().index("<think")].strip()
+    return out
+
+
 def chat_completion_sync(
+    system_prompt: str,
+    messages: list[dict],
+    max_tokens: int = 500,
+    temperature: float = 0.7,
+    model: str | None = None,
+    prefer_paid: bool = False,
+) -> str:
+    out = _chat_completion_sync_inner(system_prompt, messages, max_tokens,
+                                      temperature, model, prefer_paid)
+    return _strip_think(out) if isinstance(out, str) else out
+
+
+def _chat_completion_sync_inner(
     system_prompt: str,
     messages: list[dict],
     max_tokens: int = 500,
