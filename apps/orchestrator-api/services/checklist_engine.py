@@ -1047,15 +1047,20 @@ def render_full_ko() -> str:
     data = full_checklist()
     items = data["items"]
     n_auto = sum(1 for i in items if i.get("auto"))
-    L = [f"**📋 매매 체크리스트 전체 {len(items)}문항** (🤖 자동 점검 {n_auto} · 🧑 본인 확인 {len(items) - n_auto})"]
+    _tot9 = sum(float(i.get("score") or 0) for i in items)
+    L = [f"**📋 매매 체크리스트 전체 {len(items)}문항** (🤖 자동 점검 {n_auto} · 🧑 본인 확인 {len(items) - n_auto} · 합산제 총 {_tot9:g}점)"]
     by_cat: dict[str, list] = {}
     for it in items:
         by_cat.setdefault(it["cat"], []).append(it)
     for cat, its in by_cat.items():
-        L += ["", f"**{cat} ({its[0]['no']}~{its[-1]['no']})**"]
+        _cs9 = sum(float(i.get("score") or 0) for i in its)
+        L += ["", f"**{cat} ({its[0]['no']}~{its[-1]['no']}) — 소계 {_cs9:g}점**"]
         for it in its:
-            L.append(f"{'🤖' if it.get('auto') else '🧑'} {it['no']}. {it['q']}")
+            _sc9 = float(it.get("score") or 0)
+            _lb9 = f"[{_sc9:g}점] " if _sc9 else "[—] "
+            L.append(f"{'🤖' if it.get('auto') else '🧑'} {it['no']}. {_lb9}{it['q']}")
     L += ["", "🤖 = 에이전트가 실시간 데이터로 자동 점검 (\"종목명 체크리스트\"로 확인) · 🧑 = 본인이 지켜야 하는 원칙",
+          "점수 = 항목별 가중치(측정+논문 근거, 2026-08-26 확정). 최종 점수는 통과 항목의 단순 합산.",
           "오늘의 시장 점검은 \"체크리스트\", 오늘 매매할 종목 추천은 \"오늘 뭐 살까?\"로 물어보세요."]
     return "\n".join(L)
 
@@ -1065,15 +1070,20 @@ def render_full_en() -> str:
     items = data["items"]
     cats_en = data.get("categories") or {}
     n_auto = sum(1 for i in items if i.get("auto"))
-    L = [f"**📋 The full {len(items)}-item trading checklist** (🤖 auto-checked {n_auto} · 🧑 self-check {len(items) - n_auto})"]
+    _tot9 = sum(float(i.get("score") or 0) for i in items)
+    L = [f"**📋 The full {len(items)}-item trading checklist** (🤖 auto-checked {n_auto} · 🧑 self-check {len(items) - n_auto} · sum-scored, {_tot9:g} pts total)"]
     by_cat: dict[str, list] = {}
     for it in items:
         by_cat.setdefault(it["cat"], []).append(it)
     for cat, its in by_cat.items():
-        L += ["", f"**{cats_en.get(cat, cat)} ({its[0]['no']}–{its[-1]['no']})**"]
+        _cs9 = sum(float(i.get("score") or 0) for i in its)
+        L += ["", f"**{cats_en.get(cat, cat)} ({its[0]['no']}–{its[-1]['no']}) — subtotal {_cs9:g} pts**"]
         for it in its:
-            L.append(f"{'🤖' if it.get('auto') else '🧑'} {it['no']}. {it.get('q_en') or it['q']}")
+            _sc9 = float(it.get("score") or 0)
+            _lb9 = f"[{_sc9:g} pts] " if _sc9 else "[—] "
+            L.append(f"{'🤖' if it.get('auto') else '🧑'} {it['no']}. {_lb9}{it.get('q_en') or it['q']}")
     L += ["", "🤖 = the agent checks this automatically from live data (ask \"<stock> checklist\") · 🧑 = your own discipline",
+          "Points = per-item weights (measured + literature evidence, fixed 2026-08-26). The final score is the plain SUM of passed items.",
           "Today's market check: ask \"checklist\". Today's stock recommendation: ask \"what should I buy today?\"."]
     return "\n".join(L)
 
