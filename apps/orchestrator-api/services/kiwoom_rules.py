@@ -871,6 +871,8 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
     # needs to look up `around` in the SAME order the table displays, and that order is
     # not known until every stock has been walked.
     rows, holding, chart = [], [], None
+    waiting: list = []          # working limit offers (boss 2026-08-26: the
+                                # condition→offer→waiting→fill process, shown live)
     # WHICH STOCK THE CHART DRAWS. `code` is the button the boss pressed above the chart,
     # but a clicked TRADE wins over it: the trade table lists every company together, and
     # clicking an SK하이닉스 row while the chart was pinned to 삼성전자 left the chart
@@ -966,6 +968,12 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
         for op in (ops if d == day_list[-1] else []):
             sk = stks[op["si"]]
             b_c = sk["cs"][op["buy_i"]]
+            if op.get("waiting"):
+                waiting.append({"code": sk["code"], "name": sk["name"],
+                                "t": b_c["hhmm"], "px": op.get("entry"),
+                                "qty": op.get("qty_left"),
+                                "wall": op.get("wall"), "last": op.get("last")})
+                continue
             holding.append({"code": sk["code"], "name": sk["name"], "buy_t": b_c["hhmm"],
                             "entry": op["entry"], "last": op["last"],
                             "sig": op.get("sig"), "wall": op.get("wall"),
@@ -1104,6 +1112,6 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             "gross_total": round(sum(r["gross_pct"] for r in rows), 2),
             "per_trade": round(sum(r["net_pct"] for r in rows) / len(rows), 3) if rows else 0.0,
             "trades": rows[:limit], "shown": min(len(rows), limit),
-            "holding": holding, "chart": chart, "fee_pct": FEE_PCT}
+            "holding": holding, "waiting": waiting, "chart": chart, "fee_pct": FEE_PCT}
     _TRADES_TTL[_tk2] = (_t.time(), _res2)
     return _res2

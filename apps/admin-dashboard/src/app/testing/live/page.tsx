@@ -525,6 +525,70 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
   const [waits9, setWaits9] = useState<{ id?: number; ticker?: string; name?: string;
     side?: string; qty?: number; limit_price?: number; last?: number }[]>([]);
   const prevWait9 = useRef<Set<number> | null>(null);
+  // the ALGO's own working offers (condition met → price offered → waiting)
+  const [algoWaits9, setAlgoWaits9] = useState<{ code: string; name: string;
+    t?: string; px?: number; qty?: number;
+    wall?: { price?: number } | number | null }[]>([]);
+  // 🔭 self-service watcher: any stock's chart + full book, your own pick
+  const [watch9, setWatch9] = useState<string>("");
+  const [watchList9, setWatchList9] = useState<{ code: string; name: string }[]>([]);
+  const [wBars9, setWBars9] = useState<{ hhmm: string; open: number; high: number;
+    low: number; close: number }[]>([]);
+  const [wBook9, setWBook9] = useState<{ asks: [number, number][];
+    bids: [number, number][] } | null>(null);
+  useEffect(() => {
+    if (!open9) return;
+    api<{ stocks: { code: string; name: string }[] }>("/paper-desk/live/status")
+      .then((d) => { if (d?.stocks) setWatchList9(d.stocks.map(
+        (s) => ({ code: s.code, name: s.name || s.code }))); })
+      .catch(() => {});
+  }, [open9]);
+  useEffect(() => {
+    if (!open9 || !watch9) return;
+    let live = true;
+    const load = async () => {
+      try {
+        const tp = await api<{ bars?: typeof wBars9 }>(
+          `/paper-desk/live/tape?code=${watch9}&period=60&bars=90`);
+        if (live && tp?.bars) setWBars9(tp.bars);
+        const bk = await api<{ asks?: [number, number][]; bids?: [number, number][] }>(
+          `/paper-desk/live/book?code=${watch9}`);
+        if (live && bk?.asks) setWBook9({ asks: bk.asks, bids: bk.bids || [] });
+      } catch { /* keep last */ }
+    };
+    load();
+    const h = setInterval(load, 8000);
+    return () => { live = false; clearInterval(h); };
+  }, [open9, watch9]);
+  const wCv9 = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const c = wCv9.current;
+    if (!c || !wBars9.length) return;
+    const W = c.clientWidth, H = c.clientHeight;
+    c.width = W * 2; c.height = H * 2;
+    const g = c.getContext("2d");
+    if (!g) return;
+    g.scale(2, 2); g.clearRect(0, 0, W, H);
+    const lo = Math.min(...wBars9.map((b) => b.low)) * 0.999;
+    const hi = Math.max(...wBars9.map((b) => b.high)) * 1.001;
+    const y = (v: number) => 8 + (hi - v) / Math.max(1e-9, hi - lo) * (H - 28);
+    const bw = (W - 54) / wBars9.length;
+    g.font = "9px sans-serif";
+    wBars9.forEach((b, i) => {
+      const x = 54 + i * bw + bw / 2;
+      const up = b.close >= b.open;
+      g.strokeStyle = g.fillStyle = up ? "#d32f2f" : "#1565c0";
+      g.beginPath(); g.moveTo(x, y(b.high)); g.lineTo(x, y(b.low)); g.stroke();
+      g.fillRect(x - Math.max(1, bw * 0.3), y(Math.max(b.open, b.close)),
+                 Math.max(2, bw * 0.6), Math.max(1, Math.abs(y(b.open) - y(b.close))));
+      if (i % 20 === 0) { g.fillStyle = "#888"; g.fillText(String(b.hhmm).slice(0, 5), x - 12, H - 6); }
+    });
+    g.fillStyle = "#888";
+    for (let i = 0; i <= 3; i++) {
+      const v = lo + (hi - lo) * i / 3;
+      g.fillText(Math.round(v).toLocaleString(), 2, y(v) + 3);
+    }
+  }, [wBars9]);
   useEffect(() => {
     if (!open9) return;
     let live = true;
@@ -536,11 +600,14 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
           codes = (st?.stocks || []).map((s) => s.code).join(",");
         }
         const q = codes ? `&codes=${codes}` : "";
-        const r = await api<{ computing?: boolean; rows?: Row[]; holding?: Hold[] }>(
+        const r = await api<{ computing?: boolean; rows?: Row[]; holding?: Hold[];
+          waiting?: { code: string; name: string; t?: string; px?: number;
+            qty?: number; wall?: { price?: number } | number | null }[] }>(
           `/paper-desk/live/rules/family-trades?family=${fam9}&period=60&day=&frm=&to=&gate=1&auto=1${q}`);
         if (!live || !r || r.computing) return;
         const hh = (r.holding || []).filter((h) => h.rule !== "chatbot");
         setHolds9(hh);
+        setAlgoWaits9(r.waiting || []);
         // the day's event ticker, newest first: every buy and every slice sell
         const ev: [string, string][] = [];
         for (const x of (r.rows || [])) {
@@ -715,13 +782,25 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
               🔥 {f.txt}
             </div>
           ))}
-          {waits9.length > 0 && (
+          {(waits9.length > 0 || algoWaits9.length > 0) && (
             <div className="mt-2 px-2 py-1.5 rounded border tabular-nums"
               style={{ borderColor: "#b8860b", background: "rgba(184,134,11,0.06)" }}>
               <b style={{ color: "#b8860b" }}>⏳ {t("우리 가격 제시 — 대기 중 주문", "our price offers — waiting orders")}</b>
+              {algoWaits9.map((w, i) => {
+                const wp = typeof w.wall === "object" && w.wall ? w.wall.price : w.wall;
+                return (
+                  <div key={`a${i}`} className="font-bold text-[12px]">
+                    🟠 {t("조건 충족", "condition MET")} → {w.name} {t("매수 제시", "BUY offered")} <b>₩{Number(w.px || 0).toLocaleString()}</b>
+                    {wp ? t(` (🧱 최대 매수벽 ₩${Number(wp).toLocaleString()} 바로 한 틱 앞)`,
+                            ` (one tick in front of the 🧱 ₩${Number(wp).toLocaleString()} wall)`) : ""}
+                    {" → "}<span className="animate-pulse">{t("대기 중…", "WAITING…")}</span>
+                    {" "}{t("체결 순간 🔥", "🔥 on the match")}
+                  </div>
+                );
+              })}
               {waits9.map((w, i) => (
                 <div key={i}>
-                  {w.side === "BUY" ? "🟢" : "🔴"} {w.name || w.ticker} {w.qty}{t("주", "sh")} @ <b>{Number(w.limit_price || 0).toLocaleString()}</b>
+                  {w.side === "BUY" ? "🟢" : "🔴"} 💬 {w.name || w.ticker} {w.qty}{t("주", "sh")} @ <b>{Number(w.limit_price || 0).toLocaleString()}</b>
                   {" — "}{t("가격이 닿는 순간 자동 체결 → 🔥 알림", "fills the moment the price touches → 🔥 alarm")}
                 </div>
               ))}
@@ -792,6 +871,41 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
               {evts9.length ? evts9.map((e, i) => <div key={i}>{e}</div>)
                             : <div className="opacity-60">{t("아직 이벤트 없음", "no events yet")}</div>}
             </div>
+          </div>
+          )}
+          {menu9 !== "demo" && (
+          <div className="mt-2 pt-2 border-t" style={{ borderColor: "rgba(21,101,192,0.2)" }}>
+            <b style={{ color: "#1565c0" }}>🔭 {t("직접 보기 — 아무 종목이나 골라 차트+호가창", "watch any stock yourself — chart + order book")}</b>
+            <div className="mt-1 flex gap-1 flex-wrap">
+              {watchList9.map((s) => (
+                <button key={s.code} onClick={() => setWatch9(watch9 === s.code ? "" : s.code)}
+                  className="px-1.5 py-0.5 rounded border text-[10px]"
+                  style={watch9 === s.code
+                    ? { background: "#1565c0", color: "#fff", borderColor: "#1565c0", fontWeight: 700 }
+                    : { borderColor: "rgba(21,101,192,0.35)", color: "#1565c0" }}>
+                  {s.name}</button>
+              ))}
+            </div>
+            {watch9 && (
+              <div className="mt-1.5 flex gap-2 flex-wrap">
+                <canvas ref={wCv9} className="rounded border"
+                  style={{ height: 190, flex: "1 1 380px", minWidth: 300, borderColor: "rgba(21,101,192,0.3)" }} />
+                {wBook9 && (
+                  <div className="text-[10px] tabular-nums leading-[1.5] shrink-0" style={{ width: 150 }}>
+                    <b>{t("호가창 (대기 리스트)", "order book (waiting list)")}</b>
+                    {wBook9.asks.slice(0, 5).reverse().map(([p, q], i) => (
+                      <div key={`wa${i}`} style={{ color: "#1565c0" }}>
+                        {q === Math.max(...wBook9.asks.slice(0, 5).map((a) => a[1])) ? "🧱" : ""}
+                        {p.toLocaleString()} <span className="opacity-60">{q.toLocaleString()}</span></div>))}
+                    <div className="border-t my-0.5" style={{ borderColor: "rgba(128,128,128,0.35)" }} />
+                    {wBook9.bids.slice(0, 5).map(([p, q], i) => (
+                      <div key={`wb${i}`} style={{ color: "#d32f2f" }}>
+                        {q === Math.max(...wBook9.bids.slice(0, 5).map((a) => a[1])) ? "🧱" : ""}
+                        {p.toLocaleString()} <span className="opacity-60">{q.toLocaleString()}</span></div>))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           )}
         </>

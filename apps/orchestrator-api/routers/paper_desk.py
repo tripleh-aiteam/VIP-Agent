@@ -1265,6 +1265,7 @@ def _fam_compute(family: str, tick: int, period: int, day: str,
     _fk = (family, tick, period, day, frm, to, gate, auto)
     rows = []
     holding = []
+    waiting = []
     for v in DESK:
         if family != "all" and v.get("family", "old") != family:
             continue
@@ -1277,6 +1278,8 @@ def _fam_compute(family: str, tick: int, period: int, day: str,
                    rank_gate=_rg9)
         if not d.get("ok"):
             continue
+        for w9 in (d.get("waiting") or []):
+            waiting.append(dict(w9, rule=v["id"]))
         for h in (d.get("holding") or []):
             holding.append(dict(h, rule=v["id"]))
             # ONE ROW PER OPEN EPISODE (boss 2026-08-21: "one set of buys, and
@@ -1363,7 +1366,7 @@ def _fam_compute(family: str, tick: int, period: int, day: str,
             "ep_wins": ew, "ep_losses": el,
             "win_pct_ep": round(ew / (ew + el) * 100) if (ew + el) else 0,
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
-            "holding": holding,
+            "holding": holding, "waiting": waiting,
             "net_won": sum(r["won"] for r in rows)}
     _FAM_TTL[_fk] = (_t.time(), _res)   # kept: family_daily still reads it
     return _res

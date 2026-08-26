@@ -2409,6 +2409,18 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
         if evidence:
             op["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}
         ops.append(op)
+    # WAITING OFFERS exposed (boss 2026-08-26: "condition met → price offered
+    # one tick from the big wall → waiting → matched — this process must show
+    # in real time"): any working limit order still alive at the tape's end
+    # rides along as a waiting op. Display-only; money rows untouched.
+    for _si3 in range(n):
+        _pd3 = pends[_si3]
+        if _pd3 is not None:
+            _s3 = stks[_si3]
+            ops.append({"si": _si3, "waiting": True, "buy_i": _pd3["i"],
+                        "entry": _pd3["px"], "last": _s3["closes"][-1],
+                        "qty_left": _pd3.get("qty"), "wall": _pd3.get("wall"),
+                        "sig": _pd3.get("sig"), "unreal_pct": 0.0})
     return out, ops
 
 
