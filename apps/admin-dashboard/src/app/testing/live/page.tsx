@@ -605,6 +605,56 @@ function RecoLiveCheckPanel({ t, lang }: { t: (ko: string, en: string) => string
   );
 }
 
+// 💬 CHATBOT ORDERS (boss 2026-08-26: "if we buy/sell using chatbot then it should
+// have some recognition... you can put the word chatbot"): the boss's own chat-placed
+// trades, clearly badged, on both desks. Hidden while empty.
+function ChatOrdersPanel({ t }: { t: (ko: string, en: string) => string }) {
+  type CO = { id: number; ticker: string; name: string; side: string; qty: number;
+              status: string; fill_price: number | null; realized_pnl: number | null;
+              realized_pnl_pct: number | null; at: string | null };
+  const [rows, setRows] = useState<CO[]>([]);
+  useEffect(() => {
+    let live = true;
+    const load = () => api<{ orders: CO[] }>("/paper-desk/chat-orders?limit=20")
+      .then((d) => { if (live) setRows(d.orders || []); }).catch(() => {});
+    load();
+    const h = setInterval(load, 20000);
+    return () => { live = false; clearInterval(h); };
+  }, []);
+  if (!rows.length) return null;
+  return (
+    <div className="mt-3 rounded-xl border px-4 py-2" style={{ borderColor: "#0277bd", background: "rgba(2,119,189,0.05)" }}>
+      <div className="flex items-center gap-2">
+        <b className="text-[13px]" style={{ color: "#0277bd" }}>
+          💬 {t("챗봇 주문 — 채팅으로 산/판 기록", "chatbot orders — bought/sold by chat")}
+        </b>
+        <span className="text-[10px] text-[var(--text-muted)]">
+          {t("챗봇에서 \"삼성전자 매수\"라고 말해 체결된 주문들", "orders filled by saying \"buy X\" to the chatbot")}
+        </span>
+      </div>
+      <div className="mt-1.5 space-y-1">
+        {rows.map((o) => (
+          <div key={o.id} className="flex items-center gap-2 flex-wrap text-[12px]">
+            <span className="font-bold px-1.5 py-0.5 rounded text-white text-[10.5px]"
+              style={{ background: "#0277bd" }}>💬 chatbot</span>
+            <b style={{ color: o.side === "BUY" ? "#2e7d32" : "#b02a2a" }}>
+              {o.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")}</b>
+            <b className="text-[var(--text-primary)]">{o.name}</b>
+            <span className="text-[var(--text-secondary)]">
+              {o.qty.toLocaleString()}{t("주", " sh")}
+              {o.fill_price ? ` @ ₩${o.fill_price.toLocaleString()}` : ""} · {o.status}
+              {o.realized_pnl != null &&
+                ` · ${o.realized_pnl >= 0 ? "+" : ""}₩${Math.round(o.realized_pnl).toLocaleString()}` +
+                (o.realized_pnl_pct != null ? ` (${o.realized_pnl_pct >= 0 ? "+" : ""}${o.realized_pnl_pct.toFixed(2)}%)` : "")}
+              {o.at ? ` · ${o.at.slice(5, 16)}` : ""}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // 🤝 Auto / Semi-auto for the reco desk (boss 2026-08-25). Auto = the picks trade
 // themselves on the 100-checklist recommendation. Semi = algo BUY signals appear here
 // as suggestions and the FINAL CLICK IS HUMAN; SELLs/stops always execute on their own.
@@ -2123,6 +2173,7 @@ export default function LiveDeskPage() {
       {deskView === "reco" && <SafeBox label="live-check"><RecoLiveCheckPanel t={t} lang={lang} /></SafeBox>}
       {deskView === "reco" && <SafeBox label="inspection-room"><InspectionRoom t={t} /></SafeBox>}
       {deskView === "reco" && <SafeBox label="auto/semi"><RecoTradeModePanel t={t} /></SafeBox>}
+      <SafeBox label="chat-orders"><ChatOrdersPanel t={t} /></SafeBox>
       {/* GO/NO-GO board removed at the boss's order (2026-08-25) — code preserved. */}
       {/* THE ALGORITHM CHOICE, its own bar above the panel (boss 2026-08-11: it was
           buried under the history table inside the toolbar and unreachable) */}

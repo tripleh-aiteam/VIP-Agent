@@ -894,6 +894,26 @@ def live_reco_rank_at(code: str = Query(...), t: str = Query(...),
     return {"ok": bool(r), **(r or {})}
 
 
+@router.get("/chat-orders")
+def chat_orders(limit: int = Query(30), db: Session = Depends(get_db)):
+    """💬 The CHATBOT's own trades (boss 2026-08-26: an order made by chat must be
+    recognizable as a chatbot trade on the desk) — newest first."""
+    from sqlalchemy import text
+    from services.paper_desk import _ensure
+    _ensure(db)
+    rows = db.execute(text(
+        "SELECT id, ticker, name, side, qty, status, fill_price, realized_pnl, "
+        "  realized_pnl_pct, created_at FROM paper_desk_orders "
+        "WHERE COALESCE(source,'') IN ('chat','chatbot') ORDER BY id DESC LIMIT :n"),
+        {"n": int(limit)}).fetchall()
+    return {"ok": True, "orders": [
+        {"id": r[0], "ticker": r[1], "name": r[2], "side": r[3], "qty": int(r[4] or 0),
+         "status": r[5], "fill_price": (float(r[6]) if r[6] is not None else None),
+         "realized_pnl": (float(r[7]) if r[7] is not None else None),
+         "realized_pnl_pct": (float(r[8]) if r[8] is not None else None),
+         "at": (str(r[9])[:19] if r[9] is not None else None)} for r in rows]}
+
+
 @router.get("/live/news-stamps")
 def live_news_stamps(code: str = Query(...), stamp: str = Query("")):
     """THE EVIDENCE BEHIND THE RULING (boss 2026-08-24: "I do not see which

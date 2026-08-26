@@ -252,7 +252,7 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
         if warn_en:
             L.append(warn_en)
         L += ["", f"**Do you really want to {side.lower()}?** Reply **yes** to execute · "
-              "**no** to cancel (valid 5 min). Fills as a 🧑 chat order on the paper "
+              "**no** to cancel (valid 5 min). Fills as a 💬 chatbot order on the paper "
               "desk at the real live price."]
     else:
         L = [f"🧾 **주문 확인 — {side_ko} {name} ({code})**",
@@ -266,7 +266,7 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
         if warn_ko:
             L.append(warn_ko)
         L += ["", f"**정말 {side_ko}할까요?** 실행하려면 **네**, 취소는 **아니요** 라고 답해 주세요 "
-              "(5분간 유효). 실제 실시간 가격으로 페이퍼 데스크에 🧑 chat 주문으로 기록됩니다."]
+              "(5분간 유효). 실제 실시간 가격으로 페이퍼 데스크에 💬 챗봇(chatbot) 주문으로 기록됩니다."]
     return "\n".join(L)
 
 
@@ -320,7 +320,7 @@ def finish(db, word: str) -> Optional[str]:
         pass
     from services.paper_desk import place_order
     res = place_order(db, p["code"], p["side"], int(p["qty"]), order_type="market",
-                      source="chat", ref_price=p.get("px"), direct=True)
+                      source="chatbot", ref_price=p.get("px"), direct=True)
     if not res.get("ok"):
         err = res.get("error") or "unknown"
         log.warning(f"chat_trade order failed: {err}")
@@ -341,7 +341,7 @@ def finish(db, word: str) -> Optional[str]:
                  f"(total ~₩{fill * p['qty']:,.0f})")
         if res.get("realized_pnl") is not None:
             L.append(f"💰 Realized P&L: ₩{res['realized_pnl']:,.0f} ({res.get('realized_pnl_pct', 0):+.2f}%)")
-        L.append(f"📒 Position now: {pos:,} shares · recorded as a 🧑 chat order in the desk history.")
+        L.append(f"📒 Position now: {pos:,} shares · recorded as a 💬 chatbot order in the desk history.")
         L.append("")
         L.append(f"[📡 Verify it on the desk → {_dest_en}](nav:{_dest})")
     else:
@@ -349,7 +349,7 @@ def finish(db, word: str) -> Optional[str]:
                  f"(총 ~₩{fill * p['qty']:,.0f})")
         if res.get("realized_pnl") is not None:
             L.append(f"💰 실현 손익: ₩{res['realized_pnl']:,.0f} ({res.get('realized_pnl_pct', 0):+.2f}%)")
-        L.append(f"📒 현재 보유: {pos:,}주 · 데스크 기록에 🧑 chat 주문으로 남았습니다.")
+        L.append(f"📒 현재 보유: {pos:,}주 · 데스크 기록에 💬 챗봇(chatbot) 주문으로 남았습니다.")
         L.append("")
         L.append(f"[📡 실제로 샀는지 확인하기 → {_dest_ko}](nav:{_dest})")
     return "\n".join(L)
