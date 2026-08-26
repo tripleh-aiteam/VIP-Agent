@@ -806,6 +806,12 @@ def _call_gemini(model: str, system_prompt: str, messages: list[dict],
     out_tokens = max_tokens
     if "pro" in model or "preview" in model:
         out_tokens = max(max_tokens, 8192)
+    # Gemini 3.x FLASH also thinks by default and returned EMPTY (finishReason=
+    # MAX_TOKENS) on small budgets (2026-08-26, boss's free-tier plan) — we want
+    # answers, not thoughts: turn thinking off for flash-class calls.
+    _gen_cfg = {"maxOutputTokens": out_tokens, "temperature": temperature}
+    if "flash" in model:
+        _gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
     try:
         with httpx.Client(timeout=timeout) as client:
             resp = client.post(
@@ -814,10 +820,7 @@ def _call_gemini(model: str, system_prompt: str, messages: list[dict],
                 json={
                     "system_instruction": {"parts": [{"text": system_prompt}]},
                     "contents": contents,
-                    "generationConfig": {
-                        "maxOutputTokens": out_tokens,
-                        "temperature": temperature,
-                    },
+                    "generationConfig": _gen_cfg,
                 },
             )
             if resp.status_code == 200:
@@ -949,15 +952,30 @@ def _chat_completion_sync_inner(
             return result
         attempt_log.append(f"{chosen} ({provider}): {str(result)[:200]}")
 
-    # -- Free-tier fallback chain --
-    # Try every free / no-credit-card-needed provider before giving up so a
-    # billing issue on one paid LLM doesn't brick the assistant. Order
-    # below is by latency: Groq (fastest free) → Gemini Flash (free quota) →
-    # OpenAI (only paid in this list, kept as a "last paid try" before
-    # going free-only) → Ollama (free, requires local install).
+    # -- Fallback chain (boss 2026-08-26: "until free tier ends I will use gemini,
+    # then it must automatically switch to our local llm") --
+    # Gemini free → LOCAL Ollama (his RTX 5090, unlimited) → Groq free (in case the
+    # local box is down) → paid OpenAI only as the very last resort.
 
-    # Free tier #1 — Groq gpt-oss-120b (free, no credit card; replaced the
-    # retired llama-3.3-70b-versatile on 2026-08-19)
+    # Free tier #1 — Gemini Flash (free quota)
+    if _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY"):
+        ok, result = _call_gemini("gemini-3.5-flash", system_prompt, messages,
+                                  max_tokens, temperature)
+        if ok:
+            _last_used.update({"provider": "gemini", "model": "gemini-3.5-flash (free fallback)"})
+            return result
+        attempt_log.append(f"gemini-3.5-flash (free fallback): {str(result)[:200]}")
+
+    # Free tier #2 — LOCAL Ollama star (unlimited, private; 6.8s warm on the 5090)
+    _local_star = _env("OLLAMA_FALLBACK_MODEL") or "qwen3-vl:30b-a3b-instruct-q4_K_M"
+    ok, result = _call_openai_compatible(f"{ollama_url}/v1", "", _local_star,
+                                         full_messages_with_sys, max_tokens, temperature, 120.0)
+    if ok:
+        _last_used.update({"provider": "ollama", "model": f"{_local_star} (local fallback)"})
+        return result
+    attempt_log.append(f"{_local_star} (local ollama fallback): {str(result)[:200]}")
+
+    # Free tier #3 — Groq gpt-oss-120b (free; covers the case the local box is off)
     if groq_key:
         ok, result = _call_openai_compatible("https://api.groq.com/openai/v1", groq_key,
                                              "openai/gpt-oss-120b",
@@ -967,16 +985,7 @@ def _chat_completion_sync_inner(
             return result
         attempt_log.append(f"gpt-oss-120b (groq free fallback): {str(result)[:200]}")
 
-    # Free tier #2 — Gemini 2.5 Flash (free, 15 RPM / 1.5M TPM)
-    if _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY"):
-        ok, result = _call_gemini("gemini-3.5-flash", system_prompt, messages,
-                                  max_tokens, temperature)
-        if ok:
-            _last_used.update({"provider": "gemini", "model": "gemini-3.5-flash (free fallback)"})
-            return result
-        attempt_log.append(f"gemini-3.5-flash (free fallback): {str(result)[:200]}")
-
-    # Paid tier — OpenAI gpt-5.4-mini (only fires if you've topped up credits)
+    # Paid tier — OpenAI gpt-5.4-mini, LAST resort only (boss runs free-first)
     if openai_key:
         ok, result = _call_openai_compatible(openai_base, openai_key, "gpt-5.4-mini",
                                              full_messages_with_sys, max_tokens, temperature, 30.0)
