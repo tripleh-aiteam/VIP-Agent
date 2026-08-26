@@ -53,7 +53,9 @@ def kind(transcript: Optional[str]) -> Optional[str]:
     import difflib
     toks = re.findall(r"[a-z]+", t)
     if any(difflib.get_close_matches(w, ("should", "shall", "shud"), n=1, cutoff=0.72) for w in toks):
-        if "buy" in toks:
+        # "should i BY samsung" — 'by' is the 3-letter typo the spell layer can't
+        # safely touch, but next to a should-word it can only mean buy (2026-08-26)
+        if "buy" in toks or "by" in toks:
             return "buy"
         if "sell" in toks:
             return "sell"
@@ -232,11 +234,38 @@ def _buy(db, code: str, name: str, en: bool) -> dict:
                  "the score is below the 55 bar" if not g_score else "there is bad news"))
     L = [f"🧭 **{name} ({code})**", "", f"{verdict} — {why0}", "",
          ("**이유:**" if not en else "**Reasons:**")]
-    # 1. the score, out of 100
+    # 1. the score, out of 100 — WITH the inspection room's own calculation (boss
+    # 2026-08-26: "it should calculate score like inspection room then make a summary")
     if total100 is not None:
         L.append((f"1. 점수: 100점 중 **{total100}점**" + (" — 기준 통과" if g_score else " — 기준(55점) 미달"))
                  if not en else
                  (f"1. Score: **{total100} / 100**" + (" — passes the bar" if g_score else " — below the 55 bar")))
+    try:
+        from services.checklist_reco import _ranking
+        _rk = _ranking() or {}
+        _rrows = _rk.get("rows") or []
+        _row = next((r for r in _rrows if r.get("code") == code), None)
+        if _row:
+            _pos_r = next((i + 1 for i, r in enumerate(_rrows) if r.get("code") == code), None)
+            # the board's OWN columns (menu 2's inspection room): 시장 · 이슈/수급 ·
+            # 종목선정 · 실행관리 → 종합 — the same numbers, the same names
+            _c = _row.get("cats") or {}
+            _bits = []
+            for _k, _ko, _en2 in (("market", "시장", "Market"),
+                                  ("issue", "이슈/수급", "Issue/S&D"),
+                                  ("stock_sel", "종목선정", "Stock selection"),
+                                  ("exec", "실행관리", "Execution")):
+                if _c.get(_k) is not None:
+                    _bits.append(f"{_ko if not en else _en2} {_c[_k]}")
+            _tot9 = _c.get("avg") or _row.get("score")
+            _rank_bit = (f"전체 {len(_rrows)}종목 중 **{_pos_r}위**" if not en
+                         else f"rank **{_pos_r} of {len(_rrows)}**")
+            L.append((f"   📋 검사실 계산: 종합 {_tot9}점 · {_rank_bit}"
+                      + (f" — {' · '.join(_bits)}" if _bits else "")) if not en else
+                     (f"   📋 Inspection room: total {_tot9} · {_rank_bit}"
+                      + (f" — {' · '.join(_bits)}" if _bits else "")))
+    except Exception:
+        pass
     # 2. daily chart — top or bottom, plain words
     if z:
         _pos_ko = ("아래쪽 — 살 자리" if z["zone"] == "buy" else
@@ -275,6 +304,15 @@ def _buy(db, code: str, name: str, en: bool) -> dict:
             _ttl9 = f"[{_ttl9}]({_lnk9})"
         L.append((f"4. 뉴스: [{_stp}] {_ttl9} ({_tm} 발표){eff}") if not en
                  else (f"4. News: [{_stp}] {_ttl9} (published {_tm}){eff}"))
+        if len(_sts) > 1:
+            s1 = _sts[-2]
+            _t1 = str(s1.get("ts") or "")
+            _t1 = _t1[11:16] if "T" in _t1 and len(_t1) >= 16 else (_t1[:16] if len(_t1) > 16 else _t1)
+            _tl1 = str(s1.get("title", ""))[:55]
+            _lk1 = str(s1.get("link") or s1.get("url") or "").strip()
+            if _lk1.startswith("http"):
+                _tl1 = f"[{_tl1}]({_lk1})"
+            L.append(f"   · [{s1.get('stamp', '')}] {_tl1} ({_t1})")
     else:
         L.append(("4. 뉴스: 특별한 뉴스 없음" if not en else "4. News: nothing special today"))
     # 5. weak items, briefly
