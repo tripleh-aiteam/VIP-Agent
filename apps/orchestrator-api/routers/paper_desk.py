@@ -811,7 +811,9 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
     # block, all in the exact same row shape the table already renders.
     try:
         if res.get("ok"):
-            _crows, _chold = _chat_fam_entries(set(codes.split(",")))
+            # DAY-SCOPED like the algo replay (boss 2026-08-26: "even I choose today
+            # it is showing old days result") — only the selected day's chat orders
+            _crows, _chold = _chat_fam_entries(set(codes.split(",")), day or _kd9())
             if _crows or _chold:
                 res = {**res, "rows": _crows + list(res.get("rows") or []),
                        "holding": list(res.get("holding") or []) + _chold}
@@ -821,7 +823,7 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
     return res
 
 
-def _chat_fam_entries(code_set: set):
+def _chat_fam_entries(code_set: set, day8: str = ""):
     """💬 chatbot orders reshaped into the SAME rows/holding forms the algo history
     table renders (boss 2026-08-26: "show trading history together with auto and
     with chatbot buyers/sellers") — FIFO trips per stock: sells close buys into
@@ -847,6 +849,14 @@ def _chat_fam_entries(code_set: set):
             c = r[0]
             if (_is_menu1 and c not in _sixset) or (not _is_menu1 and c in _sixset):
                 continue
+            # only the SELECTED day's orders (boss 2026-08-26: old days leaked into
+            # today's view and confused the room)
+            if day8:
+                try:
+                    if r[6] is None or r[6].astimezone(KST).strftime("%Y%m%d") != day8:
+                        continue
+                except Exception:
+                    continue
             by_code.setdefault(c, []).append(r)
         for c, rs in by_code.items():
             name = rs[-1][1] or c
