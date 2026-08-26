@@ -281,6 +281,24 @@ def _discover_and_register_all() -> None:
                     known_real.add(real)
         except Exception:
             continue
+    # LOCAL OLLAMA (boss 2026-08-26: "we have already local LLM qwen, can we use it") —
+    # every model actually installed on this PC self-registers as local-<tag>, including
+    # his own fine-tuned ones (llama32-smart, qwen25-finetuned…). Free, unlimited, private.
+    try:
+        cached = _disc_get("ollama_local")
+        if cached is None:
+            import httpx as _hx
+            url = (_env("OLLAMA_URL") or "http://localhost:11434") + "/api/tags"
+            tags = [m.get("name") for m in (_hx.get(url, timeout=2).json().get("models") or [])
+                    if m.get("name")]
+            cached = _disc_set("ollama_local", tags)
+        for tag in cached or []:
+            fid = "local-" + tag.replace(":", "-").replace("_", "-")
+            if fid not in MODEL_CATALOG and tag not in known_real:
+                MODEL_CATALOG[fid] = ("ollama", tag)
+                known_real.add(tag)
+    except Exception:
+        pass
 
 
 _FAM_STOP = {"preview", "latest", "exp", "experimental", "beta", "stable"}
@@ -318,13 +336,16 @@ def _collapse_to_latest(catalog: list[dict]) -> list[dict]:
     Gemini 3.1 Pro replaces 2.5 Pro. Capability/size tiers (pro/flash/mini/70b…) stay separate."""
     best: dict = {}
     for m in catalog:
+        if m.get("provider") == "ollama":
+            continue          # local models never collapse — every installed tag shows
         fam, ver = _family_version(m["id"])
         key = (m["provider"], fam)
         cur = best.get(key)
         if cur is None or ver > cur[1] or (ver == cur[1] and len(m["id"]) < len(cur[0]["id"])):
             best[key] = (m, ver)
     kept = {id(b[0]) for b in best.values()}
-    return [m for m in catalog if id(m) in kept]         # keep original order
+    return [m for m in catalog
+            if id(m) in kept or m.get("provider") == "ollama"]   # keep original order
 
 
 def _min_year() -> int:
@@ -339,7 +360,11 @@ def _keep_recent(m: dict) -> bool:
     provider-reported release year; Gemini (no API date) → major version >= 3 counts as 2026;
     unknown year → kept (never hide a model we can't date)."""
     if m["provider"] == "ollama":
-        return False                                     # local 2024-era open models → hide (not 2026)
+        # show exactly what is INSTALLED on this PC (boss 2026-08-26: "we have already
+        # local LLM qwen, can we use it") — the old blanket-hide predates his local
+        # qwen3/gemma4 zoo and his own fine-tuned models; uninstalled stubs stay hidden
+        tags = _disc_get("ollama_local") or []
+        return (m.get("real_model") or "") in tags
     y = _MODEL_YEAR.get(m["id"])
     if y is None:
         y = _MODEL_YEAR.get(m.get("real_model") or "")   # groq: friendly≠real, date by real too
