@@ -93,9 +93,33 @@ def _cached(key: str, ttl: float, fn):
 
 
 def _ranking() -> Optional[dict]:
-    """Today's full checklist ranking — saved file first, else compute (cached 10 min)."""
+    """Today's full checklist ranking — ONE scorer for the whole platform (boss
+    2026-08-26: 'weight rule must be implemented, otherwise all of them
+    connected with still old weights'): the enriched /daily-pick carries the
+    SUM-LAW score (per-item weights, no averaging) in cats.avg — the same
+    number the desk chips and heartbeat show. Saved file / dp.pick only as
+    fallbacks. Cached 10 min."""
     from services import daily_pick as dp
     day = dp._today()
+    def _sum_rows():
+        import urllib.request as _ur
+        d = json.load(_ur.urlopen(
+            "http://127.0.0.1:8000/paper-desk/daily-pick", timeout=120))
+        rows = d.get("rows") or []
+        out = []
+        for x in rows:
+            c9 = (x.get("cats") or {}).get("avg")
+            if c9 is not None:
+                x = dict(x, score=round(float(c9), 1))
+            out.append(x)
+        out.sort(key=lambda x: -(x.get("score") or 0))
+        return out
+    try:
+        rows = _cached("rank_sum", 600, _sum_rows)
+        if rows:
+            return {"day": day, "rows": rows}
+    except Exception:
+        pass
     try:
         saved = json.loads(dp._PICK_FILE.read_text(encoding="utf-8"))
         if saved.get("day") == day and saved.get("rows"):
@@ -189,8 +213,27 @@ def _live_state(db, code: str) -> dict:
     imb = rt.get("imbalance")
     a_ob = 2.0 if (imb is not None and imb > 0.15) else -2.0 if (imb is not None and imb < -0.15) else 0.0
     a_zn = 2.0 if (z and z.get("zone") == "buy") else -3.0 if (z and z.get("zone") == "sell") else 0.0
-    out["adj_parts"] = {"price": round(a_px, 1), "book": a_ob, "zone": a_zn}
-    out["adj"] = round(a_px + a_ob + a_zn, 1)
+    # THE VOLUME MUSCLE (boss 2026-08-25/26, same term as the 4-second desk
+    # loop): today's pace vs the stock's own 20-day average — up to +4. Only
+    # watched stocks have tape; others honestly get 0.
+    a_vol = 0.0
+    try:
+        import services.kiwoom_tape as _kt
+        from services.reco_rank_log import _base as _rb9
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        _av20 = (_rb9.get("vol20") or {}).get(code) or 0
+        _tv = _kt.today_volume(code)
+        if _av20 and _tv:
+            _nk = _dt.now(_tz(_td(hours=9)))
+            _frac = max(0.05, min(1.0, ((_nk.hour - 9) * 60 + _nk.minute) / 390))
+            _ratio = _tv / (_av20 * _frac)
+            a_vol = (4.0 if _ratio >= 3 else 3.0 if _ratio >= 2
+                     else 1.5 if _ratio >= 1.5 else (-1.0 if _ratio < 0.5 else 0.0))
+    except Exception:
+        pass
+    out["adj_parts"] = {"price": round(a_px, 1), "book": a_ob, "zone": a_zn,
+                        "vol": a_vol}
+    out["adj"] = round(max(-12.0, min(12.0, a_px + a_ob + a_zn + a_vol)), 1)
     return out
 
 
@@ -342,13 +385,17 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
         L.append("")
     except Exception:
         pass
-    L += [(f"**[Scoring]** {_n_cand} candidates, weighted: trend 25 + liquidity 20 + flexibility 20 "
-           f"+ levels 15 + momentum 10 + flows 10 = 100 ({day_disp} morning base), then the live "
-           f"re-rank at {now} (price ±4 · book ±2 · zone +2/−3, max ±9). "
+    L += [(f"**[Scoring]** {_n_cand} candidates, SUM-scored by per-item weights "
+           f"(measured 2026-08-26: volume family 15 [#46:5+#47:4+#21:4+#69:2] · foreign 6 · "
+           f"MA alignment 5 · execution gates 8 · RSI/MACD/Bollinger 0; the plain SUM of passed "
+           f"items, no averaging — {day_disp} base, same number as the desk), then the live "
+           f"re-rank at {now} (price ±4 · book ±2 · zone +2/−3 · volume surge up to +4, cap ±12). "
            f"Each pick's own 100-item answers: click [근거 🔍]." if en else
-           f"**[채점]** 후보 {_n_cand}종목 가중 채점: 추세 25 + 유동성 20 + 유연성 20 + 지지저항 15 "
-           f"+ 모멘텀 10 + 수급 10 = 100 ({day_disp} 아침 기준) + {now} 실시간 보정"
-           f"(등락 ±4 · 호가 ±2 · 구간 +2/−3, 최대 ±9). 종목별 100문항 실측 답은 [근거 🔍] 클릭."), ""]
+           f"**[채점]** 후보 {_n_cand}종목 — 항목별 가중치 합산제(2026-08-26 실측: 볼륨 가족 15"
+           f"[#46:5+#47:4+#21:4+#69:2] · 외국인 6 · 정배열 5 · 집행 관문 8 · RSI/MACD/볼린저 0점 — "
+           f"통과 항목 점수의 단순 합, 평균 아님 · 데스크와 같은 숫자) + {now} 실시간 보정"
+           f"(등락 ±4 · 호가 ±2 · 구간 +2/−3 · 거래량 서지 최대 +4, 총 ±12). "
+           f"종목별 100문항 실측 답은 [근거 🔍] 클릭."), ""]
     L += ["", f"**{'[RESULT] TOP ' + str(len(top)) if en else '[결과] 추천 TOP ' + str(len(top))}**"]
     # which recommendations are ACTUALLY TRADING today (the reco desk's five, fixed at
     # the morning bell — the desk never swaps mid-session, so the live list can differ)

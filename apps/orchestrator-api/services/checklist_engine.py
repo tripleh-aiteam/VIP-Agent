@@ -907,24 +907,36 @@ def stock_scorecard(db, ticker: str, news: Optional[dict] = None) -> dict[str, A
 
 
 def _score_items(items, ctx, layer: str) -> dict[str, Any]:
-    rows, score, mx = [], 0, 0
+    # ONE weight table for the whole platform (boss 2026-08-26: "weight rule
+    # must be implemented, otherwise all of them connected with still old
+    # weights"): per-item weights come from data/checklist_100.json's sum-law
+    # scores (volume family 15, foreign 6, RSI/MACD 0...). Items weighted 0
+    # drop out of score AND max — measured-worthless items can no longer move
+    # any number anywhere. The old tuple weights are the fallback only.
+    try:
+        _S9 = {i.get("no"): float(i.get("score") or 0)
+               for i in (full_checklist().get("items") or [])}
+    except Exception:
+        _S9 = {}
+    rows, score, mx = [], 0.0, 0.0
     breakers, unknown = [], []
     for no, cat, q, q_en, fn, w, db_flag in items:
         try:
             ok, detail = fn(ctx)
         except Exception as e:
             ok, detail = None, f"체크 오류: {str(e)[:40]}"
+        w9 = _S9.get(no, w) if _S9 else w
         rows.append({"no": no, "category": cat, "q": q, "q_en": q_en, "ok": ok,
-                     "detail": detail, "weight": w, "deal_breaker": db_flag})
+                     "detail": detail, "weight": w9, "deal_breaker": db_flag})
         if ok is None:
             unknown.append(no)
             continue
-        mx += w
+        mx += w9
         if ok:
-            score += w
+            score += w9
         elif db_flag:
             breakers.append({"no": no, "q": q, "detail": detail})
-    return {"layer": layer, "items": rows, "score": score, "max": mx,
+    return {"layer": layer, "items": rows, "score": round(score, 1), "max": round(mx, 1),
             "pct": round(score / mx * 100) if mx else None,
             "deal_breakers": breakers, "unknown": unknown}
 
