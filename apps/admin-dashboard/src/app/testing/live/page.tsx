@@ -435,20 +435,24 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
             const hi = Math.max(...win.map((x) => x.high));
             if (hi && (hi - b.close) / hi >= 0.007 && b.close > dBars9[i - 1].close) {
               st.base = b.close; st.qty = 100; st.k = 0; st.lo = null;
-              st.ev.unshift(`🟢 ${hh} 매수 100주 @ ${Math.round(b.close).toLocaleString()} (급락 후 반등 문)`);
+              const m9 = `${hh} 매수 100주 @ ${Math.round(b.close).toLocaleString()} (급락 후 반등 문)`;
+              st.ev.unshift(`🟢 ${m9}`); pushFire9(`매수 체결! ${m9}`, true);
             }
           } else {
             const stop = st.base * 0.99;
             const rung = st.base * (1 + ((st.k + 1) * 1.0 - 0.15) / 100);
             if (b.low <= stop) {
-              st.ev.unshift(`🔴 ${hh} 전량 매도 ${st.qty}주 @ ${Math.round(stop).toLocaleString()} (-1% 손절선 터치)`);
+              const m9 = `${hh} 전량 매도 ${st.qty}주 @ ${Math.round(stop).toLocaleString()} (-1% 손절선 터치)`;
+              st.ev.unshift(`🔴 ${m9}`); pushFire9(`가격 도달 — ${m9}`, false);
               st.base = null; st.qty = 0; st.k = 0;
             } else if (b.high >= rung && st.qty > 10) {
               st.qty -= 10; st.k += 1;
-              st.ev.unshift(`🟠 ${hh} +${st.k}% 계단 매도 10주 @ ${Math.round(rung).toLocaleString()} (남은 ${st.qty}주)`);
+              const m9 = `${hh} +${st.k}% 계단 매도 10주 @ ${Math.round(rung).toLocaleString()} (남은 ${st.qty}주)`;
+              st.ev.unshift(`🟠 ${m9}`); pushFire9(`가격 도달 — ${m9}`, false);
             }
             if (st.base !== null && hh >= "15:19") {
-              st.ev.unshift(`🔔 ${hh} 종 — 전량 매도 ${st.qty}주 @ ${Math.round(b.close).toLocaleString()} (15:19 장 마감)`);
+              const m9 = `${hh} 종 — 전량 매도 ${st.qty}주 @ ${Math.round(b.close).toLocaleString()} (15:19 장 마감)`;
+              st.ev.unshift(`🔔 ${m9}`); pushFire9(m9, false);
               st.base = null; st.qty = 0; st.k = 0;
             }
           }
@@ -504,6 +508,23 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
   const [bars9, setBars9] = useState<Record<string, { hhmm: string; open: number;
     high: number; low: number; close: number }[]>>({});
   const [ts9, setTs9] = useState<string>("");
+  // 🔥 FILL ALARM (boss 2026-08-26: "if we offer any price and it reaches, it
+  // should show like big font or fire — we have to KNOW it reached and sold or
+  // bought"): new events vs the previous poll fire a big flashing banner.
+  const [fire9, setFire9] = useState<{ txt: string; buy: boolean; id: number }[]>([]);
+  const prevEv9 = useRef<Set<string> | null>(null);
+  const fireId9 = useRef(1);
+  const pushFire9 = (txt: string, buy: boolean) => {
+    const id = fireId9.current++;
+    setFire9((f) => [{ txt, buy, id }, ...f].slice(0, 3));
+    setTimeout(() => setFire9((f) => f.filter((x) => x.id !== id)), 14000);
+  };
+  // 🧾 order book per held stock + ⏳ waiting limit orders (our price offers)
+  const [book9, setBook9] = useState<Record<string, { asks: [number, number][];
+    bids: [number, number][] }>>({});
+  const [waits9, setWaits9] = useState<{ id?: number; ticker?: string; name?: string;
+    side?: string; qty?: number; limit_price?: number; last?: number }[]>([]);
+  const prevWait9 = useRef<Set<number> | null>(null);
   useEffect(() => {
     if (!open9) return;
     let live = true;
@@ -539,17 +560,55 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
           }
         }
         ev.sort((a, b) => (a[0] < b[0] ? 1 : -1));
-        setEvts9(ev.slice(0, 14).map((e) => e[1]));
+        const evTexts = ev.slice(0, 14).map((e) => e[1]);
+        // 🔥 fire the alarm on genuinely NEW events (skip the first load)
+        if (prevEv9.current) {
+          for (const e of evTexts) {
+            if (!prevEv9.current.has(e)) {
+              pushFire9(e, e.startsWith("🟢"));
+            }
+          }
+        }
+        prevEv9.current = new Set(evTexts);
+        setEvts9(evTexts);
         setTs9(new Date().toLocaleTimeString("ko-KR", { hour12: false }));
-        // tape for each held stock
+        // ⏳ our waiting price offers (chat limit orders) + fill detection
+        try {
+          const stt = await api<{ open_orders?: { id?: number; ticker?: string;
+            name?: string; side?: string; qty?: number; limit_price?: number }[];
+            history?: { id?: number; status?: string; name?: string; side?: string;
+              qty?: number; fill_price?: number }[] }>("/paper-desk/state");
+          const oo = stt?.open_orders || [];
+          if (prevWait9.current) {
+            for (const pid of Array.from(prevWait9.current)) {
+              if (!oo.some((o) => o.id === pid)) {
+                const hrow = (stt?.history || []).find((x) => x.id === pid);
+                if (hrow && hrow.status === "FILLED") {
+                  pushFire9(`🔥 지정가 도달 — 체결! ${hrow.side === "BUY" ? "매수" : "매도"} `
+                    + `${hrow.name} ${hrow.qty}주 @ ${Number(hrow.fill_price || 0).toLocaleString()}`,
+                    hrow.side === "BUY");
+                }
+              }
+            }
+          }
+          prevWait9.current = new Set(oo.map((o) => Number(o.id)));
+          if (live) setWaits9(oo);
+        } catch { /* state optional */ }
+        // tape + order book for each held stock
         const nb: typeof bars9 = {};
+        const nbk: typeof book9 = {};
         for (const h of hh.slice(0, 8)) {
           const tp = await api<{ bars?: { hhmm: string; open: number; high: number;
             low: number; close: number }[] }>(
             `/paper-desk/live/tape?code=${h.code}&period=60&bars=70`);
           if (tp?.bars) nb[h.code] = tp.bars;
+          try {
+            const bk = await api<{ asks?: [number, number][]; bids?: [number, number][] }>(
+              `/paper-desk/live/book?code=${h.code}`);
+            if (bk?.asks) nbk[h.code] = { asks: bk.asks, bids: bk.bids || [] };
+          } catch { /* book optional */ }
         }
-        if (live) setBars9(nb);
+        if (live) { setBars9(nb); setBook9(nbk); }
       } catch { /* keep the last good frame */ }
     };
     load();
@@ -596,6 +655,11 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
     }, [bs, base0, step9, stop9, k9]);
     const last = bs[bs.length - 1], prev = bs[bs.length - 2];
     const fast = last && prev && Math.abs(last.close / prev.close - 1) * 100 >= 0.5;
+    const bk = book9[h.code];
+    const maxAsk = bk ? Math.max(...bk.asks.slice(0, 5).map((a) => a[1])) : 0;
+    const maxBid = bk ? Math.max(...bk.bids.slice(0, 5).map((a) => a[1])) : 0;
+    const near = (p: number) => step9 && Math.abs(p - step9) < (step9 * 0.0015)
+      ? ` ←+${k9 + 1}%` : Math.abs(p - stop9) < (stop9 * 0.0015) ? " ←-1%" : "";
     return (
       <div className="rounded border p-1.5" style={{ borderColor: "rgba(21,101,192,0.3)", minWidth: 250 }}>
         <div className="text-[10.5px] font-bold tabular-nums flex gap-1 items-center">
@@ -604,12 +668,27 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
             {(h.unreal_pct ?? 0) >= 0 ? "+" : ""}{h.unreal_pct}%</span>
           {fast && <span className="animate-pulse" style={{ color: "#e65100" }}>⚡{t("급변동", "fast")}</span>}
         </div>
-        <canvas ref={cv} className="w-full" style={{ height: 110 }} />
+        <div className="flex gap-1">
+          <canvas ref={cv} className="flex-1" style={{ height: 118 }} />
+          {bk && (
+            <div className="text-[8.5px] tabular-nums leading-[1.35] shrink-0" style={{ width: 92 }}>
+              {bk.asks.slice(0, 5).reverse().map(([p, q], i) => (
+                <div key={`a${i}`} style={{ color: "#1565c0" }}>
+                  {q === maxAsk ? "🧱" : ""}{p.toLocaleString()} <span className="opacity-60">{q.toLocaleString()}</span>{near(p)}
+                </div>))}
+              <div className="border-t my-0.5" style={{ borderColor: "rgba(128,128,128,0.3)" }} />
+              {bk.bids.slice(0, 5).map(([p, q], i) => (
+                <div key={`b${i}`} style={{ color: "#d32f2f" }}>
+                  {q === maxBid ? "🧱" : ""}{p.toLocaleString()} <span className="opacity-60">{q.toLocaleString()}</span>{near(p)}
+                </div>))}
+            </div>
+          )}
+        </div>
         <div className="text-[9.5px] opacity-70 tabular-nums">
           {fam9 === "d3"
             ? t("고점 후 3음봉 전량 매도 대기", "sells ALL at 3rd blue after peak")
-            : t(`다음: +${k9 + 1}% 도달 시 ${fam9 === "d1" ? "50%" : "10%"} 매도 · 빨간선 터치 시 전량`,
-                `next: sell ${fam9 === "d1" ? "50%" : "10%"} at +${k9 + 1}% · ALL at the red line`)}
+            : t(`다음: +${k9 + 1}% 도달 시 ${fam9 === "d1" ? "50%" : "10%"} 매도 · 빨간선 터치 시 전량 · 🧱=최대 대기벽`,
+                `next: sell ${fam9 === "d1" ? "50%" : "10%"} at +${k9 + 1}% · ALL at the red line · 🧱=biggest wall`)}
         </div>
       </div>
     );
@@ -628,6 +707,26 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
       </div>
       {open9 && (
         <>
+          {fire9.map((f) => (
+            <div key={f.id} className="mt-2 px-4 py-3 rounded-xl font-extrabold animate-pulse tabular-nums"
+              style={{ fontSize: 19, background: f.buy ? "rgba(46,125,50,0.14)" : "rgba(198,40,40,0.14)",
+                       border: `3px solid ${f.buy ? "#2e7d32" : "#c62828"}`,
+                       color: f.buy ? "#2e7d32" : "#c62828" }}>
+              🔥 {f.txt}
+            </div>
+          ))}
+          {waits9.length > 0 && (
+            <div className="mt-2 px-2 py-1.5 rounded border tabular-nums"
+              style={{ borderColor: "#b8860b", background: "rgba(184,134,11,0.06)" }}>
+              <b style={{ color: "#b8860b" }}>⏳ {t("우리 가격 제시 — 대기 중 주문", "our price offers — waiting orders")}</b>
+              {waits9.map((w, i) => (
+                <div key={i}>
+                  {w.side === "BUY" ? "🟢" : "🔴"} {w.name || w.ticker} {w.qty}{t("주", "sh")} @ <b>{Number(w.limit_price || 0).toLocaleString()}</b>
+                  {" — "}{t("가격이 닿는 순간 자동 체결 → 🔥 알림", "fills the moment the price touches → 🔥 alarm")}
+                </div>
+              ))}
+            </div>
+          )}
           <div className="mt-1.5 flex gap-1 flex-wrap">
             {(["m1", "m2", "demo"] as const).map((m) => (
               <button key={m} onClick={() => setMenu9(m)}
