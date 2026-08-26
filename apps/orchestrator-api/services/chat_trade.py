@@ -172,12 +172,20 @@ def _book_offer(code: str, side: str) -> Optional[dict]:
         from services.kiwoom_rest import order_book
         ob = order_book(code, ttl=2) or {}
         lvls = [l for l in (ob.get("levels") or []) if l.get("price")]
+        mode = "wall"
         if side == "BUY":
             rows = [l for l in lvls if l.get("side") == "bid"]
             if not rows:
                 return None
             wall = max(rows, key=lambda l: l.get("qty") or 0)
             limit = wall["price"] + _tick(wall["price"])
+            bb = ob.get("best_bid")
+            # a wall parked deep below the market queues an order that may never fill
+            # (boss 2026-08-26: NAVER waited an hour ₩5,000 under; the hynix order sat
+            # 3 ticks below and read as a failed buy) — beyond 3 ticks from the best
+            # bid we join the FRONT of the book instead
+            if bb and (bb - wall["price"]) > 3 * _tick(bb):
+                limit, mode = float(bb), "top"
             ba = ob.get("best_ask")
             if ba and limit >= ba:        # never offer above the ask — that IS the market
                 limit = ba
@@ -187,10 +195,13 @@ def _book_offer(code: str, side: str) -> Optional[dict]:
                 return None
             wall = max(rows, key=lambda l: l.get("qty") or 0)
             limit = wall["price"] - _tick(wall["price"])
+            ba = ob.get("best_ask")
+            if ba and (wall["price"] - ba) > 3 * _tick(ba):
+                limit, mode = float(ba), "top"
             bb = ob.get("best_bid")
             if bb and limit <= bb:
                 limit = bb
-        return {"limit": float(limit), "wall_price": wall["price"],
+        return {"limit": float(limit), "mode": mode, "wall_price": wall["price"],
                 "wall_qty": int(wall.get("qty") or 0),
                 "best_bid": ob.get("best_bid"), "best_ask": ob.get("best_ask")}
     except Exception:
@@ -388,6 +399,11 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
              f"· Live price: ₩{px:,.0f} → total ~₩{total:,.0f} (fee {fee}%)"]
         if price_asked:
             L.append(f"· Order: **LIMIT ₩{limit_price:,.0f}** (your price) — waits in the book until touched")
+        elif offer and offer.get("mode") == "top":
+            L.append(f"· Order: **LIMIT ₩{limit_price:,.0f}** — front of the book "
+                     f"(the best {'bid' if side == 'BUY' else 'ask'}): the big wall is too far "
+                     f"from the market to wait for, so we queue first in line at the top price · "
+                     f"say 'market' for instant fill")
         elif offer:
             L.append(f"· Order: **LIMIT ₩{limit_price:,.0f}** — my offer from the live order book: "
                      f"the biggest {'bid' if side == 'BUY' else 'ask'} wall sits at "
@@ -412,6 +428,11 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
              f"· 현재가: ₩{px:,.0f} → 예상 금액 ~₩{total:,.0f} (수수료 {fee}%)"]
         if price_asked:
             L.append(f"· 주문: **지정가 ₩{limit_price:,.0f}** (직접 제시하신 가격) — 가격이 닿을 때까지 호가창에서 대기합니다")
+        elif offer and offer.get("mode") == "top":
+            L.append(f"· 주문: **지정가 ₩{limit_price:,.0f}** — 호가 1순위"
+                     f"({'최우선 매수호가' if side == 'BUY' else '최우선 매도호가'})에 줄을 섭니다: "
+                     f"큰 벽이 시장에서 너무 멀어 기다리기 아까운 자리라, 맨 앞줄에 섭니다 · "
+                     f"바로 {'사려면' if side == 'BUY' else '팔려면'} '시장가'라고 말씀하세요")
         elif offer:
             L.append(f"· 주문: **지정가 ₩{limit_price:,.0f}** — 호가창을 보고 제가 제안하는 가격입니다: "
                      f"제일 큰 {'매수벽' if side == 'BUY' else '매도벽'}이 ₩{offer['wall_price']:,.0f}에 "
@@ -514,13 +535,25 @@ def finish(db, word: str) -> Optional[str]:
         # queued in the book — the trading loop fills it when the price touches
         lp = p.get("limit_price") or 0
         side_word = "매수" if p["side"] == "BUY" else "매도"
+        _gap = ""
+        try:
+            _pxn = float(p.get("px") or 0)
+            if _pxn and p["side"] == "BUY" and _pxn > lp:
+                _gap = (f" (now ₩{_pxn:,.0f} — needs a ₩{_pxn - lp:,.0f} dip to fill)" if en
+                        else f" (현재가 ₩{_pxn:,.0f} — ₩{_pxn - lp:,.0f} 내려오면 체결)")
+            elif _pxn and p["side"] == "SELL" and _pxn < lp:
+                _gap = (f" (now ₩{_pxn:,.0f} — needs a ₩{lp - _pxn:,.0f} rise to fill)" if en
+                        else f" (현재가 ₩{_pxn:,.0f} — ₩{lp - _pxn:,.0f} 올라오면 체결)")
+        except Exception:
+            pass
         L = ([f"🕐 **Order queued — {p['side']} {p['name']} {p['qty']:,} shares, LIMIT ₩{lp:,.0f}**",
               "It is now waiting in the book and fills AUTOMATICALLY the moment the price touches "
-              f"₩{lp:,.0f}. I'll record it as a 💬 chatbot order when it fills."]
+              f"₩{lp:,.0f}{_gap}. I'll record it as a 💬 chatbot order when it fills. "
+              f"Cancel anytime: \"cancel {p['name']} order\"."]
              if en else
              [f"🕐 **대기 주문 접수 — {side_word} {p['name']} {p['qty']:,}주 · 지정가 ₩{lp:,.0f}**",
               f"호가창에 줄을 섰습니다. 가격이 ₩{lp:,.0f}에 닿는 순간 자동으로 체결되고 "
-              f"💬 챗봇 주문으로 기록됩니다."])
+              f"💬 챗봇 주문으로 기록됩니다{_gap}. 취소는 \"{p['name']} 주문 취소\"라고 말씀하세요."])
         L += ["", _desk_links(en)]
         return "\n".join(L)
     if not res.get("ok"):
