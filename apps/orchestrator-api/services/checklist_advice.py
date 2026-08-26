@@ -70,6 +70,28 @@ def _en(transcript, lang) -> bool:
     return en
 
 
+def _fresh_stamps(code: str, limit: int = 2) -> list[dict]:
+    """Today's news-intern stamps for one stock (title, stamp, ts, why) — the freshest
+    last. Empty when nothing was collected."""
+    out = []
+    try:
+        import json as _json
+        from pathlib import Path as _P
+        nd = _P(__file__).resolve().parent.parent / "data" / "news_intern"
+        files = sorted(nd.glob("2*.jsonl"))
+        if files:
+            for ln in files[-1].read_text(encoding="utf-8").splitlines():
+                try:
+                    r = _json.loads(ln)
+                except Exception:
+                    continue
+                if r.get("code") == code:
+                    out.append(r)
+    except Exception:
+        pass
+    return out[-limit:]
+
+
 def _candles(db, code: str) -> dict:
     """Recent daily candles → consecutive up days / consecutive down (blue) candles,
     counting TODAY's live change as the current candle when available."""
@@ -169,68 +191,87 @@ def _buy(db, code: str, name: str, en: bool) -> dict:
         _news_sc = None
     g_score = pct is not None and pct >= 55
     g_zone = not (z and z["zone"] == "sell")
-    g_news = _news_sc is None or _news_sc > -2
-    _zp = f"연중 {z['pos']}%" if z else "확인 불가"
-    _zp_en = f"{z['pos']}% of year" if z else "unknown"
-    gates_ko = (f"{'✅' if g_score else '❌'} 점수 {'정상' if g_score else '미달'}"
-                f"({pct if pct is not None else '?'}% {'≥' if g_score else '<'} 55) · "
-                f"{'✅' if g_zone else '❌'} 매도구간 {'아님' if g_zone else '⚠️ 매도구간'}({_zp}) · "
-                f"{'✅' if g_news else '❌'} 악재 {'없음' if g_news else '있음'}"
-                f"(뉴스 {_news_sc:+d})" if _news_sc is not None else
-                f"{'✅' if g_score else '❌'} 점수 {'정상' if g_score else '미달'}"
-                f"({pct if pct is not None else '?'}% {'≥' if g_score else '<'} 55) · "
-                f"{'✅' if g_zone else '❌'} 매도구간 {'아님' if g_zone else '⚠️ 매도구간'}({_zp}) · "
-                f"✅ 악재 없음(수집 뉴스 없음)")
-    gates_en = (f"{'✅' if g_score else '❌'} score {'OK' if g_score else 'below bar'}"
-                f"({pct if pct is not None else '?'}% {'≥' if g_score else '<'} 55) · "
-                f"{'✅' if g_zone else '❌'} {'not the selling zone' if g_zone else 'IN the selling zone'}({_zp_en}) · "
-                + (f"{'✅' if g_news else '❌'} {'no bad news' if g_news else 'bad news'}(news {_news_sc:+d})"
-                   if _news_sc is not None else "✅ no bad news (none collected)"))
+    # bad news = a clearly negative judge score OR a fresh 위험/악재 stamp — the
+    # verdict must agree with the news line it prints (a [위험] stamp under a
+    # "no bad news" verdict contradicted itself, caught in testing 2026-08-26)
+    _sts = _fresh_stamps(code)
+    _fresh_bad = bool(_sts) and str(_sts[-1].get("stamp") or "") in ("위험", "악재")
+    g_news = not _fresh_bad and (_news_sc is None or _news_sc > -2)
+    # one honest number out of 100 (boss 2026-08-26: "start showing score using
+    # 100 score checklist") — market + stock items combined
+    total100 = None
+    try:
+        total100 = round((mk.get("score", 0) + st.get("score", 0))
+                         / max(1, (mk.get("max", 0) + st.get("max", 0))) * 100)
+    except Exception:
+        pass
+    # DIRECT ANSWER FIRST, simple words (boss 2026-08-26: "direct answer like buy
+    # or not... then explanation reason, do not use too much complex words")
+    picked = False
     if breakers:
-        verdict = (f"{gates_ko}\n🚫 **최종 판단: 매수 금지** — 결격 사유가 있습니다" if not en
-                   else f"{gates_en}\n🚫 **FINAL DECISION: DO NOT BUY** — deal-breakers present")
-        picked = False
+        verdict = ("❌ **사지 마세요**" if not en else "❌ **DO NOT BUY**")
+        why0 = (("자동 결격: " if not en else "deal-breaker: ")
+                + "; ".join(f"#{b['no']} {b['detail']}"[:60] for b in breakers[:2]))
     elif g_score and g_zone and g_news:
-        _zx = (" (매수구간 — 법칙상 최적 자리)" if (z and z["zone"] == "buy") else "")
-        verdict = ((f"{gates_ko}\n✅ **최종 판단: 매수**{_zx}") if not en
-                   else (f"{gates_en}\n✅ **FINAL DECISION: BUY**"
-                         + (" (buying zone — the law's best spot)" if (z and z["zone"] == "buy") else "")))
         picked = True
+        verdict = ("✅ **사세요 (매수)**" if not en else "✅ **BUY**")
+        why0 = ("점수도 충분하고, 차트가 팔 자리(고점)도 아니고, 나쁜 뉴스도 없습니다"
+                if not en else
+                "the score passes, the chart is not at the top, and there is no bad news")
     else:
-        _why = ("매도구간" if not g_zone else "점수 미달" if not g_score else "악재 뉴스")
-        _why_en = ("the selling zone" if not g_zone else "the score" if not g_score else "bad news")
-        verdict = ((f"{gates_ko}\n⚠️ **최종 판단: 대기** — {_why} 때문에 지금은 사지 않습니다") if not en
-                   else (f"{gates_en}\n⚠️ **FINAL DECISION: WAIT** — {_why_en} blocks the buy for now"))
-        picked = False
-    # worst failing stock items (why)
-    fails = [it for it in (st.get("items") or []) if it.get("ok") is False][:3]
-    L = [f"🧭 **{'매수 판단' if not en else 'BUY decision'} — {name} ({code})**", "", verdict, ""]
-    L.append((f"**1) 시장 체크(#11~40)**: {mk.get('score')}/{mk.get('max')}점 · "
-              f"{'결격 없음' if not (mk.get('deal_breakers')) else '🚫 결격 ' + str(len(mk['deal_breakers'])) + '건'}")
-             if not en else
-             (f"**1) Market check (#11–40)**: {mk.get('score')}/{mk.get('max')} · "
-              f"{'no deal-breakers' if not (mk.get('deal_breakers')) else '🚫 ' + str(len(mk['deal_breakers'])) + ' deal-breaker(s)'}"))
-    _f_bit = ""
+        verdict = ("⏸ **기다리세요 — 지금은 사지 마세요**" if not en else "⏸ **WAIT — don't buy now**")
+        why0 = (("차트가 1년 중 제일 위쪽(팔 자리)이라서요" if not g_zone else
+                 "점수가 기준(55점)에 못 미쳐서요" if not g_score else "나쁜 뉴스가 있어서요")
+                if not en else
+                ("the chart is near its 1-year top — a selling spot" if not g_zone else
+                 "the score is below the 55 bar" if not g_score else "there is bad news"))
+    L = [f"🧭 **{name} ({code})**", "", f"{verdict} — {why0}", "",
+         ("**이유:**" if not en else "**Reasons:**")]
+    # 1. the score, out of 100
+    if total100 is not None:
+        L.append((f"1. 점수: 100점 중 **{total100}점**" + (" — 기준 통과" if g_score else " — 기준(55점) 미달"))
+                 if not en else
+                 (f"1. Score: **{total100} / 100**" + (" — passes the bar" if g_score else " — below the 55 bar")))
+    # 2. daily chart — top or bottom, plain words
+    if z:
+        _pos_ko = ("아래쪽 — 살 자리" if z["zone"] == "buy" else
+                   "위쪽 — 팔 자리라 사기엔 부담" if z["zone"] == "sell" else "중간")
+        _pos_en = ("near the bottom — a buying spot" if z["zone"] == "buy" else
+                   "near the top — a selling spot, risky to buy" if z["zone"] == "sell" else "the middle")
+        _px_bit = (f" · 현재가 ₩{z['cur']:,.0f}" if (not en and z.get("cur")) else
+                   f" · now ₩{z['cur']:,.0f}" if z.get("cur") else "")
+        L.append((f"2. 일봉 차트: 1년 범위에서 **{z['pos']}% 위치** ({_pos_ko}){_px_bit}") if not en
+                 else (f"2. Daily chart: at **{z['pos']}%** of its 1-year range ({_pos_en}){_px_bit}"))
+    # 3. volume, plain words (checklist #47)
+    _vol_it = next((it for it in (st.get("items") or []) if it.get("no") == 47), None)
+    if _vol_it is not None:
+        L.append(("3. 거래량: " + ("평소보다 많음 — 사람들이 몰리는 중" if _vol_it.get("ok")
+                                 else "평소보다 적음 — 아직 조용함")) if not en else
+                 ("3. Volume: " + ("above normal — people are coming in" if _vol_it.get("ok")
+                                   else "below normal — still quiet")))
+    # 4. news — the freshest ruling WITH ITS PUBLISHED TIME (boss 2026-08-26: "if we
+    # have a big good news... show time news published then advise good to buy
+    # because it will increase")
+    if _sts:
+        s0 = _sts[-1]
+        _tm = str(s0.get("ts") or "")
+        _tm = _tm[11:16] if "T" in _tm and len(_tm) >= 16 else (_tm[:16] if len(_tm) > 16 else _tm)
+        _stp = str(s0.get("stamp") or "")
+        good, bad = _stp in ("호재", "매수"), _stp in ("위험", "악재")
+        eff = (" → 가격이 오를 수 있어 사는 데 유리합니다" if good else
+               " → 가격이 내릴 수 있어 조심해야 합니다" if bad else "") if not en else \
+              (" → the price may rise, good for buying" if good else
+               " → the price may fall, be careful" if bad else "")
+        L.append((f"4. 뉴스: [{_stp}] {str(s0.get('title', ''))[:60]} ({_tm} 발표){eff}") if not en
+                 else (f"4. News: [{_stp}] {str(s0.get('title', ''))[:60]} (published {_tm}){eff}"))
+    else:
+        L.append(("4. 뉴스: 특별한 뉴스 없음" if not en else "4. News: nothing special today"))
+    # 5. weak items, briefly
+    fails = [it for it in (st.get("items") or []) if it.get("ok") is False][:2]
     if fails:
-        _f_bit = (" — 급소: " if not en else " — weak spots: ") + \
-            ", ".join(f"❌ #{it['no']} {it['q'] if not en else (it.get('q_en') or it['q'])}"[:60] for it in fails)
-    L.append((f"**2) 종목 체크(#41~100)**: {st.get('score')}/{st.get('max')}점 ({pct}%)"
-              if not en else
-              f"**2) Stock check (#41–100)**: {st.get('score')}/{st.get('max')} ({pct}%)") + _f_bit)
-    if breakers:
-        for b in breakers[:3]:
-            L.append(("   🚫 " if True else "") + f"#{b['no']} {b['q']} — {b['detail']}"[:110])
-    L.append(f"**3) {_zone_line(z, en)}**")
-    if news_line:
-        L.append(f"**4) {news_line}**")
-    if z and z.get("cur"):
-        _t3 = " ".join(("🔴" if c > 0 else "🔵" if c < 0 else "⚪") for c in cn["last3"][::-1]) or "-"
-        L.append((f"**5) 지금 흐름**: ₩{z['cur']:,.0f}"
-                  + (f" ({z['chg']:+.2f}%)" if z.get("chg") is not None else "")
-                  + f" · 최근 캔들 {_t3}") if not en else
-                 (f"**5) Right now**: ₩{z['cur']:,.0f}"
-                  + (f" ({z['chg']:+.2f}%)" if z.get("chg") is not None else "")
-                  + f" · recent candles {_t3}"))
+        L.append(("5. 아쉬운 점: " if not en else "5. Weak spots: ")
+                 + " · ".join(f"#{it['no']} {(it['q'] if not en else (it.get('q_en') or it['q']))}"[:55]
+                              for it in fails))
     L.append("")
     if picked and z and z.get("cur"):
         # the smart-assistant OFFER (boss 2026-08-25: "then as a smart people it
