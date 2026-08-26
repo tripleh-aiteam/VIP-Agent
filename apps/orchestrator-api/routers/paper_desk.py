@@ -833,8 +833,6 @@ def _chat_fam_entries(code_set: set, day8: str = ""):
     from sqlalchemy import text as _sqt
     from db.base import SessionLocal
     KST = timezone(timedelta(hours=9))
-    _sixset = {"000660", "005930", "017670", "034020", "035420", "042660"}
-    _is_menu1 = code_set == _sixset
     rows_out, hold_out = [], []
     db = SessionLocal()
     try:
@@ -847,8 +845,8 @@ def _chat_fam_entries(code_set: set, day8: str = ""):
         by_code: dict = {}
         for r in recs:
             c = r[0]
-            if (_is_menu1 and c not in _sixset) or (not _is_menu1 and c in _sixset):
-                continue
+            # NO menu split (boss 2026-08-26: "why only menu1, it must be on both") —
+            # the boss's own trades follow him to whichever desk he is looking at
             # only the SELECTED day's orders (boss 2026-08-26: old days leaked into
             # today's view and confused the room)
             if day8:
@@ -926,8 +924,6 @@ def _chat_fam_entries(code_set: set, day8: str = ""):
             "AND order_type='limit' ORDER BY id")).fetchall()
         for r in opens:
             c = r[0]
-            if (_is_menu1 and c not in _sixset) or (not _is_menu1 and c in _sixset):
-                continue
             if day8:
                 try:
                     if r[5] is None or r[5].astimezone(KST).strftime("%Y%m%d") != day8:

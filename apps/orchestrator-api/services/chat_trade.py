@@ -221,6 +221,39 @@ def closed_reply(side: str, en: bool) -> str:
             f"({wait}). KRX 정규장은 평일 09:00~15:30입니다.")
 
 
+def cancel_open(db, transcript: Optional[str], lang: str) -> Optional[str]:
+    """'NAVER 주문 취소' / 'cancel my naver order' — cancels the chatbot's OPEN
+    (queued, unfilled) limit orders; with no stock named, all of them. The bare
+    '취소/no' still belongs to the confirmation flow, so this needs an explicit
+    order word (주문/order/대기/waiting)."""
+    t = (transcript or "").lower()
+    if not t or not re.search(r"취소|cancel", t):
+        return None
+    if not any(k in t for k in ("주문", "order", "대기", "waiting", "queue")):
+        return None
+    en = not re.search(r"[가-힣]", transcript or "") and bool(re.search(r"[a-zA-Z]", transcript or ""))
+    from sqlalchemy import text as _sqt
+    from services.assistant_agent import _all_stocks_in_query
+    stocks = _all_stocks_in_query(transcript)
+    q = ("UPDATE paper_desk_orders SET status='CANCELLED' "
+         "WHERE COALESCE(source,'') IN ('chat','chatbot') AND status='OPEN'")
+    params = {}
+    if stocks:
+        q += " AND ticker=:t"
+        params["t"] = stocks[0][0]
+    rows = db.execute(_sqt(q + " RETURNING id, name, side, qty, limit_price"), params).fetchall()
+    db.commit()
+    if not rows:
+        return ("취소할 대기 주문이 없습니다." if not en else "No waiting orders to cancel.")
+    L = [(f"🚫 대기 주문 {len(rows)}건을 취소했습니다:" if not en
+          else f"🚫 Cancelled {len(rows)} waiting order(s):")]
+    for r in rows:
+        L.append((f"   · {'매수' if r[2] == 'BUY' else '매도'} {r[1]} {int(r[3] or 0):,}주 "
+                  f"@ ₩{float(r[4] or 0):,.0f}") if not en else
+                 (f"   · {r[2]} {r[1]} {int(r[3] or 0):,} sh @ ₩{float(r[4] or 0):,.0f}"))
+    return "\n".join(L)
+
+
 def stash_offer(code: str, name: str, en: bool) -> None:
     """A BUY verdict's '도와드릴까요?' offer — the next '네' opens the order preview
     (which then needs its own '네' to execute; money keeps its two-step gate)."""
