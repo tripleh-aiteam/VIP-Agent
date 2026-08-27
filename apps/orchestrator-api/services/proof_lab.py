@@ -221,7 +221,12 @@ VARIANTS: list[dict] = [
      # threshold 1.0 (boss 2026-08-27 evening: "check all historical data,
      # find the best %"): full sweep 1.0-4.0 on 251 days - 1.0% is best desk-
      # wide (+42.1M/yr vs +28.5M at 2.0; D1 +24.1M, D2 +5.5M, D3 +12.5M).
-     "gap_guard": 1.0, "gap_wait": "below_open",
+     "gap_guard": 1.5, "gap_wait": "below_open",
+     # 1.5 AT THE BOSS'S ORDER (2026-08-27 night, verbatim: "please do not set
+     # +1% and more - set +1.5% and more"), overriding the sweep's optimum on
+     # record per the standing law: below_open court measured 1.0% = +69.6M/yr
+     # desk, 1.5% = +52.2M/yr (D1 +18.2, D2 +10.1, D3 +23.9) - his bar keeps
+     # ~75% of the money and trades the normal 1.0-1.5% mornings.
      # form court 08-27 night (boss: "we should not fix the time as 10 - the
      # decrease can be done after 3 minutes"): adaptive release wins big -
      # below_open +26.1/+9.9/+33.6M = +69.6M desk vs +42.1M for the 10:00
@@ -303,7 +308,12 @@ VARIANTS: list[dict] = [
      # threshold 1.0 (boss 2026-08-27 evening: "check all historical data,
      # find the best %"): full sweep 1.0-4.0 on 251 days - 1.0% is best desk-
      # wide (+42.1M/yr vs +28.5M at 2.0; D1 +24.1M, D2 +5.5M, D3 +12.5M).
-     "gap_guard": 1.0, "gap_wait": "below_open",
+     "gap_guard": 1.5, "gap_wait": "below_open",
+     # 1.5 AT THE BOSS'S ORDER (2026-08-27 night, verbatim: "please do not set
+     # +1% and more - set +1.5% and more"), overriding the sweep's optimum on
+     # record per the standing law: below_open court measured 1.0% = +69.6M/yr
+     # desk, 1.5% = +52.2M/yr (D1 +18.2, D2 +10.1, D3 +23.9) - his bar keeps
+     # ~75% of the money and trades the normal 1.0-1.5% mornings.
      # form court 08-27 night (boss: "we should not fix the time as 10 - the
      # decrease can be done after 3 minutes"): adaptive release wins big -
      # below_open +26.1/+9.9/+33.6M = +69.6M desk vs +42.1M for the 10:00
@@ -401,7 +411,12 @@ VARIANTS: list[dict] = [
      # threshold 1.0 (boss 2026-08-27 evening: "check all historical data,
      # find the best %"): full sweep 1.0-4.0 on 251 days - 1.0% is best desk-
      # wide (+42.1M/yr vs +28.5M at 2.0; D1 +24.1M, D2 +5.5M, D3 +12.5M).
-     "gap_guard": 1.0, "gap_wait": "below_open",
+     "gap_guard": 1.5, "gap_wait": "below_open",
+     # 1.5 AT THE BOSS'S ORDER (2026-08-27 night, verbatim: "please do not set
+     # +1% and more - set +1.5% and more"), overriding the sweep's optimum on
+     # record per the standing law: below_open court measured 1.0% = +69.6M/yr
+     # desk, 1.5% = +52.2M/yr (D1 +18.2, D2 +10.1, D3 +23.9) - his bar keeps
+     # ~75% of the money and trades the normal 1.0-1.5% mornings.
      # form court 08-27 night (boss: "we should not fix the time as 10 - the
      # decrease can be done after 3 minutes"): adaptive release wins big -
      # below_open +26.1/+9.9/+33.6M = +69.6M desk vs +42.1M for the 10:00
@@ -1604,7 +1619,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                       # consecutive rises) - at 09:05 or 11:00 alike.
                       (not gap_ok[si])
                       if v.get("gap_wait") == "turn3"
-                      else (c >= closes[0])
+                      else (c >= closes[0]
+                            # gap_join (boss 2026-08-27 night: the runner that
+                            # never decreases - "for example at 09:29 big news
+                            # comes, then we can join with Algo 2"): the wait
+                            # SURRENDERS at this clock and the doors may board
+                            # the runner
+                            and (not v.get("gap_join") or not s.get("times")
+                                 or str(s["times"][i])[:5] < v["gap_join"]))
                       if v.get("gap_wait", "below_open") == "below_open"
                       else (s.get("times")
                             and str(s["times"][i])[:5] < "10:00"))):
