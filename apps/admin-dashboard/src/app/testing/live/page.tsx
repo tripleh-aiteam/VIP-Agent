@@ -2019,12 +2019,12 @@ export default function LiveDeskPage() {
   // 4-second tape-scorer snapshot the heartbeat and the buy-gate use; the
   // slow dpick ordering remains only as a fallback before the first snapshot.
   const [rankHead9, setRankHead9] = useState<{ top_n?: number; universe?: number;
-    rows?: { code: string; name: string; avg?: number }[] } | null>(null);
+    rows?: { code: string; name: string; avg?: number; dp?: number | null }[] } | null>(null);
   useEffect(() => {
     if (deskView !== "reco") return;
     let live9 = true;
     const load9 = () => api<{ ok: boolean; top_n: number; universe?: number;
-      snaps: { t: string; rows: { code: string; name: string; avg?: number }[] }[] }>(
+      snaps: { t: string; rows: { code: string; name: string; avg?: number; dp?: number | null }[] }[] }>(
       "/paper-desk/live/reco-rank-log?n=1")
       .then((d) => { if (live9 && d?.ok && d.snaps?.length)
         setRankHead9({ top_n: d.top_n, universe: d.universe,
@@ -2035,8 +2035,14 @@ export default function LiveDeskPage() {
     return () => { live9 = false; clearInterval(h9); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deskView]);
+  // BENCH LAW (boss 2026-08-27): the board's N seats = the first N BUYABLE
+  // stocks by rank - a top stock in the no-buy peak zone (dp >= 0.85) keeps
+  // its rank in the table but its seat passes to the next in line, exactly
+  // as the entry gate decides. Rows without dp count as buyable.
   const _recoLive = rankHead9?.rows
-    ? rankHead9.rows.slice(0, rankHead9.top_n ?? 5).map((x) => ({
+    ? rankHead9.rows
+        .filter((x) => !(typeof x.dp === "number" && x.dp >= 0.85))
+        .slice(0, rankHead9.top_n ?? 5).map((x) => ({
         code: x.code, name: x.name, live_total: x.avg, score: x.avg,
         by_score: recoSetPre9.has(x.code) }))
     : [...(dpick?.rows || [])]

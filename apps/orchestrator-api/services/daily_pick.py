@@ -469,3 +469,39 @@ def load_picks() -> list[tuple[str, str]]:
     except Exception:
         pass
     return []
+
+
+def effective_picks(n: int | None = None) -> list[tuple[str, str]]:
+    """THE BENCH LAW's morning form (boss 2026-08-27: 'if one of them inside
+    top 7 is not on the buying case then 8th can join'): walk today's ranking
+    in score order, skip any stock the peak law forbids buying RIGHT NOW
+    (dp >= 0.85), fill n seats. Bench capped at rank 10 - quality measured
+    equal through seat 9, diluting at 10. Falls back to the plain top-n when
+    the tape or ranking is unavailable (never an empty desk)."""
+    if n is None:
+        n = reco_n()
+    try:
+        d = json.loads(_PICK_FILE.read_text(encoding="utf-8"))
+        from services.kiwoom_tape import _day
+        if d.get("day") != _day() or not d.get("rows"):
+            return load_picks()[:n]
+        rows = sorted(d["rows"], key=lambda r: -(r.get("score") or 0))[:10]
+        import services.kiwoom_tape as kt
+        import services.kiwoom_rules as kr
+        out: list[tuple[str, str]] = []
+        for r in rows:
+            dp = None
+            try:
+                px = kt.last_price(r["code"])
+                if px:
+                    dp = kr._daily_pos(r["code"], px)
+            except Exception:
+                pass
+            if dp is not None and dp >= 0.85:
+                continue
+            out.append((r["code"], r.get("name") or r["code"]))
+            if len(out) >= n:
+                break
+        return out or load_picks()[:n]
+    except Exception:
+        return load_picks()[:n]

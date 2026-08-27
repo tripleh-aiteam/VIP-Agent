@@ -56,6 +56,26 @@ def snapshots(day: str | None = None) -> list[dict]:
         return []
 
 
+def _buyable_top(rows: list, n: int) -> list:
+    """THE BENCH LAW (boss 2026-08-27: 'if one of them inside top 7 is not on
+    the buying case then 8th can join, if 2 then 8th and 9th'): a seat belongs
+    to the first n stocks the peak law lets us BUY. A top stock standing in
+    the no-buy zone (dp >= 0.85) keeps its RANK but gives up its SEAT to the
+    next in line - the bench is naturally capped at rank 10 (snapshot depth),
+    where the boss's own top-N measurement showed quality dilutes. A held
+    position is untouched (this gates ENTRY only). Rows recorded without a dp
+    count as buyable, so old snapshots keep their old meaning."""
+    out = []
+    for r in rows:
+        dp = r.get("dp")
+        if dp is not None and dp >= 0.85:
+            continue
+        out.append(r)
+        if len(out) >= n:
+            break
+    return out
+
+
 def rank_at(code: str, hhmmss: str, day: str | None = None) -> dict | None:
     """The latest snapshot at/before hhmmss - the record a buy is judged by."""
     best = None
@@ -67,13 +87,15 @@ def rank_at(code: str, hhmmss: str, day: str | None = None) -> dict | None:
     if not best:
         return None
     rows = best.get("rows") or []
+    seats = _buyable_top(rows, top_n())
+    seat_codes = {r.get("code") for r in seats}
     for i, r in enumerate(rows, 1):
         if r.get("code") == code:
             return {"t": best["t"], "rank": i, "of": len(rows),
-                    "avg": r.get("avg"), "top": rows[:top_n()],
-                    "in_top": i <= top_n()}
+                    "avg": r.get("avg"), "top": seats,
+                    "in_top": r.get("code") in seat_codes}
     return {"t": best["t"], "rank": None, "of": len(rows),
-            "avg": None, "top": rows[:top_n()], "in_top": False}
+            "avg": None, "top": seats, "in_top": False}
 
 
 def windows_for(code: str, day: str | None = None) -> list | None:
@@ -85,7 +107,8 @@ def windows_for(code: str, day: str | None = None) -> list | None:
     out: list = []
     open_from = None
     for s in snaps:
-        tops = {r.get("code") for r in (s.get("rows") or [])[:top_n()]}
+        tops = {r.get("code")
+                for r in _buyable_top(s.get("rows") or [], top_n())}
         if code in tops and open_from is None:
             open_from = s.get("t")
         elif code not in tops and open_from is not None:
@@ -183,6 +206,7 @@ def _fast_cycle() -> None:
                 or b.get("live_total") or b.get("score") or 0)
         px = kt.last_price(c)
         adj = 0.0
+        dp9 = None      # recorded in the snapshot: the bench law reads it
         if px:
             try:
                 prev = kr._daily20(c, kt._day())[0]
@@ -194,6 +218,7 @@ def _fast_cycle() -> None:
             try:
                 dp = kr._daily_pos(c, px)
                 if dp is not None:
+                    dp9 = round(float(dp), 3)
                     adj += 2.0 if dp <= 0.20 else (-3.0 if dp >= 0.85 else 0.0)
             except Exception:
                 pass
@@ -226,7 +251,7 @@ def _fast_cycle() -> None:
             pass
         adj = max(-12.0, min(12.0, adj))
         rows.append({"code": c, "name": b.get("name") or watch.get(c) or c,
-                     "avg": round(float(base) + adj, 1)})
+                     "avg": round(float(base) + adj, 1), "dp": dp9})
     if not rows:
         return
     rows.sort(key=lambda x: -(x["avg"] or 0))
@@ -246,8 +271,11 @@ def _write_snapshot(slim: list) -> None:
             last = json.loads(lines[-1])
     except Exception:
         pass
-    tops_new = [x["code"] for x in slim[:top_n()]]
-    tops_old = [x.get("code") for x in (last.get("rows") or [])[:top_n()]] \
+    # SEATS, not raw ranks: a zone flip that swaps a bench player in or out
+    # changes who may buy and must land in the log at once (bench law)
+    tops_new = [x["code"] for x in _buyable_top(slim, top_n())]
+    tops_old = [x.get("code")
+                for x in _buyable_top(last.get("rows") or [], top_n())] \
         if last else None
     aged = (not last) or (last.get("t", "") < (
         datetime.now(KST) - timedelta(seconds=60)).strftime("%H:%M:%S"))
