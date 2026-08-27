@@ -2278,10 +2278,19 @@ export default function LiveDeskPage() {
                     </td></tr>
                   )}
                   {(pickAll
-                      // full ranking, sorted by the LIVE total when present — the same
-                      // order the chatbot recommends (boss 2026-08-24: consistency)
-                      ? [...dpick.rows].sort((a, b) =>
-                          (b.live_total ?? b.score) - (a.live_total ?? a.score))
+                      // full ranking sorted by the SAME number the rows display —
+                      // heartbeat live score, else the sum-law base (boss 2026-08-27:
+                      // 삼성SDI showed 65 ranked ABOVE 74.8 rows because the sort used
+                      // the stale live_total while the cells showed the sum scores)
+                      ? [...dpick.rows].sort((a, b) => {
+                          const va = rankHead9?.rows?.find((x) => x.code === a.code)?.avg
+                            ?? (a as { cats?: { avg?: number } }).cats?.avg
+                            ?? a.live_total ?? a.score;
+                          const vb = rankHead9?.rows?.find((x) => x.code === b.code)?.avg
+                            ?? (b as { cats?: { avg?: number } }).cats?.avg
+                            ?? b.live_total ?? b.score;
+                          return (vb ?? 0) - (va ?? 0);
+                        })
                       // desk view: the LIVE desk lists ONLY the six (boss 2026-08-25);
                       // the reco desk lists its own picks
                       : deskView === "reco"
