@@ -159,6 +159,17 @@ def poll(db) -> dict:
     except Exception:
         in_session = False
     if in_session:
+        # 🎯 conditional orders (Step 3): the boss's pre-authorized "when it hits X"
+        # rules — checked every poll, fired as market orders, announced here
+        try:
+            from services.chat_conditional import check_and_fire
+
+            def _cond_emit(icon, ko, en_, code):
+                _emit(st, f"cond:{st.get('last_id', 0)}:{code}:{time.time():.0f}",
+                      icon, ko, code, text_en=en_)
+            check_and_fire(db, _cond_emit)
+        except Exception as e:
+            log.warning(f"watchdog conditional failed: {str(e)[:100]}")
         for code, name in _held_chat_codes(db)[:8]:
             # c) 3rd blue — his sell law
             try:

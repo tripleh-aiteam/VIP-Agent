@@ -141,6 +141,33 @@ TESTS = [
                    "break-even or honest no-position")),
     ("assistant", "recommend me 3 stocks", None,
      lambda i, r: (i == "checklist_reco" and "1." in r, "checklist picks with ranks")),
+    # --- J. STEP 2 — US stocks & crypto, real numbers only (2026-08-27) ---
+    ("step2", "apple price now", None,
+     lambda i, r: (i == "global_price" and "$" in r and "AAPL" in r,
+                   "US price with a real $ number")),
+    ("step2", "비트코인 얼마야?", None,
+     lambda i, r: (i == "global_price" and "₩" in r and "BTC" in r,
+                   "crypto in KRW from Upbit/data PC")),
+    ("step2", "tesla last 5 days min max", None,
+     lambda i, r: (i == "global_history" and "TSLA" in r and "$" in r,
+                   "US history with min/max")),
+    ("step2", "should I buy tesla?", None,
+     lambda i, r: (i == "global_price" and ("Korean stocks only" in r or "한국 주식" in r),
+                   "US trade ask → quote + honest not-tradable note")),
+    # --- K. STEP 3 — briefing + conditional orders (2026-08-27) ---
+    ("step3", "오늘 브리핑", None,
+     lambda i, r: (i == "daily_briefing" and "데스크" in r and "₩" in r,
+                   "deterministic briefing with the six")),
+    ("step3", "삼성전자 260,000원 되면 3주 사줘", None,
+     lambda i, r: (i == "chat_trade_confirm" and "조건" in r and "260,000" in r,
+                   "if/when phrasing → conditional confirm, not a limit order")),
+    ("step3", "조건 주문 보여줘", None,
+     lambda i, r: (i == "chat_conditional", "list lane answers")),
+    # --- L. STEP 4 — track record with receipts (2026-08-27) ---
+    ("step4", "추천 성적 어때?", None,
+     lambda i, r: (i in ("readiness", "reco_track")
+                   and ("승률" in r or "적중" in r or "Win rate" in r or "트랙" in r),
+                   "graded stats, never a memory claim")),
     # --- G. language purity ---
     ("language", "what happened to hanwha ocean this week?", None,
      lambda i, r: (no_think(r) and no_refusal(r)

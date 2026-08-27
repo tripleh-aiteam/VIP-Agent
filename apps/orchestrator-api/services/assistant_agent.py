@@ -7213,7 +7213,17 @@ def _run_agent_impl(
             # no ML in advice) — this ML-backed lane keeps only what that engine
             # doesn't claim
             from services import checklist_advice as _ca_gate
+            # an IMPERATIVE order ("삼성전자 1주 시장가로 팔아줘") belongs to the order
+            # desk, never to advice (2026-08-27: it got a 🟡 보유 verdict instead of
+            # the sell confirmation)
+            _imp_cmd = None
+            try:
+                from services.chat_trade import parse as _ct_parse0
+                _imp_cmd = _ct_parse0(transcript)
+            except Exception:
+                pass
             if (is_position_question(transcript) and not _ca_gate.kind(transcript)
+                    and not _imp_cmd
                     and not _is_cancelish(transcript) and not _is_statusish(transcript)):
                 from services.position_advice import advise as _pos_advise
                 _adv = _pos_advise(db, parse(transcript))
@@ -7337,8 +7347,17 @@ def _run_agent_impl(
             and not _all_stocks_in_query(transcript)):
         try:
             from services.readiness import reply_text as _ready_text
+            _rd_rep = _ready_text(db, lang)
+            # Step 4 (2026-08-27): a RECOMMENDATION-flavored ask also gets the
+            # morning-picks receipt table (each pick: entry → now, win rate)
+            if _re.search(r"추천|recommend|picks?", transcript or "", _re.IGNORECASE):
+                try:
+                    from services.reco_track import reply as _rt_rep
+                    _rd_rep = _rd_rep + "\n\n---\n\n" + _rt_rep(db, lang)
+                except Exception:
+                    pass
             return {"intent": "readiness", "language": lang,
-                    "reply": _ready_text(db, lang), "action": None, "speak": True,
+                    "reply": _rd_rep, "action": None, "speak": True,
                     "transcript": transcript, "tool_used": "readiness"}
         except Exception as e:
             log.warning(f"readiness failed: {str(e)[:120]}")
@@ -7365,6 +7384,67 @@ def _run_agent_impl(
         return {"intent": "identity", "language": lang, "reply": _rep_id,
                 "action": None, "speak": True, "transcript": transcript,
                 "tool_used": "identity"}
+
+    # === 📋 DAILY BRIEFING (Step 3, 2026-08-27) — "오늘 브리핑"/"brief me" composes
+    # the desk six + holdings + chat orders + checklist Top 3, all deterministic. ===
+    if not confirmed_tool and not attachment_ids and transcript:
+        try:
+            from services import chat_briefing as _cb
+            if _cb.is_briefing_q(transcript):
+                return {"intent": "daily_briefing", "language": lang,
+                        "reply": _cb.reply(db, lang), "action": None, "speak": True,
+                        "transcript": transcript, "tool_used": "daily_briefing"}
+        except Exception as e:
+            log.warning(f"briefing lane failed: {str(e)[:120]}")
+
+    # === 📊 TRACK RECORD (Step 4, 2026-08-27) — "추천 성적 어때?" answers from the
+    # morning-picks record + live prices; win rate computed, never claimed. ===
+    if not confirmed_tool and not attachment_ids and transcript:
+        try:
+            from services import reco_track as _rt
+            if _rt.is_track_q(transcript):
+                return {"intent": "reco_track", "language": lang,
+                        "reply": _rt.reply(db, lang), "action": None, "speak": True,
+                        "transcript": transcript, "tool_used": "reco_track"}
+        except Exception as e:
+            log.warning(f"track-record lane failed: {str(e)[:120]}")
+
+    # === 🎯 CONDITIONAL ORDERS (Step 3, 2026-08-27) — "삼성전자 260,000원 되면 사줘"
+    # sets a standing rule (after his "네"); list/cancel by asking. Runs BEFORE the
+    # ordinary order desk so the if/when phrasing never becomes a plain limit order. ===
+    if not confirmed_tool and not attachment_ids and transcript:
+        try:
+            from services import chat_conditional as _cc
+            if _cc.is_cancel_q(transcript):
+                return {"intent": "chat_conditional", "language": lang,
+                        "reply": _cc.cancel_reply(transcript, lang), "action": None,
+                        "speak": True, "transcript": transcript,
+                        "tool_used": "chat_conditional"}
+            if _cc.is_list_q(transcript):
+                return {"intent": "chat_conditional", "language": lang,
+                        "reply": _cc.list_reply(lang), "action": None, "speak": True,
+                        "transcript": transcript, "tool_used": "chat_conditional"}
+            if _cc.is_conditional(transcript):
+                _cr = _cc.make_preview(db, transcript, lang)
+                if _cr:
+                    return {"intent": "chat_trade_confirm", "language": lang,
+                            "reply": _cr, "action": None, "speak": True,
+                            "transcript": transcript, "tool_used": "chat_conditional"}
+        except Exception as e:
+            log.warning(f"conditional lane failed: {str(e)[:120]}")
+
+    # === 🌎 GLOBAL — US stocks & crypto (Step 2, 2026-08-27): real numbers from the
+    # data PC → Yahoo/Upbit, never LLM memory. KR names can't reach this lane. ===
+    if not confirmed_tool and not attachment_ids and transcript:
+        try:
+            from services import global_quotes as _gq
+            _gres = _gq.reply(transcript, lang, history or [])
+            if _gres:
+                return {"intent": _gres["intent"], "language": lang,
+                        "reply": _gres["reply"], "action": None, "speak": True,
+                        "transcript": transcript, "tool_used": "global_quotes"}
+        except Exception as e:
+            log.warning(f"global lane failed: {str(e)[:120]}")
 
     # === 💨 CASUAL FAST-PATH (boss 2026-08-27: "very simple question but it is
     # answering very late") — greetings/thanks/help-asks skip the whole tool-decision

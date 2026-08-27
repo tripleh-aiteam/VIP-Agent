@@ -234,6 +234,15 @@ def _buy(db, code: str, name: str, en: bool) -> dict:
                 if not en else
                 ("the chart is near its 1-year top — a selling spot" if not g_zone else
                  "the score is below the 55 bar" if not g_score else "there is bad news"))
+    # Step 4 (2026-08-27): every verdict goes on the permanent record so
+    # "추천 성적 어때?" answers with receipts, not memory
+    try:
+        from services.reco_track import log_advice
+        log_advice(code, name,
+                   ("BUY" if picked else "DO NOT BUY" if breakers else "WAIT"),
+                   total100)
+    except Exception:
+        pass
     L = [f"🧭 **{name} ({code})**", "", f"{verdict} — {why0}", "",
          ("**이유:**" if not en else "**Reasons:**")]
     # 1. the score, out of 100 — WITH the inspection room's own calculation (boss

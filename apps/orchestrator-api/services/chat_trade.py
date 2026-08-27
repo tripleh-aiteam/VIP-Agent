@@ -785,6 +785,14 @@ def finish(db, word: str) -> Optional[str]:
     _PENDING.clear()
     _save_pending()
     en = bool(p.get("en"))
+    # a CONDITIONAL rule waiting for its "네" (Step 3): yes stores the standing
+    # rule (no order yet — the watchdog fires it at the trigger), no drops it
+    if p.get("cond"):
+        if word == "no":
+            return ("알겠습니다 — 조건 주문을 설정하지 않았습니다." if not en
+                    else "Understood — no conditional order was set.")
+        from services.chat_conditional import store
+        return store(p)
     # the advice lane's OFFER ("매수 도와드릴까요?"): "네" opens the real order
     # preview (a fresh pending), "아니요" just drops it — nothing was ordered yet
     if p.get("offer"):
