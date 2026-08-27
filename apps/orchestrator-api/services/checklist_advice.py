@@ -20,7 +20,9 @@ from services.logger import log
 
 _BUY_KW = ("살까", "사도", "사야", "매수할까", "살만", "매수 어때", "매수해도",
            "should i buy", "worth buying", "buy or not", "is it a buy", "can i buy",
-           "good to buy", "ok to buy", "buy now?")
+           "good to buy", "ok to buy", "buy now?",
+           # plain "카카오 어때?" was still reaching the 4-algo ML chain (2026-08-27)
+           "어때", "어떄", "how is it looking", "what do you think about")
 _SELL_KW = ("팔까", "팔아야", "매도할까", "매도해야", "익절", "팔지 말지", "팔아도",
             "should i sell", "sell now", "hold or sell", "sell or hold", "when to sell",
             "take profit", "매도 시점", "매도 타이밍", "정리할까", "던질까")

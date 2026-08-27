@@ -167,7 +167,12 @@ def parse(transcript: Optional[str]) -> Optional[dict]:
 
 _STATUS_KW = ("sold out", "did it sell", "is it sold", "filled", "체결됐", "체결 됐", "체결이",
               "팔렸", "아직 보유", "still holding", "order status", "주문 상태", "주문 어떻게",
-              "did i sell", "sold yet", "bought yet", "샀어?", "샀나")
+              "did i sell", "sold yet", "bought yet", "샀어?", "샀나",
+              # "did YOU buy kakao?" got the 4-algo ML advice instead of the record
+              # (boss 2026-08-27) — past-action questions belong to the order record
+              "did you buy", "did i buy", "did we buy", "have you bought", "did you sell",
+              "have you sold", "샀어", "샀니", "샀지", "팔았어", "팔았니", "매수했어", "매수했니",
+              "매도했어", "매도했니")
 
 
 def is_status_q(transcript: Optional[str]) -> bool:
@@ -185,11 +190,27 @@ def order_status_reply(db, transcript: Optional[str], lang: str) -> Optional[str
     from datetime import timedelta, timezone
     from sqlalchemy import text as _sqt
     KST = timezone(timedelta(hours=9))
-    rows = db.execute(_sqt(
-        "SELECT name, ticker, side, qty, status, limit_price, fill_price, created_at "
-        "FROM paper_desk_orders WHERE (COALESCE(source,'') IN ('chat','chatbot') OR COALESCE(source,'') LIKE '%-chat') "
-        "ORDER BY id DESC LIMIT 8")).fetchall()
+    # a NAMED stock filters the record to that stock ("did you buy kakao?")
+    _stk = None
+    try:
+        from services.assistant_agent import _all_stocks_in_query
+        _hits = _all_stocks_in_query(transcript)
+        if _hits:
+            _stk = _hits[0]
+    except Exception:
+        pass
+    _q9 = ("SELECT name, ticker, side, qty, status, limit_price, fill_price, created_at "
+           "FROM paper_desk_orders WHERE (COALESCE(source,'') IN ('chat','chatbot') "
+           "OR COALESCE(source,'') LIKE '%-chat')")
+    _p9 = {}
+    if _stk:
+        _q9 += " AND ticker=:t"
+        _p9["t"] = _stk[0]
+    rows = db.execute(_sqt(_q9 + " ORDER BY id DESC LIMIT 8"), _p9).fetchall()
     if not rows:
+        if _stk:
+            return (f"아니요 — 챗봇으로 {_stk[1]}을(를) 주문한 기록이 없습니다." if not en
+                    else f"No — there is no chatbot order for {_stk[1]} on record.")
         return None
     L = []
     for r in rows[:4]:
