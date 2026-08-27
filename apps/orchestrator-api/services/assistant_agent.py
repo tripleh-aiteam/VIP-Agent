@@ -1257,6 +1257,10 @@ def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) 
     # request — it was answered with the current price (deep audit 2026-08-25)
     if _is_fundamentals_q(transcript):
         return False
+    # a CONCEPT question ("why do interest rates affect stock prices?") is knowledge,
+    # not a quote — it got the watchlist price table (Step 1, 2026-08-27)
+    if _is_concept_q(transcript):
+        return False
     t = (transcript or "").lower()
     # A multi-stock COMPARISON ('compare X, Y, Z now' / 'X vs Y / 비교') is a present-price
     # ask even without an explicit price word — route it to the local comparison TABLE
@@ -2329,6 +2333,35 @@ def _desk_pnl_reply(db, transcript: Optional[str], lang: str) -> Optional[str]:
               if not en else
               f"{int(n_open)} positions open now — unrealized P&L updates live on the desk pages."))
     return "\n".join(L)
+
+
+# STEP 1 of the boss's 4-layer plan (2026-08-27): a CONCEPTUAL question must answer
+# like the Gemini app — fast, direct — even when it contains finance words. "Why do
+# interest rates affect stock prices?" took 39s through the analyst machinery.
+_CONCEPT_RE = _re.compile(
+    r"^(what|why|how|when|where|who)\b|\bexplain\b|difference between|meaning of|\bdefine\b"
+    r"|무엇|뭐야|뭔가요|이란\b|무슨 뜻|뜻이|설명해", _re.I)
+
+
+def _is_concept_q(transcript: Optional[str]) -> bool:
+    t = (transcript or "").lower()
+    if not t or not _CONCEPT_RE.search(t):
+        return False
+    # events/data/personal/ACTION asks are NOT concepts — they need real data or tools
+    if any(k in t for k in ("today", "now", "current", "오늘", "지금", "현재", "얼마",
+                            "my ", "내 ", "우리", "recommend", "추천", "portfolio", "보유",
+                            "which stock", "어떤 종목", "did ", "떨어졌", "올랐", "왜 이렇",
+                            "open ", "열어", "file", "파일",
+                            # "what stocks should I watch?" is a RECOMMENDATION;
+                            # "how about last month?" is a range follow-up (2026-08-27)
+                            "should", "watch", "invest", "buy", "sell", "pick",
+                            " 살", " 팔", "종목", "stocks", "last ", "지난", "yesterday",
+                            "어제", "month", "week", "개월", "주일")):
+        return False
+    try:
+        return not _all_stocks_in_query(transcript)
+    except Exception:
+        return False
 
 
 def _looks_refusal(text: str) -> bool:
@@ -7601,6 +7634,11 @@ def _run_agent_impl(
             # 2026-08-24: the KO phrasing got a "data not included" apology here).
             if (_full or _simple) and _is_period_stats_q(transcript):
                 _full = _simple = False
+            # a CONCEPT question with no stock ("why do interest rates affect stock
+            # prices?") belongs to the fast direct path, not a 39s data-pack analysis
+            # (Step 1, 2026-08-27)
+            if (_full or _simple) and not _an_stocks and _is_concept_q(transcript):
+                _full = _simple = False
             # score questions ("지금 점수 몇 점이야?") belong to the checklist-score lane —
             # the analyst LLM invented its own 0-10 scale here (boss 2026-08-25).
             _tl_an = (transcript or "").lower()
@@ -7731,6 +7769,7 @@ def _run_agent_impl(
             return reply_so_far
 
     if (not confirmed_tool and not attachment_ids and _is_watchlist_question(transcript)
+            and not _is_concept_q(transcript)     # "why do…stock prices?" = knowledge (Step 1)
             and (not _fuzzy_stock(transcript) or _compound_picks)):
         _scalpish = any(k in (transcript or "").lower()
                         for k in ("단타", "초단타", "스캘", "scalp", "intraday",
@@ -8272,12 +8311,22 @@ def _run_agent_impl(
         "news", "뉴스", "chart", "차트", "가격", "price", "search", "검색",
         # current-events words keep the heavy path (it can web-search)
         "today", "오늘", "latest", "최신", "current", "지금", "요즘", "weather", "날씨",
+        # time-range follow-ups belong to the history machinery even when a data tier
+        # hiccups — the raw LLM invented April-2024 numbers once (2026-08-27)
+        "month", "개월", "week", "yesterday", "어제", "지난",
     )
     _t_off = (transcript or "").lower()
     if (not confirmed_tool and not attachment_ids and transcript
             and (forced_model or "").strip().lower() not in ("none", "offline", "no-llm", "nollm")
             and not _all_stocks_in_query(transcript)
-            and not any(k in _t_off for k in _OFFTOPIC_EXCLUDE)):
+            # a bare FIELD follow-up ("and the volume?") belongs to the borrowed-stock
+            # price lane below — the direct LLM invented April-2024 numbers for it
+            # (caught 2026-08-27)
+            and not _is_price_field_followup(transcript)
+            and (not any(k in _t_off for k in _OFFTOPIC_EXCLUDE)
+                 # Step 1 (2026-08-27): CONCEPT questions ride the direct path even
+                 # with finance words — "what is a dividend?" is knowledge, not data
+                 or _is_concept_q(transcript))):
         try:
             _en_o = not _re.search(r"[가-힣]", transcript)
             _msgs_o = []

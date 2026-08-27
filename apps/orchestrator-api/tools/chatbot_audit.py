@@ -111,7 +111,10 @@ TESTS = [
     ("offers", "네이버 어제 주가", None,
      lambda i, r: ("💡" in r or "원하시면" in r, "KO offer")),
     ("offers", "삼성전자 살까?", None,
-     lambda i, r: ("도와드릴까요" in r or "help you buy" in r or "🤝" in r, "advice offers the buy")),
+     lambda i, r: (i == "checklist_advice"
+                   and ("🤝" in r or "도와드릴까요" in r or "help you buy" in r
+                        or "기다리" in r or "WAIT" in r or "사지 마" in r),
+                   "BUY verdict offers the buy; WAIT/NO verdicts legitimately don't")),
     # --- H. assistant work (orders / cancel / status / break-even) ---
     # off-hours: the CORRECT behavior is the polite market-closed message with the
     # nearest opening time; during market it is the order confirmation
@@ -140,6 +143,36 @@ TESTS = [
 ]
 
 
+# --- STEP 1 (boss's 4-layer plan, 2026-08-27): pure-LLM parity — conceptual
+# questions must answer FAST (like the Gemini app) even with finance words.
+# Checked separately because these carry a latency budget.
+STEP1 = [
+    ("what is a dividend?", 10.0),
+    ("why do interest rates affect stock prices?", 10.0),
+    ("what is a limit order?", 10.0),
+    ("PER이란 무엇인가요?", 10.0),
+    ("공매도가 뭐야? 설명해줘", 10.0),
+    ("what is the capital of France?", 10.0),
+]
+
+
+def run_step1(results, fails):
+    for q, budget in STEP1:
+        t0 = time.time()
+        try:
+            i, r = ask(q)
+            dt = time.time() - t0
+            ok = (dt <= budget and no_refusal(r) and no_think(r) and len(r) > 30
+                  and i in ("llm_chat", "casual", "llm_task"))
+            note = f"{dt:.1f}s [{i}]"
+        except Exception as e:
+            ok, note, i, r = False, f"error {str(e)[:60]}", "ERR", ""
+        results.setdefault("step1", []).append(ok)
+        print(f"{'✓' if ok else '✗'} [step1    ] [{i:20}] {note:16} {q[:46]}")
+        if not ok:
+            fails.append(("step1", q, i, (r or "")[:200]))
+
+
 def main():
     # settle the desk first (audit must not disturb trading)
     for _ in range(60):
@@ -151,6 +184,7 @@ def main():
         time.sleep(5)
     results = {}
     fails = []
+    run_step1(results, fails)
     for cat, q, hist, chk in TESTS:
         try:
             i, r = ask(q, hist)

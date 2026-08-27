@@ -190,11 +190,14 @@ def order_status_reply(db, transcript: Optional[str], lang: str) -> Optional[str
     from datetime import timedelta, timezone
     from sqlalchemy import text as _sqt
     KST = timezone(timedelta(hours=9))
-    # a NAMED stock filters the record to that stock ("did you buy kakao?")
+    # a NAMED stock filters the record to that stock ("did you buy kakao?") — but
+    # resolve on the text WITHOUT the status words: "sold out" fuzzy-matched the
+    # S-OIL alias 'soil' and answered about the wrong stock (2026-08-27 audit)
     _stk = None
     try:
         from services.assistant_agent import _all_stocks_in_query
-        _hits = _all_stocks_in_query(transcript)
+        _res_t = re.sub(r"sold out|sold|filled|holding|bought", " ", transcript or "", flags=re.I)
+        _hits = _all_stocks_in_query(_res_t)
         if _hits:
             _stk = _hits[0]
     except Exception:
@@ -278,6 +281,7 @@ def breakeven_reply(db, transcript: Optional[str], lang: str,
         return (f"보유 수량이 없어 본전가를 계산할 수 없습니다." if not en
                 else "We hold no shares of it — no break-even to compute.")
     name, qty, avg = r[0], int(r[1]), float(r[2])
+    from services.paper_desk import BUY_COST_PCT, SELL_COST_PCT
     be = avg * (1 + (BUY_COST_PCT + SELL_COST_PCT) / 100)
     px = None
     try:
