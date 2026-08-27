@@ -1528,8 +1528,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            # boarded the exhaustion 3 times into stops): a day
                            # already up spike_guard% takes no NEW entries
             elif (v.get("gap_guard") and s.get("prev_close") and closes[0]
-                  and (closes[0] / s["prev_close"] - 1) * 100
-                      >= float(v["gap_guard"])
+                  and ((s.get("open_px") or closes[0]) / s["prev_close"] - 1)
+                      * 100 >= float(v["gap_guard"])
                   and (c >= closes[0]
                        if v.get("gap_wait", "below_open") == "below_open"
                        else (s.get("times")

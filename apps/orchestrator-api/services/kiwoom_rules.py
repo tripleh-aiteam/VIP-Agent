@@ -681,6 +681,11 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                          "closes": [c["close"] for c in tp["cs"]],
                          "highs": [c["high"] for c in tp["cs"]],
                          "lows": [c["low"] for c in tp["cs"]],
+                         # the TRUE opening print - the gap guard compares THIS
+                         # to prev_close (boss 2026-08-27: NAVER +2.05% slipped
+                         # under a first-minute-close comparison)
+                         "open_px": (tp["cs"][0].get("open")
+                                     if tp["cs"] else None),
                          "tick": tp["tk"], "seed": 1,
                          # storm habit input: only TODAY has an American night on
                          # file; stored days replay calm (honest default)
@@ -900,6 +905,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          "closes": [c["close"] for c in cs],
                          "highs": [c["high"] for c in cs],
                          "lows": [c["low"] for c in cs],
+                         "open_px": (cs[0].get("open") if cs else None),
                          "tick": krx_tick(cs[-1]["close"]) or 1, "seed": 1,
                          # today's American night gates only TODAY - a stored day
                          # replays calm, or this morning's storm-up would erase
