@@ -1376,6 +1376,12 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     pends: list = [None] * n    # per stock: its working limit order
     gap_fade = [False] * n     # gap stock: price has been below its own open
     gap_ok = [False] * n       # gap stock: fade happened AND ended (3 rises)
+    gap_news_ok = [False] * n  # BIG NEWS during the session lifts the gap pause
+                               # (boss 2026-08-27 night: "if we have big news
+                               # during market time we can join") - big = 3+
+                               # 호재 stamps inside 30 minutes, market hours
+                               # only. Historical replays carry no stamps, so
+                               # backtests are untouched; live cost audited.
     up = [0] * n
     dn = [0] * n
     last_exit = [-1] * n       # per stock: bar index of this rule's last completed sell
@@ -1527,6 +1533,21 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 gap_fade[si] = True
             if gap_fade[si] and up[si] >= 3:
                 gap_ok[si] = True
+        if (not gap_news_ok[si]) and s.get("news_hits") and s.get("times"):
+            try:
+                _tb9 = str(s["times"][i])
+                _sec9 = (int(_tb9[0:2]) * 3600 + int(_tb9[3:5]) * 60
+                         + int(_tb9[6:8] or "0"))
+                _cnt9 = 0
+                for _nt9 in s["news_hits"]:
+                    _ns9 = (int(_nt9[0:2]) * 3600 + int(_nt9[3:5]) * 60
+                            + int(_nt9[6:8] or "0"))
+                    if _sec9 - 1800 <= _ns9 <= _sec9:
+                        _cnt9 += 1
+                if _cnt9 >= 3:
+                    gap_news_ok[si] = True
+            except Exception:
+                pass
         # ---- a working limit order, on its own stock's bars ----
         pend = pends[si]
         if pend is not None:
@@ -1611,6 +1632,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             elif (v.get("gap_guard") and s.get("prev_close") and closes[0]
                   and ((s.get("open_px") or closes[0]) / s["prev_close"] - 1)
                       * 100 >= float(v["gap_guard"])
+                  and not gap_news_ok[si]
                   and (
                       # "turn3" (boss 2026-08-27 night: "we should not fix the
                       # time as 10 - after 3 minutes the decrease can also be

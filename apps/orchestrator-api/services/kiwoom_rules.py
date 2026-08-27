@@ -184,6 +184,42 @@ _KML_CACHE: dict = {}
 _CTX_CACHE: dict = {}
 
 
+_NEWS_T9: dict = {"mtime": 0.0, "by_code": {}}
+
+
+def _news_times(code: str) -> list:
+    """Today's 호재 stamp times for one stock, 'HH:MM:SS' sorted (mtime-cached
+    parse of the intern's log). Feeds the gap guard's BIG-NEWS exception (boss
+    2026-08-27 night: 'if we have big news during market time we can join')."""
+    from pathlib import Path
+    from services.kiwoom_tape import _day as _kd
+    f = (Path(__file__).resolve().parent.parent / "data" / "news_intern"
+         / f"{_kd()}.jsonl")
+    try:
+        mt = f.stat().st_mtime
+        if mt != _NEWS_T9["mtime"]:
+            import json as _j
+            by: dict = {}
+            for ln in f.read_text(encoding="utf-8").splitlines():
+                try:
+                    r = _j.loads(ln)
+                except Exception:
+                    continue
+                if r.get("stamp") != "호재":
+                    continue
+                ts = str(r.get("ts") or "")
+                hh = ts[11:19] if len(ts) >= 19 else ""
+                if hh >= "09:00:00":
+                    by.setdefault(r.get("code"), []).append(hh)
+            for k in by:
+                by[k].sort()
+            _NEWS_T9["mtime"] = mt
+            _NEWS_T9["by_code"] = by
+        return _NEWS_T9["by_code"].get(code, [])
+    except Exception:
+        return []
+
+
 def _gate_ok(code: str, day: str) -> bool:
     """Was this stock cleared to trade on this day? (services/daily_gate)"""
     try:
@@ -686,6 +722,8 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                          # under a first-minute-close comparison)
                          "open_px": (tp["cs"][0].get("open")
                                      if tp["cs"] else None),
+                         "news_hits": (_news_times(code)
+                                       if (d or _kd0()) == _kd0() else []),
                          "tick": tp["tk"], "seed": 1,
                          # storm habit input: only TODAY has an American night on
                          # file; stored days replay calm (honest default)
@@ -906,6 +944,8 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          "highs": [c["high"] for c in cs],
                          "lows": [c["low"] for c in cs],
                          "open_px": (cs[0].get("open") if cs else None),
+                         "news_hits": (_news_times(c_code)
+                                       if (d or _kd0()) == _kd0() else []),
                          "tick": krx_tick(cs[-1]["close"]) or 1, "seed": 1,
                          # today's American night gates only TODAY - a stored day
                          # replays calm, or this morning's storm-up would erase
