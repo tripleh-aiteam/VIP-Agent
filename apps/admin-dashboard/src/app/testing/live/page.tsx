@@ -3749,12 +3749,40 @@ export default function LiveDeskPage() {
                   {" · "}{t("바닥선(20%)", "bottom(20%)")} ₩{Math.round(daily9.lines!.bottom_20).toLocaleString()}
                   {" · "}{t("연중 최저", "yr low")} ₩{Math.round(daily9.year_lo!).toLocaleString()}
                   {" ~ "}{t("최고", "hi")} ₩{Math.round(daily9.year_hi!).toLocaleString()}</span>
+                {(() => {
+                  // ZONE PROOF for the clicked trade (boss 2026-08-27: "put a
+                  // daily option to PROVE is it actually selling/buying zone
+                  // (top, bottom)") — the entry price placed on the year map
+                  const ptr9 = pick !== null && det ? det.trades[pick] : null;
+                  if (!ptr9 || ptr9.code !== daily9.code
+                      || !daily9.year_hi || daily9.year_lo == null) return null;
+                  const dp9 = (ptr9.entry - daily9.year_lo)
+                    / Math.max(1e-9, daily9.year_hi - daily9.year_lo);
+                  const zc9 = dp9 >= 0.85 ? "#b02a2a" : dp9 >= 0.6 ? "#b8860b"
+                    : dp9 <= 0.2 ? "#1565c0" : "var(--text-secondary)";
+                  const zl9 = dp9 >= 0.85 ? t("🔴 매도구간(금지) — 규칙 위반!", "🔴 SELLING zone (banned) — violation!")
+                    : dp9 >= 0.6 ? t("🟡 조심 구간 (절반 매수 규칙)", "🟡 caution band (half-size rule)")
+                    : dp9 <= 0.2 ? t("🟢 매수구간(바닥)", "🟢 BUYING zone (bottom)")
+                    : t("중간 구간 (매수 허용)", "mid-range (buying allowed)");
+                  return (
+                    <div className="mt-0.5 font-bold" style={{ color: zc9 }}>
+                      🔎 {t("클릭한 매매", "clicked trade")}: {String(ptr9.buy_t || "").slice(0, 5)} {t("매수", "buy")} ₩{Math.round(ptr9.entry).toLocaleString()}
+                      {" → "}{t(`연중 ${Math.round(dp9 * 100)}% 지점`, `${Math.round(dp9 * 100)}% of the year`)} — {zl9}
+                    </div>);
+                })()}
               </div>
               <LiveChart key={`daily-${daily9.code}`} off={0} focus={null}
                 bars={daily9.candles.map((d9, i9) => ({
                   time: i9, hhmm: `${d9.d8.slice(4, 6)}/${d9.d8.slice(6)}`,
                   open: d9.open, high: d9.high, low: d9.low, close: d9.close,
-                  vol: d9.vol })) as unknown as Bar[]} />
+                  vol: d9.vol })) as unknown as Bar[]}
+                marks={(() => {
+                  const ptr9 = pick !== null && det ? det.trades[pick] : null;
+                  if (!ptr9 || ptr9.code !== daily9.code || !daily9.candles?.length) return undefined;
+                  const li9 = daily9.candles.length - 1;   // the trade's day = today
+                  return [{ b: li9, s: li9, g: 0, net: 0, xb: true,
+                            label: `${t("매수", "buy")} ₩${Math.round(ptr9.entry).toLocaleString()}` }];
+                })() as never} />
             </>) : null}
             {!dailyView && (sel && det?.chart ? det.chart.candles.length : bars.length) ? <LiveChart
                 key={`det-${sel ?? "tape"}-${det?.chart?.code ?? code}-${tick}-${period}`}
