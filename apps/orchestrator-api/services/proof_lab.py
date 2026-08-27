@@ -249,7 +249,11 @@ VARIANTS: list[dict] = [
               # his retreat law (14:5x, 08-13): in profit, a rise turns down -
               # the 2nd blue sells (now 50% here); a single HUGE blue (>=0.9%)
               # sells right away.
-              "retreat": {"big": 0.9},
+              # ARM 1.0 (boss 2026-08-27 evening: "we only sell when we got
+              # around 1% - why 0.02%?" - the near-zero ⚠ fee slices): the
+              # 2-blues watch begins only once the peak stands >=1.0% above
+              # base. COURT 2026-08-27: +26.9M/yr on this book (arm0.7 +21.8M).
+              "retreat": {"big": 0.9, "arm": 1.0},
               "reinforce": {"frac": 0.5, "max": 2}}},
     {"id": "D2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 1.5, "wait_bars": 2, "family": "d2", "wall_price": True,
@@ -306,7 +310,14 @@ VARIANTS: list[dict] = [
               # trips can only add money; replaces reload & down-steps)
               "pingpong": True, "reboard": True,
               "sell_after": "15:19",
-              "slice_total": True, "rebuy": True, "retreat": {"big": 0.9},
+              # ARM 0.7 (boss 2026-08-27: "in the algo 2 rule we only sell
+              # when we got around 1%, like 0.7% is ok - why 0.02%?"): the
+              # 2-blues 10% slice waits until the peak is +0.7% over base.
+              # COURT 2026-08-27: money-neutral on this book (-1.1M/yr ≈
+              # noise) - deployed for the boss's law, kills the ⚠ fee slices.
+              # 알고4 inherits (deepcopy of this dict).
+              "slice_total": True, "rebuy": True,
+              "retreat": {"big": 0.9, "arm": 0.7},
               "reinforce": {"frac": 0.5, "max": 2}}},
     # 알고리즘 3 (boss 2026-08-20 09:0x): "if the price is continuously
     # increasing DO NOT sell - wait for the peak, and at the 2nd blue (when it
