@@ -613,7 +613,7 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
   };
   const [bars9, setBars9] = useState<Bar[]>([]);
   const [book9, setBook9] = useState<{ asks: [number, number][];
-    bids: [number, number][] } | null>(null);
+    bids: [number, number][]; prev?: number } | null>(null);
   // 1분 / 일봉 (boss 2026-08-27: "in the chart put 2 buttons, 1 minute and
   // daily") - daily = the year's candles WITH the zone lines, so the chosen
   // stock's top/bottom law is visible in the same screen
@@ -747,9 +747,10 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
         const tp = await api<{ bars?: Bar[] }>(
           `/paper-desk/live/tape?code=${sel9}&period=60&bars=240`);
         if (live && tp?.bars) setBars9(tp.bars);
-        const bk = await api<{ asks?: [number, number][]; bids?: [number, number][] }>(
-          `/paper-desk/live/book?code=${sel9}`);
-        if (live && bk?.asks) setBook9({ asks: bk.asks, bids: bk.bids || [] });
+        const bk = await api<{ asks?: [number, number][]; bids?: [number, number][];
+          prev_close?: number }>(`/paper-desk/live/book?code=${sel9}`);
+        if (live && bk?.asks) setBook9({ asks: bk.asks, bids: bk.bids || [],
+                                         prev: bk.prev_close });
       } catch { /* keep last */ }
     };
     setBars9([]); setBook9(null);
@@ -986,6 +987,18 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
                     {t(` · 지금가에서 ${dPx >= 0 ? "+" : ""}${dPx.toFixed(2)}% — 닿는 순간 🔥 체결 → ④ 보유로`,
                        ` · ${dPx >= 0 ? "+" : ""}${dPx.toFixed(2)}% from here - touches → 🔥 filled → ④ holding`)}
                   </>;
+                }
+                // ⛔ 갭상승 WAIT, visible (boss 2026-08-27 night: "how do we
+                // KNOW?") - the law's own state, shown live: gap %, and how
+                // far the price stands from its own open (the release line)
+                const op9 = bars9.length ? bars9[0].open : 0;
+                const pv9 = book9?.prev || 0;
+                if (op9 && pv9 && (op9 / pv9 - 1) * 100 >= 1.0 && last >= op9) {
+                  const gp9 = (op9 / pv9 - 1) * 100;
+                  const dOp9 = (last / op9 - 1) * 100;
+                  return <span style={{ color: "#b71c1c" }}>
+                    ⛔ {t(`갭상승 +${gp9.toFixed(1)}% (전일 ₩${Math.round(pv9).toLocaleString()} → 시가 ₩${Math.round(op9).toLocaleString()}) — 규칙에 따라 매수 대기 중. 가격이 시가 아래로 내려오는 순간 문이 열립니다 (지금 시가 대비 +${dOp9.toFixed(2)}%). 내려오지 않으면 오늘은 사지 않습니다 — 그것이 법입니다.`,
+                          `gap-up +${gp9.toFixed(1)}% (prev ₩${Math.round(pv9).toLocaleString()} → open ₩${Math.round(op9).toLocaleString()}) — waiting by law. The doors open the moment price falls below its own open (now +${dOp9.toFixed(2)}% above it). If it never comes down, we don't buy today — that is the law.`)}</span>;
                 }
                 return <>👀 {t("① 규칙의 문이 조건을 기다리는 중 — 조건이 맞으면 ② 호가창에 가격을 제시하고, 체결되면 ④ 보유·사다리가 시작됩니다. 아래 기록에서 오늘 이 종목의 지난 과정을 볼 수 있습니다.",
                                "① the rule's doors are watching - when the condition fits it ② offers a price in the book, and a fill starts ④ the holding ladder. Today's past steps for this stock are in the log below.")}</>;
