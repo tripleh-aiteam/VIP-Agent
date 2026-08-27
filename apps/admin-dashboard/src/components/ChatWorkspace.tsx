@@ -929,6 +929,8 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
   // assistant bubble the boss did not have to ask for.
   const storeRef2 = useRef(store);
   storeRef2.current = store;
+  const lastQRef = useRef("");
+  lastQRef.current = lastQuestion;
   useEffect(() => {
     let live = true;
     const KEY = `chatbot-${agentId}-alert-last`;
@@ -937,14 +939,18 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
         const r = await fetch(`${base}/chat/alerts`).then(x => x.json());
         if (!live || !r?.alerts?.length) return;
         const last = Number(localStorage.getItem(KEY) || "0");
-        const fresh = (r.alerts as { id: number; text: string }[]).filter(a => a.id > last);
+        const fresh = (r.alerts as { id: number; text: string; text_en?: string }[])
+          .filter(a => a.id > last);
         if (!fresh.length) return;
         localStorage.setItem(KEY, String(r.last_id || fresh[fresh.length - 1].id));
         const cur = storeRef2.current;
         const sid = cur.activeSessionId || cur.sessions[0]?.id;
         if (!sid) return;
+        // alerts speak the language of the boss's LAST question (2026-08-27:
+        // he asked in English, the guard answered in Korean — inconsistency)
+        const wantEn = !!lastQRef.current && !/[가-힣]/.test(lastQRef.current);
         const turns: AssistantTurn[] = fresh.map(a => ({
-          who: "assistant", text: a.text, ts: Date.now(),
+          who: "assistant", text: (wantEn && a.text_en) ? a.text_en : a.text, ts: Date.now(),
           intent: "watchdog", tool_used: "🔔 watchdog",
         }));
         const next = {

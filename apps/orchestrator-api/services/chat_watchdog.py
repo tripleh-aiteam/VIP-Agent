@@ -54,12 +54,13 @@ def _kst_hhmm(dt) -> str:
         return ""
 
 
-def _emit(st: dict, key: str, icon: str, text_: str, code: str = "") -> None:
+def _emit(st: dict, key: str, icon: str, text_: str, code: str = "",
+          text_en: str = "") -> None:
     st["seen"][key] = time.time()
     st["last_id"] = int(st.get("last_id") or 0) + 1
     st.setdefault("alerts", []).append({
         "id": st["last_id"], "ts": time.time(), "icon": icon,
-        "text": text_, "code": code})
+        "text": text_, "text_en": text_en or text_, "code": code})
     st["alerts"] = st["alerts"][-_MAX_KEEP:]
 
 
@@ -68,10 +69,13 @@ def _held_chat_codes(db) -> list[tuple[str, str]]:
     day0 = None
     try:
         rows = db.execute(text(
-            f"SELECT DISTINCT o.ticker, o.name FROM paper_desk_orders o "
-            f"JOIN paper_desk_positions p ON p.ticker = o.ticker AND p.qty > 0 "
-            f"WHERE {_CHAT_SRC} AND o.side='BUY' AND o.status='FILLED' "
-            f"AND o.created_at::date = (now() at time zone 'Asia/Seoul')::date")).fetchall()
+            f"SELECT o.ticker, max(o.name), "
+            f"SUM(CASE WHEN o.side='BUY' THEN o.qty ELSE -o.qty END) AS net "
+            f"FROM paper_desk_orders o "
+            f"WHERE {_CHAT_SRC} AND o.status='FILLED' "
+            f"AND o.created_at::date = (now() at time zone 'Asia/Seoul')::date "
+            f"GROUP BY o.ticker HAVING SUM(CASE WHEN o.side='BUY' THEN o.qty "
+            f"ELSE -o.qty END) > 0")).fetchall()
         return [(r[0], r[1] or r[0]) for r in rows]
     except Exception as e:
         log.warning(f"watchdog held codes failed: {str(e)[:100]}")
@@ -104,7 +108,9 @@ def poll(db) -> dict:
             side_ko = "매수" if r[3] == "BUY" else "매도"
             _emit(st, key, "✅",
                   f"✅ **{side_ko} 체결** — {r[1]} {int(r[4] or 0):,}주 @ ₩{float(r[5] or 0):,.0f} "
-                  f"({_kst_hhmm(r[6])})", r[2])
+                  f"({_kst_hhmm(r[6])})", r[2],
+                  text_en=f"✅ **{r[3]} filled** — {r[1]} {int(r[4] or 0):,} sh @ "
+                          f"₩{float(r[5] or 0):,.0f} ({_kst_hhmm(r[6])})")
     except Exception as e:
         log.warning(f"watchdog fills failed: {str(e)[:100]}")
 
@@ -137,9 +143,12 @@ def poll(db) -> dict:
                 continue
             side_ko = "매수" if r[3] == "BUY" else "매도"
             _emit(st, key, "🕐",
-                  f"🕐 **대기 주문 정체** — {side_ko} {r[1]} {int(r[4] or 0):,}주가 {age_min:.0f}분째 "
+                  f"🕐 **대기 주문 정체** — {side_ko} {r[1]} {int(r[4] or 0):,}주 · {age_min:.0f}분째 "
                   f"미체결 (지정가 ₩{float(r[5]):,.0f}, 현재가 ₩{float(px):,.0f} — {gap:.1f}% 차이). "
-                  f"취소하려면 \"{r[1]} 주문 취소\"라고 말씀하세요.", r[2])
+                  f"취소하려면 \"{r[1]} 주문 취소\"라고 말씀하세요.", r[2],
+                  text_en=f"🕐 **Waiting order stuck** — {r[3]} {r[1]} {int(r[4] or 0):,} sh, "
+                          f"{age_min:.0f} min unfilled (limit ₩{float(r[5]):,.0f}, now "
+                          f"₩{float(px):,.0f} — {gap:.1f}% away). Say \"cancel {r[1]} order\".")
     except Exception as e:
         log.warning(f"watchdog stuck failed: {str(e)[:100]}")
 
@@ -159,8 +168,10 @@ def poll(db) -> dict:
                     key = f"blue3:{day8}:{code}"
                     if key not in st["seen"]:
                         _emit(st, key, "🔔",
-                              f"🔔 **{name} 파란 캔들 3개째** — 법칙상 매도 시점입니다. "
-                              f"\"네\"라고 하시면 매도 확인을 띄워드립니다.", code)
+                              f"🔔 **{name} — 파란 캔들 3개째** · 법칙상 매도 시점입니다. "
+                              f"\"네\"라고 하시면 매도 확인을 띄워드립니다.", code,
+                              text_en=f"🔔 **{name} — 3rd blue candle** · your law says sell. "
+                                      f"Reply \"yes\" and I will bring up the sell confirmation.")
                         try:
                             from services.chat_trade import stash_offer
                             stash_offer(code, name, False, side="SELL")
@@ -183,12 +194,16 @@ def poll(db) -> dict:
                     if prev and prev != rel:
                         if rel == "above":
                             _emit(st, f"beup:{code}:{int(time.time())}", "📈",
-                                  f"📈 **{name}이(가) 본전선을 넘었습니다** (본전 ₩{be:,.0f}, "
-                                  f"현재 ₩{float(px):,.0f}) — 지금 팔면 이익입니다.", code)
+                                  f"📈 **{name} — 본전선 위로** (본전 ₩{be:,.0f}, "
+                                  f"현재 ₩{float(px):,.0f}) · 지금 팔면 이익입니다.", code,
+                                  text_en=f"📈 **{name} — above break-even** (BE ₩{be:,.0f}, "
+                                          f"now ₩{float(px):,.0f}) · selling now is a gain.")
                         else:
                             _emit(st, f"bedn:{code}:{int(time.time())}", "📉",
-                                  f"📉 **{name}이(가) 본전선 아래로 내려왔습니다** (본전 ₩{be:,.0f}, "
-                                  f"현재 ₩{float(px):,.0f}) — 지금 팔면 손해입니다.", code)
+                                  f"📉 **{name} — 본전선 아래로** (본전 ₩{be:,.0f}, "
+                                  f"현재 ₩{float(px):,.0f}) · 지금 팔면 손해입니다.", code,
+                                  text_en=f"📉 **{name} — below break-even** (BE ₩{be:,.0f}, "
+                                          f"now ₩{float(px):,.0f}) · selling now is a loss.")
             except Exception:
                 pass
             # e) selling-zone entry
@@ -199,8 +214,10 @@ def poll(db) -> dict:
                     key = f"zone:{day8}:{code}"
                     if key not in st["seen"]:
                         _emit(st, key, "🔴",
-                              f"🔴 **{name}이(가) 매도구간에 진입** (연중 {z['pos']}%) — "
-                              f"법칙: 3번째 파란 캔들에 전량 매도.", code)
+                              f"🔴 **{name} — 매도구간 진입** (연중 {z['pos']}%) · "
+                              f"법칙: 3번째 파란 캔들에 전량 매도.", code,
+                              text_en=f"🔴 **{name} — entered the SELLING zone** ({z['pos']}% of "
+                                      f"year) · the law: sell ALL at the 3rd blue.")
             except Exception:
                 pass
             # f) fresh 위험 news
@@ -221,7 +238,9 @@ def poll(db) -> dict:
                         _ttl = f"[{_ttl}]({_lk})"
                     _emit(st, key, "📰",
                           f"📰 **[위험] 보유 종목 뉴스** — {name}: {_ttl} · "
-                          f"팔지 판단이 필요하시면 \"{name} 팔까?\"라고 물어보세요.", code)
+                          f"팔지 판단이 필요하시면 \"{name} 팔까?\"라고 물어보세요.", code,
+                          text_en=f"📰 **[RISK] news on your holding** — {name}: {_ttl} · "
+                                  f"ask \"should I sell {name}?\" for the verdict.")
             except Exception:
                 pass
 
