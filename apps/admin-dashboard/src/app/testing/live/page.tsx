@@ -1328,6 +1328,12 @@ export default function LiveDeskPage() {
     const d = new Date(); const m = d.getHours() * 60 + d.getMinutes();
     return !(m >= 540 && m <= 930);
   });
+  // ONE truth for "is any chart wanted right now" — a clicked trade (sel) or a
+  // picked slice (pick) counts as wanting it. The ref version lets pull() skip
+  // the multi-thousand-bar tape download entirely while everything is folded
+  // (boss 2026-08-27: "live chart should close, because it makes heavy our app").
+  const chartOn9 = chartOpen9 || sel !== null || pick !== null;
+  const chartOn9Ref = useRef(chartOn9); chartOn9Ref.current = chartOn9;
   const [money, setMoney] = useState(false);      // off until he asks - see the button
   // the rule's law-book text, folded by default (boss 2026-08-19: "it is showing
   // by default explanations" - the story opens when asked, like the money does)
@@ -1942,7 +1948,9 @@ export default function LiveDeskPage() {
   const pull = useCallback(() => {
     const c = codeRef.current;
     const q = perRef.current ? `period=${perRef.current}` : `tick=${tickRef.current}`;
-    api<Tape>(`/paper-desk/live/tape?code=${c}&${q}&bars=${chartBarsRef.current}`).then(setTape).catch(() => {});
+    // folded chart = no tape download at all (the bars payload is the heavy part)
+    if (chartOn9Ref.current)
+      api<Tape>(`/paper-desk/live/tape?code=${c}&${q}&bars=${chartBarsRef.current}`).then(setTape).catch(() => {});
     api<Book>(`/paper-desk/live/book?code=${c}`).then(setBook).catch(() => {});
     api<Execs>(`/paper-desk/live/execs?code=${c}&n=120`).then(setExecs).catch(() => {});
     api<Rank>(`/paper-desk/live/rules?${q}&gate=${showBlockedRef.current ? 0 : 1}&day=${ruleDayRef.current}`
@@ -1958,6 +1966,10 @@ export default function LiveDeskPage() {
     loadDfRef.current?.(detRef.current?.chart?.code || c, dfMinsRef.current,
                         dfFromRef.current, dfToRef.current);
   }, []);
+
+  // the moment a folded chart is opened (strip click or a trade-time click),
+  // fetch the tape NOW instead of waiting up to 3s for the next interval tick
+  useEffect(() => { if (chartOn9) pull(); }, [chartOn9, pull]);
 
   useEffect(() => {
     pull();
@@ -4385,9 +4397,22 @@ export default function LiveDeskPage() {
           book move against the chart (2026-08-05: "I wanna monitor changings in the
           order book how effecting to the chart"). This one is always here, always the
           live tape, and refreshes on the same 2-3s pull as the book below it. */}
+      {!chartOn9 ? (
+        <button onClick={() => setChartOpen9(true)}
+          className="mt-3 w-full text-left rounded-xl border px-4 py-2.5 text-[11.5px]"
+          style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)", color: "var(--text-muted)" }}>
+          📈 {t("실시간 차트 접혀 있음 — 매매 내역·보유의 시간을 클릭하거나 여기를 눌러 열기 (닫아두면 앱이 가볍습니다)",
+                "live chart folded - click a time in the trading history / holdings, or press here to open (folded = lighter app)")}
+        </button>
+      ) : (
       <div className="mt-3 rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
         <div className="px-2 pt-1 pb-2 text-[11.5px] flex items-center gap-2 flex-wrap" style={{ color: "#6a1b9a" }}>
           <b>📈 {tape?.name ?? ""} — {tape?.clock ?? ""} {t("실시간 차트", "live chart")}</b>
+          <button onClick={() => { setChartOpen9(false); setPick(null); setSel(null); }}
+            className="text-[10px] font-bold px-1.5 py-0.5 rounded border"
+            style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+            {t("차트 접기 ▲", "fold chart ▲")}
+          </button>
           <span className="text-[10px] text-[var(--text-muted)]">
             {bars.length
               ? t(`${bars[0]?.hhmm?.slice(0, 5)}~${bars[bars.length - 1]?.hhmm?.slice(0, 5)} 구간 · ${bars.length}봉 보는 중 (하루 전체 ${(tape?.total_bars ?? bars.length).toLocaleString()}봉)`,
@@ -4420,6 +4445,7 @@ export default function LiveDeskPage() {
           </div>
         )}
       </div>
+      )}
 
       <div className="mt-3 grid gap-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
         {/* 호가 — who is waiting to buy and to sell */}
