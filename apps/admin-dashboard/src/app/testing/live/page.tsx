@@ -486,7 +486,7 @@ function TradeReplay({ ep, t, onClose }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pos, bars]);
   return (
-    <div className="my-2 px-2 py-1.5 rounded-lg border-2" style={{ borderColor: "#4a148c", background: "rgba(74,20,140,0.04)" }}>
+    <div id="trade-replay9" className="my-2 px-2 py-1.5 rounded-lg border-2" style={{ borderColor: "#4a148c", background: "rgba(74,20,140,0.04)" }}>
       <div className="flex items-center gap-2 flex-wrap text-[11px]">
         <b style={{ color: "#4a148c" }}>
           🎞 {ep.name} {from}→{ep.live ? t("지금", "now") : to} {t("다시보기 — 실제 기록 재생 (봉도 체결도 그날 그대로)", "replay - the real recording, bars and fills as they happened")}</b>
@@ -2981,6 +2981,9 @@ export default function LiveDeskPage() {
                       {t("전체 보기", "clear")}</button>
                   )}
                 </div>
+                {/* 🎞 the replay player lives right here, above the table
+                    where the name was clicked (boss 2026-08-27) */}
+                {repEp9 && <TradeReplay ep={repEp9} t={t} onClose={() => setRepEp9(null)} />}
                 <div className="overflow-x-auto mt-1">
                   <table className="w-full text-[11px] tabular-nums"
                     style={{ borderCollapse: "collapse" }}>
@@ -3180,8 +3183,19 @@ export default function LiveDeskPage() {
                                              } }}
                             style={{ display: "none" }}></td>
                           <td className="px-2 font-bold cursor-pointer underline decoration-dotted text-[var(--text-primary)]" style={CELL}
-                            onClick={() => { const k = `${r.rule}-${r.idx}`;
-                                             setFamExp(famExp === k ? null : k); }}>{r.name || r.code}
+                            title={t("클릭: 이 매매의 기록을 그대로 재생 (🎞 다시보기)", "click: replay this trade's recording (🎞)")}
+                            onClick={() => { setRepEp9({
+                              code: r.code, name: r.name || r.code,
+                              entry: (r as unknown as { entry?: number }).entry,
+                              buy_t: r.buy_t, sell_t: r.sell_t,
+                              exit: (r as unknown as { exit?: number }).exit,
+                              exit_why: (r as unknown as { exit_why?: string }).exit_why,
+                              qty: (r as unknown as { qty?: number }).qty,
+                              parts: (r as unknown as { parts?: { buys?: unknown[][];
+                                sells?: unknown[][] } }).parts });
+                              setTimeout(() => document.getElementById("trade-replay9")
+                                ?.scrollIntoView({ behavior: "smooth", block: "center" }), 300); }}>
+                            🎞 {r.name || r.code}
                             {r.partial && <span className="ml-1 text-[9px] font-bold px-1 py-0.5 rounded"
                               style={{ background: "rgba(230,81,0,0.14)", color: "#e65100" }}
                               title={t("보유 중인 포지션의 계단 매도 조각 — 나머지는 아직 보유 중",
