@@ -7319,25 +7319,40 @@ def _run_agent_impl(
             from services.chat_trade import _next_open_kst
             from services.kiwoom_tape import market_open
             _en0 = not _re.search(r"[가-힣]", transcript or "")
+            def _dur_en(total_min: int) -> str:
+                h, mn = total_min // 60, total_min % 60
+                parts = []
+                if h:
+                    parts.append(f"{h} hour" + ("s" if h != 1 else ""))
+                if mn or not h:
+                    parts.append(f"{mn} minute" + ("s" if mn != 1 else ""))
+                return " ".join(parts)
+
+            def _dur_ko(total_min: int) -> str:
+                h, mn = total_min // 60, total_min % 60
+                return (f"{h}시간 " if h else "") + (f"{mn}분" if (mn or not h) else "")
+
             if market_open():
                 _now9 = _dt_now_kst()
                 _mins = (15 * 60 + 30) - (_now9.hour * 60 + _now9.minute)
-                _rep0 = ((f"🟢 지금 장이 열려 있습니다 (KRX 정규장 09:00~15:30 KST). "
-                          f"마감까지 약 {_mins // 60}시간 {_mins % 60}분 남았습니다.") if not _en0 else
-                         (f"🟢 The market is OPEN right now (KRX 09:00–15:30 KST). "
-                          f"It closes in about {_mins // 60}h {_mins % 60}m."))
+                _rep0 = ((f"🟢 **지금 장이 열려 있습니다.**\n"
+                          f"· 마감: 15:30 KST — 약 {_dur_ko(_mins)} 후\n"
+                          f"· 정규장: 평일 09:00~15:30") if not _en0 else
+                         (f"🟢 **The market is OPEN now.**\n"
+                          f"· Closes 15:30 KST — in about {_dur_en(_mins)}\n"
+                          f"· Regular hours: 09:00–15:30 KST, Mon–Fri"))
             else:
                 nxt, _now0 = _next_open_kst()
-                _hrs = (nxt - _now0).total_seconds() / 3600
-                _wt = (f"약 {_hrs:.0f}시간 후" if _hrs >= 1.5 else f"약 {_hrs * 60:.0f}분 후")
-                _wt_en = (f"in about {_hrs:.0f} hours" if _hrs >= 1.5
-                          else f"in about {_hrs * 60:.0f} minutes")
+                _mins = max(1, int((nxt - _now0).total_seconds() // 60))
                 _WD0 = "월화수목금토일"
-                _rep0 = ((f"🌙 지금은 장외 시간입니다. 다음 개장: {nxt.month}월 {nxt.day}일"
-                          f"({_WD0[nxt.weekday()]}) 09:00 KST ({_wt}). 정규장은 평일 09:00~15:30입니다.")
-                         if not _en0 else
-                         (f"🌙 The market is closed. Next open: {nxt.strftime('%a %m/%d')} "
-                          f"09:00 KST ({_wt_en}). Regular hours 09:00–15:30 KST, Mon–Fri."))
+                _rep0 = ((f"🌙 **지금은 장외 시간입니다.**\n"
+                          f"· 다음 개장: **{nxt.month}월 {nxt.day}일({_WD0[nxt.weekday()]}) 09:00 KST** "
+                          f"— 약 {_dur_ko(_mins)} 후\n"
+                          f"· 정규장: 평일 09:00~15:30") if not _en0 else
+                         (f"🌙 **The market is closed.**\n"
+                          f"· Next open: **{nxt.strftime('%a, %b %d')} 09:00 KST** "
+                          f"— in about {_dur_en(_mins)}\n"
+                          f"· Regular hours: 09:00–15:30 KST, Mon–Fri"))
             return {"intent": "market_schedule", "language": lang, "reply": _rep0,
                     "action": None, "speak": True, "transcript": transcript,
                     "tool_used": "market_schedule"}
