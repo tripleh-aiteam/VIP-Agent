@@ -1626,6 +1626,27 @@ def _single_field_asked(transcript: Optional[str]) -> Optional[str]:
     return next(iter(fams)) if len(fams) == 1 else None
 
 
+def _fields_asked(transcript: Optional[str]) -> list[str]:
+    """The explicitly-named SUBSET of price fields ('volume, max and min price' →
+    [high, low, volume]) so the answer shows exactly those columns — the boss asked
+    3 things and got the 7-column table + trend line (2026-08-27: 'i have asked only
+    3 things but it is showing me more'). Empty list = no explicit subset → full table."""
+    tl = (transcript or "").lower()
+    if any(w in tl for w in ("전체", "모두", "다 ", "all", "ohlc", "table", "표")):
+        return []
+    fams = {k for k, kws in _FIELD_FAMILIES if any(w in tl for w in kws)}
+    for w, k in (("open", "open"), ("close", "close"), ("high", "high"), ("low", "low"),
+                 ("max", "high"), ("min", "low")):
+        if _re.search(rf"\b{w}\b", tl):
+            fams.add(k)
+    for w, k in (("최고", "high"), ("최저", "low"), ("고가", "high"), ("저가", "low")):
+        if w in tl:
+            fams.add(k)
+    order = ("open", "high", "low", "close", "change_pct", "volume")
+    fields = [f for f in order if f in fams]
+    return fields if 0 < len(fields) < 5 else []
+
+
 def _also_wants_current_price(transcript: Optional[str]) -> bool:
     """True when a past-date question ALSO explicitly asks for the CURRENT price in the
     same breath ('현재가랑 12월 10일 종가 둘 다', 'price now and its Dec 10 close'). Needs an
@@ -1796,6 +1817,64 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
     # ONE FIELD ASKED → ONLY that field answered (boss 2026-08-25: "I asked only changes
     # but it is showing all days' info, which is token consumption").
     _fld = _single_field_asked(transcript)
+    # 2-4 FIELDS ASKED → a table of EXACTLY those columns (boss 2026-08-27: "i have
+    # asked only 3 things but it is showing me more" — volume+max+min got the full
+    # 7-column table plus a close-based trend line he never asked about).
+    _flds = _fields_asked(transcript)
+    if len(_flds) >= 2 and kind == "range" and not tm:
+        _hd3 = {"open": ("Open", "시가"), "high": ("High", "고가"),
+                "low": ("Low", "저가"), "close": ("Close", "종가"),
+                "change_pct": ("Change", "등락"), "volume": ("Volume", "거래량")}
+        # the close→close trend headline only belongs when close was asked
+        _L3 = list(notes) if "close" in _flds else [n for n in notes
+                                                    if not n.startswith("📈")]
+        _made3 = False
+        from services.price_format import _fmt_day as _fd3
+        for s in out:
+            if not s["rows"]:
+                continue
+            _made3 = True
+            _L3.append(f"**{s['name']}** — {len(s['rows'])}"
+                       + ("거래일:" if not _en else " trading days:"))
+            _L3.append("| " + ("Date" if _en else "날짜") + " | "
+                       + " | ".join((_hd3[f][0] if _en else _hd3[f][1]) for f in _flds)
+                       + " |")
+            _L3.append("|" + "---|" * (len(_flds) + 1))
+            for row in s["rows"]:
+                _cells = []
+                for f in _flds:
+                    v = row.get(f)
+                    if v is None:
+                        _cells.append("-")
+                    elif f == "change_pct":
+                        _cells.append(f"{v:+.2f}%")
+                    elif f == "volume":
+                        _cells.append(f"{int(v):,}")
+                    else:
+                        _cells.append(_won_str(v))
+                _L3.append(f"| {_fd3(str(row.get('date') or ''), _en)} | "
+                           + " | ".join(_cells) + " |")
+            if "high" in _flds and "low" in _flds:
+                try:
+                    _hs = [(float(r3["high"]), r3.get("date")) for r3 in s["rows"]
+                           if r3.get("high") is not None]
+                    _ls = [(float(r3["low"]), r3.get("date")) for r3 in s["rows"]
+                           if r3.get("low") is not None]
+                    if _hs and _ls:
+                        _mx, _mxd = max(_hs)
+                        _mn, _mnd = min(_ls)
+                        _L3.append(f"· 기간 최고 **{_won_str(_mx)}** ({_mxd}) · "
+                                   f"최저 **{_won_str(_mn)}** ({_mnd})" if not _en else
+                                   f"· Period max **{_won_str(_mx)}** ({_mxd}) · "
+                                   f"min **{_won_str(_mn)}** ({_mnd})")
+                except Exception:
+                    pass
+            _L3.append("")
+        if _made3:
+            _L3 += [("Want the full daily table (open/high/low/close/volume)? Just ask."
+                     if _en else
+                     "전체 표(시가·고가·저가·종가·거래량)가 필요하시면 말씀해 주세요.")]
+            return "\n".join(_L3), _h_trace
     # RANGE + one field: compact per-day list of just that field, plus the verdict note.
     if _fld and kind == "range" and not tm:
         _F_KO2 = {"volume": "거래량", "open": "시가", "high": "고가", "low": "저가",

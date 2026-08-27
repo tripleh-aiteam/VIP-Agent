@@ -70,6 +70,12 @@ TESTS = [
      lambda i, r: (i in ("stock_history", "stock_price") and no_refusal(r), i)),
     ("multi", "최근 6개월 에코프로비엠 최저가 최고가 거래량", None,
      lambda i, r: (i == "stock_period_stats" and "₩" in r, i)),
+    ("multi", "last 3 days of the samsung volume, max and min price", None,
+     # EXACTLY the asked columns — no Open/Close/trend line (boss 2026-08-27:
+     # "i have asked only 3 things but it is showing me more")
+     lambda i, r: (i == "stock_history" and "High" in r and "Volume" in r
+                   and "Open" not in r and "Close" not in r and "trend" not in r.lower(),
+                   "3 fields asked → 3 columns shown")),
     # --- C. follow-ups (context memory) ---
     ("followup", "and the volume?", H_SKX,
      lambda i, r: ("하이닉스" in r or "Hynix" in r, i)),
