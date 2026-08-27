@@ -70,7 +70,8 @@ _CMD_EN = re.compile(r"^\s*(?:please\s+|pls\s+|now\s+|then\s+|ok\s+|and\s+)*(buy
 # "I wanna buy X" / "can you buy X for me" are ORDERS too (boss 2026-08-26: "if we say
 # Please buy or I wanna buy... it should not buy automatically, must ask one more time")
 _CMD_EN2 = re.compile(r"\b(?:i\s+wanna|i\s+want\s+to|i'?d\s+like\s+to|i\s+would\s+like\s+to"
-                      r"|can\s+you|could\s+you|please)\s+(buy|sell)\b", re.I)
+                      r"|(?:can|could)\s+you(?:\s+please)?(?:\s+help\s+(?:me|us)(?:\s+to)?)?"
+                      r"|please)\s+(buy|sell)\b", re.I)
 _KO_BUY = ("사줘", "사 줘", "사자", "매수해", "매수 해", "매수해줘", "매수하자", "매수",
            "사고 싶", "사고싶", "매수하고 싶")
 _KO_SELL = ("팔아줘", "팔아 줘", "팔아", "팔자", "매도해", "매도해줘", "매도하자", "매도",

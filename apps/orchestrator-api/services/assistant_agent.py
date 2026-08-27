@@ -7305,6 +7305,38 @@ def _run_agent_impl(
         except Exception as e:
             log.warning(f"readiness failed: {str(e)[:120]}")
 
+    # === 💨 CASUAL FAST-PATH (boss 2026-08-27: "very simple question but it is
+    # answering very late") — greetings/thanks/help-asks skip the whole tool-decision
+    # machinery (its system prompt alone is thousands of tokens) and take one tiny
+    # LLM call instead. Never fires on stocks, numbers, pending confirmations. ===
+    _t_cas = (transcript or "").strip().lower()
+    _CASUAL = ("can you help", "help me", "hello", " hi", "hey", "thanks", "thank you",
+               "good morning", "good evening", "how are you", "nice to meet",
+               "도와줘", "도와줄", "도움", "고마워", "감사", "안녕", "반가워", "하이", "굿모닝",
+               "잘 지냈", "뭐 해", "뭐해", "수고")
+    if (not confirmed_tool and not attachment_ids and transcript
+            and len(_t_cas) <= 40 and not _re.search(r"\d", _t_cas)
+            and (_t_cas in ("hi", "yo") or any(k in f" {_t_cas}" for k in _CASUAL))
+            and not _all_stocks_in_query(transcript)):
+        try:
+            _en_c = not _re.search(r"[가-힣]", transcript)
+            _sys_c = ("You are the VIP trading assistant. Reply warmly in 1-2 short "
+                      "sentences, in the user's language. If they ask for help, offer "
+                      "briefly: stock prices/history, recommendations, buy/sell by chat, "
+                      "news. No headers, no lists." if _en_c else
+                      "당신은 VIP 트레이딩 어시스턴트입니다. 사용자의 언어로 1~2문장으로 따뜻하게 "
+                      "답하세요. 도움을 청하면 간단히 안내: 주가/과거 데이터, 추천, 채팅 매수·매도, "
+                      "뉴스. 제목·목록 금지.")
+            _out_c = chat_completion_sync(_sys_c, [{"role": "user", "content": transcript}],
+                                          max_tokens=120, temperature=0.6,
+                                          model=forced_model or None)
+            if (_out_c or "").strip():
+                return {"intent": "casual", "language": lang, "reply": _out_c.strip(),
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": None}
+        except Exception as e:
+            log.warning(f"casual fast-path failed: {str(e)[:120]}")
+
     # === ⏰ MARKET SCHEDULE ("when market will open?" got 'in about 16 hours' from
     # the LLM while the bell was ONE hour away — 2026-08-27). Pure clock math. ===
     _t_mkt = (transcript or "").lower()

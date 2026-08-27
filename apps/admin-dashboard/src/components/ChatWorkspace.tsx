@@ -1370,8 +1370,15 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
     stopSpeaking();
   }
 
-  function copyText(text: string) {
+  // ✓ visible copy feedback (boss 2026-08-27: "if I copy it should give some UI
+  // that I copied") — the clicked button flips to '✓ 복사됨' for 1.5s
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  function copyText(text: string, key?: string) {
     try { navigator.clipboard?.writeText(text); } catch {}
+    if (key) {
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(k => (k === key ? null : k)), 1500);
+    }
   }
 
   // --- Self-improvement feedback (👍/👎) ---
@@ -1639,10 +1646,10 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                           {t.text}
                         </div>
                         <button
-                          onClick={() => copyText(t.text)}
-                          className="text-[10px] text-gray-400 hover:text-gray-600 flex items-center gap-1 px-1 py-0.5"
+                          onClick={() => copyText(t.text, `q-${i}`)}
+                          className={`text-[10px] flex items-center gap-1 px-1 py-0.5 ${copiedKey === `q-${i}` ? "text-emerald-600 font-bold" : "text-gray-400 hover:text-gray-600"}`}
                           title="Copy"
-                        >📋 Copy</button>
+                        >{copiedKey === `q-${i}` ? "✓ 복사됨" : "📋 Copy"}</button>
                       </div>
                       <div className="w-9 h-9 rounded-full bg-gray-200 text-gray-700 flex items-center justify-center text-[15px] shrink-0 mt-6">
                         🙂
@@ -1674,10 +1681,10 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                       </div>
                       <div className="flex gap-1 text-[11px] flex-wrap">
                         <button
-                          onClick={() => copyText(t.text)}
-                          className="px-2 py-1 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 flex items-center gap-1"
+                          onClick={() => copyText(t.text, `a-${i}`)}
+                          className={`px-2 py-1 rounded-md flex items-center gap-1 ${copiedKey === `a-${i}` ? "text-emerald-600 font-bold bg-emerald-50" : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"}`}
                           title="Copy"
-                        >📋 Copy</button>
+                        >{copiedKey === `a-${i}` ? "✓ 복사됨" : "📋 Copy"}</button>
                         {proofCodeIn(t.text) && (
                           <button
                             onClick={() => setEvidenceCode(proofCodeIn(t.text))}
