@@ -105,6 +105,14 @@ TESTS = [
      lambda i, r: ("Shakespeare" in r or "셰익스피어" in r, "verifiable fact")),
     ("offtopic", "'감사합니다'를 영어로 번역해줘", None,
      lambda i, r: ("thank" in r.lower(), "translation")),
+    # --- I. identity (2026-08-27: "who are yiu?" answered "I'm Qwen ... Alibaba") ---
+    ("identity", "who are yiu?", None,
+     lambda i, r: (i == "identity" and "VIP" in r
+                   and not any(v in r for v in ("Qwen", "Alibaba", "Gemini", "GPT", "OpenAI")),
+                   "must be the VIP assistant, never the vendor")),
+    ("identity", "너는 누구야?", None,
+     lambda i, r: (i == "identity" and "VIP" in r and "어시스턴트" in r,
+                   "KO identity in Korean")),
     # --- F. follow-up offers ---
     ("offers", "naver price yesterday", None,
      lambda i, r: ("💡" in r or "원하시면" in r or "Want" in r, "data answer ends with an offer")),

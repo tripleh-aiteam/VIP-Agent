@@ -6268,7 +6268,8 @@ _SPELL_SET = frozenset(_SPELL_VOCAB)
 # with the CURRENT price, boss 2026-08-26) — a direct map is safer than lowering it
 _SPELL_DIRECT = {"lasy": "last", "laast": "last", "yersterday": "yesterday",
                  "tommorow": "tomorrow", "tommorrow": "tomorrow", "wich": "which",
-                 "prise": "price", "prive": "price", "shuld": "should"}
+                 "prise": "price", "prive": "price", "shuld": "should",
+                 "yiu": "you", "yuo": "you", "wjo": "who", "whu": "who"}
 
 
 def _spell_normalize(q: Optional[str]) -> Optional[str]:
@@ -6290,10 +6291,14 @@ def _spell_normalize(q: Optional[str]) -> Optional[str]:
     changed = False
     for tok in _re.split(r"([^A-Za-z]+)", q):
         tl = tok.lower()
-        if tok.isalpha() and tok.isascii() and 4 <= len(tok) <= 12 and tl not in _SPELL_SET:
+        if tok.isalpha() and tok.isascii() and 3 <= len(tok) <= 12 and tl not in _SPELL_SET:
+            # direct map allows 3-letter typos ('yiu'→'you'); fuzzy stays ≥4-letter
             if tl in _SPELL_DIRECT:
                 out.append(_SPELL_DIRECT[tl])
                 changed = True
+                continue
+            if len(tok) < 4:
+                out.append(tok)
                 continue
             m = difflib.get_close_matches(tl, _SPELL_VOCAB, n=1, cutoff=0.75)
             # 0.75-0.8 band only for pure transpositions ('waht'→'what', 'mnay'→'many'):
