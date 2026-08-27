@@ -993,7 +993,7 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
                 // far the price stands from its own open (the release line)
                 const op9 = bars9.length ? bars9[0].open : 0;
                 const pv9 = book9?.prev || 0;
-                if (op9 && pv9 && (op9 / pv9 - 1) * 100 >= 1.0 && last >= op9) {
+                if (op9 && pv9 && (op9 / pv9 - 1) * 100 >= 1.5 && last >= op9) {
                   const gp9 = (op9 / pv9 - 1) * 100;
                   const dOp9 = (last / op9 - 1) * 100;
                   return <span style={{ color: "#b71c1c" }}>
