@@ -8257,6 +8257,50 @@ def _run_agent_impl(
     # lanes never read, so skip them for these queries. Guarded to mirror those
     # lanes exactly (advice/outlook/recommendation still get full KB), and offline
     # mode is excluded because it answers straight from the KB.
+    # === 💨 OFF-TOPIC DIRECT PATH (boss 2026-08-27 idea: "if we ask not-stock
+    # related question, just LLM itself need answer — then we can make more speed"):
+    # every deterministic lane above has declined; when nothing suggests stocks,
+    # platform tools, current-events or the knowledge base, ONE small direct LLM
+    # call answers — no tool-decision megaprompt, no RAG round trip. ===
+    _OFFTOPIC_EXCLUDE = (
+        "open", "열어", "page", "페이지", "dashboard", "대시보드", "report", "리포트", "보고서",
+        "twin", "트윈", "meeting", "회의", "task", "태스크", "file", "파일", "knowledge",
+        "지식", "기억", "recall", "remember", "portfolio", "포트폴리오", "desk", "데스크",
+        "checklist", "체크리스트", "recommend", "추천", "market", "시장", "kospi", "코스피",
+        "kosdaq", "코스닥", "환율", "금리", "profit", "수익", "손익", "algo", "알고리즘",
+        "주문", "매수", "매도", "buy", "sell", "stock", "주식", "종목", "trading", "매매",
+        "news", "뉴스", "chart", "차트", "가격", "price", "search", "검색",
+        # current-events words keep the heavy path (it can web-search)
+        "today", "오늘", "latest", "최신", "current", "지금", "요즘", "weather", "날씨",
+    )
+    _t_off = (transcript or "").lower()
+    if (not confirmed_tool and not attachment_ids and transcript
+            and (forced_model or "").strip().lower() not in ("none", "offline", "no-llm", "nollm")
+            and not _all_stocks_in_query(transcript)
+            and not any(k in _t_off for k in _OFFTOPIC_EXCLUDE)):
+        try:
+            _en_o = not _re.search(r"[가-힣]", transcript)
+            _msgs_o = []
+            for _h9 in (history or [])[-6:]:
+                _r9 = "assistant" if (_h9.get("role") == "assistant") else "user"
+                _c9 = str(_h9.get("content") or _h9.get("text") or "")[:1500]
+                if _c9:
+                    _msgs_o.append({"role": _r9, "content": _c9})
+            _msgs_o.append({"role": "user", "content": transcript})
+            _sys_o = ("You are the VIP assistant. Answer helpfully, accurately and "
+                      "concisely in the user's language. If you genuinely do not know "
+                      "a fact, say so briefly — never invent one." if _en_o else
+                      "당신은 VIP 어시스턴트입니다. 사용자의 언어로 정확하고 간결하게 답하세요. "
+                      "모르는 사실은 짧게 모른다고 말하고, 절대 지어내지 마세요.")
+            _out_o = chat_completion_sync(_sys_o, _msgs_o, max_tokens=700,
+                                          temperature=0.5, model=forced_model or None)
+            if (_out_o or "").strip():
+                return {"intent": "llm_chat", "language": lang, "reply": _out_o.strip(),
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": None}
+        except Exception as e:
+            log.warning(f"offtopic direct path failed: {str(e)[:120]}")
+
     _offline_mode = (forced_model or "").strip().lower() in ("none", "offline", "no-llm", "nollm")
     _kb_not_needed = (
         not _offline_mode and not attachment_ids and bool(transcript)
