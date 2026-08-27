@@ -221,7 +221,13 @@ VARIANTS: list[dict] = [
      # threshold 1.0 (boss 2026-08-27 evening: "check all historical data,
      # find the best %"): full sweep 1.0-4.0 on 251 days - 1.0% is best desk-
      # wide (+42.1M/yr vs +28.5M at 2.0; D1 +24.1M, D2 +5.5M, D3 +12.5M).
-     "gap_guard": 1.0, "gap_wait": "t10",
+     "gap_guard": 1.0, "gap_wait": "below_open",
+     # form court 08-27 night (boss: "we should not fix the time as 10 - the
+     # decrease can be done after 3 minutes"): adaptive release wins big -
+     # below_open +26.1/+9.9/+33.6M = +69.6M desk vs +42.1M for the 10:00
+     # clock; his strict fade+3-rises form measured +20.2M (waits twice).
+     # The pause holds only while price >= its own open; below the open the
+     # normal doors hunt the bottom with their own turn-confirmation.
      # the boss's buying-zone law, his 3-red form (measured cost ~0): in the
      # bottom zone the +1% ladder holds until 3 consecutive rises confirm the turn
      "bot_ladder": "3red",
@@ -297,7 +303,13 @@ VARIANTS: list[dict] = [
      # threshold 1.0 (boss 2026-08-27 evening: "check all historical data,
      # find the best %"): full sweep 1.0-4.0 on 251 days - 1.0% is best desk-
      # wide (+42.1M/yr vs +28.5M at 2.0; D1 +24.1M, D2 +5.5M, D3 +12.5M).
-     "gap_guard": 1.0, "gap_wait": "t10",
+     "gap_guard": 1.0, "gap_wait": "below_open",
+     # form court 08-27 night (boss: "we should not fix the time as 10 - the
+     # decrease can be done after 3 minutes"): adaptive release wins big -
+     # below_open +26.1/+9.9/+33.6M = +69.6M desk vs +42.1M for the 10:00
+     # clock; his strict fade+3-rises form measured +20.2M (waits twice).
+     # The pause holds only while price >= its own open; below the open the
+     # normal doors hunt the bottom with their own turn-confirmation.
      # the boss's buying-zone law, his 3-red form (measured cost ~0): in the
      # bottom zone the +1% ladder holds until 3 consecutive rises confirm the turn
      "bot_ladder": "3red",
@@ -389,7 +401,13 @@ VARIANTS: list[dict] = [
      # threshold 1.0 (boss 2026-08-27 evening: "check all historical data,
      # find the best %"): full sweep 1.0-4.0 on 251 days - 1.0% is best desk-
      # wide (+42.1M/yr vs +28.5M at 2.0; D1 +24.1M, D2 +5.5M, D3 +12.5M).
-     "gap_guard": 1.0, "gap_wait": "t10",
+     "gap_guard": 1.0, "gap_wait": "below_open",
+     # form court 08-27 night (boss: "we should not fix the time as 10 - the
+     # decrease can be done after 3 minutes"): adaptive release wins big -
+     # below_open +26.1/+9.9/+33.6M = +69.6M desk vs +42.1M for the 10:00
+     # clock; his strict fade+3-rises form measured +20.2M (waits twice).
+     # The pause holds only while price >= its own open; below the open the
+     # normal doors hunt the bottom with their own turn-confirmation.
      # the boss's buying-zone law, his 3-red form (measured cost ~0): in the
      # bottom zone the +1% ladder holds until 3 consecutive rises confirm the turn
      "bot_ladder": "3red",
@@ -1341,6 +1359,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     n = len(stks)
     poss: list = [None] * n     # per stock: its open position (one hand per stock)
     pends: list = [None] * n    # per stock: its working limit order
+    gap_fade = [False] * n     # gap stock: price has been below its own open
+    gap_ok = [False] * n       # gap stock: fade happened AND ended (3 rises)
     up = [0] * n
     dn = [0] * n
     last_exit = [-1] * n       # per stock: bar index of this rule's last completed sell
@@ -1484,6 +1504,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             up[si], dn[si] = up[si] + 1, 0
         elif c < prev:
             up[si], dn[si] = 0, dn[si] + 1
+        # the gap pause's adaptive release (boss 2026-08-27: the fade must have
+        # happened AND ended - not a clock): below the open marks the fade; the
+        # 3rd consecutive rise afterwards lifts the pause for good
+        if not gap_ok[si]:
+            if c < (s.get("open_px") or closes[0] or c):
+                gap_fade[si] = True
+            if gap_fade[si] and up[si] >= 3:
+                gap_ok[si] = True
         # ---- a working limit order, on its own stock's bars ----
         pend = pends[si]
         if pend is not None:
@@ -1568,10 +1596,18 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             elif (v.get("gap_guard") and s.get("prev_close") and closes[0]
                   and ((s.get("open_px") or closes[0]) / s["prev_close"] - 1)
                       * 100 >= float(v["gap_guard"])
-                  and (c >= closes[0]
-                       if v.get("gap_wait", "below_open") == "below_open"
-                       else (s.get("times")
-                             and str(s["times"][i])[:5] < "10:00"))):
+                  and (
+                      # "turn3" (boss 2026-08-27 night: "we should not fix the
+                      # time as 10 - after 3 minutes the decrease can also be
+                      # done"): the pause lifts the moment the fade has BOTH
+                      # happened (price below its own open) and ENDED (3
+                      # consecutive rises) - at 09:05 or 11:00 alike.
+                      (not gap_ok[si])
+                      if v.get("gap_wait") == "turn3"
+                      else (c >= closes[0])
+                      if v.get("gap_wait", "below_open") == "below_open"
+                      else (s.get("times")
+                            and str(s["times"][i])[:5] < "10:00"))):
                 pass       # 갭상승 GUARD (boss 2026-08-27, the +5.2% 하이닉스 /
                            # +4.6% 전기 morning: "if the day starts with 갭상승
                            # do not buy - wait the decrease"): a stock that
