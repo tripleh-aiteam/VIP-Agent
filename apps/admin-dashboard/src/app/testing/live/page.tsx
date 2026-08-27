@@ -383,15 +383,22 @@ class SafeBox extends React.Component<{ children?: React.ReactNode; label?: stri
 // lines — the -1% stop (red), the next +1% ladder rung (green), the base
 // (gray) — plus a running event ticker of today's buys/sells with reasons.
 // All real recorded data from the same boards the desk trades by.
-function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
+function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
+                                  desk: "m1" | "m2" }) {
   type Hold = { code: string; name: string; base?: number; entry?: number;
-    qty_left?: number; unreal_pct?: number; rule?: string;
+    qty_left?: number; unreal_pct?: number; rule?: string; buy_t?: string;
     slices?: [number, number, string, number, number][] };
   type Row = { code: string; name: string; buy_t?: string; sell_t?: string;
     net_pct?: number; exit_why?: string; rule?: string; entry?: number;
     parts?: { buys?: unknown[][]; sells?: unknown[][] } };
   const [fam9, setFam9] = useState<"d1" | "d2" | "d3">("d2");
-  const [menu9, setMenu9] = useState<"m1" | "m2" | "demo">("m2");
+  // ONE DESK PER PAGE (boss 2026-08-27: "in menu 1 only menu 1 result, in
+  // menu 2 show menu 2") - the room follows the page it lives on; no cross
+  // buttons. The demo replay lives inside the 🎞 PAST tab.
+  const [mode9, setMode9] = useState<"live" | "past">("live");
+  const [demoOn9, setDemoOn9] = useState(false);
+  const menu9: "m1" | "m2" | "demo" = demoOn9 && mode9 === "past" ? "demo" : desk;
+  const [expWait9, setExpWait9] = useState<string>("");   // ladder opens on click only
   const [open9, setOpen9] = useState(false);
   // 🎭 DEMO MODE (boss 2026-08-26: "make menu3 with 두산 data imitate, I wanna
   // see how it is processing even after market"): replays 두산에너빌리티's REAL
@@ -410,7 +417,7 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
     try {
       if (typeof window !== "undefined"
           && new URLSearchParams(window.location.search).get("demo") === "1") {
-        setOpen9(true); setMenu9("demo"); setDRun9(true); setDSpeed9(3);
+        setOpen9(true); setMode9("past"); setDemoOn9(true); setDRun9(true); setDSpeed9(3);
       }
     } catch { /* no-op */ }
   }, []);
@@ -811,9 +818,9 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
           prevWait9.current = new Set(oo.map((o) => Number(o.id)));
           if (live) setWaits9(oo);
         } catch { /* state optional */ }
-        // tape ONLY for OPENED cards (boss 2026-08-27: click to load, hidden
-        // stays light) + order book for every held AND waiting stock (the
-        // waiting panel draws our order inside the real ladder)
+        // LIGHT BY LAW (boss 2026-08-27: "make it lighter"): tape only for
+        // OPENED holding cards, order book only for the ONE clicked waiting
+        // card + opened holdings. Nothing downloads for a closed card.
         const nb: typeof bars9 = {};
         const nbk: typeof book9 = {};
         for (const h of hh.slice(0, 10)) {
@@ -824,9 +831,9 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
           if (tp?.bars) nb[h.code] = tp.bars;
         }
         const bkCodes = Array.from(new Set([
-          ...hh.map((h) => h.code),
-          ...(r.waiting || []).map((w) => w.code),
-        ])).slice(0, 12);
+          ...hh.filter((h) => openCards9.has(h.code)).map((h) => h.code),
+          ...(expWait9 ? [expWait9] : []),
+        ])).slice(0, 8);
         for (const cc of bkCodes) {
           try {
             const bk = await api<{ asks?: [number, number][]; bids?: [number, number][] }>(
@@ -838,9 +845,9 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
       } catch { /* keep the last good frame */ }
     };
     load();
-    const hh2 = setInterval(load, 8000);
+    const hh2 = setInterval(load, 12000);
     return () => { live = false; clearInterval(hh2); };
-  }, [open9, fam9, menu9, t, openCards9]);
+  }, [open9, fam9, menu9, t, openCards9, expWait9]);
   const Chart = ({ h }: { h: Hold }) => {
     const cv = useRef<HTMLCanvasElement | null>(null);
     const bs = bars9[h.code] || [];
@@ -920,17 +927,20 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
     );
   };
   return (
-    <div className="mt-2 px-3 py-2 rounded-xl border text-[11px]"
-      style={{ borderColor: "#1565c0", background: "rgba(21,101,192,0.04)" }}>
-      <div className="flex items-center gap-2 flex-wrap cursor-pointer select-none"
+    <div className="mt-2 rounded-xl text-[11px] overflow-hidden border-2"
+      style={{ borderColor: "#37474f" }}>
+      {/* NEW LOOK (boss 2026-08-27: "do it different UI"): a control-tower
+          band on top, the desk's own name, and inside a 3-lane flow board */}
+      <div className="px-3 py-2 flex items-center gap-2 flex-wrap cursor-pointer select-none"
+        style={{ background: "#37474f", color: "#eceff1" }}
         onClick={() => setOpen9((o) => !o)}>
-        <b style={{ color: "#1565c0" }}>🎬 {t("라이브 오더룸 — 매수/매도 실시간 감시", "LIVE ORDER ROOM — buy/sell handling, real time")}</b>
-        <span className="text-[var(--text-muted)]">
-          {t("보유 종목마다 실시간 차트 + 에이전트의 선(빨강 -1% 전량 · 초록 다음 사다리 · 회색 기준가) · 8초 갱신",
-             "each position's live chart + the agent's lines (red -1% stop · green next rung · gray base) · 8s refresh")}
+        <b className="text-[13px]">🗼 {t("오더룸", "ORDER ROOM")} · {desk === "m1" ? t("메뉴1 — 6종목", "Menu 1 - the six") : t("메뉴2 — 체크리스트", "Menu 2 - checklist")}</b>
+        <span style={{ opacity: 0.75 }}>
+          {t("주문 → 줄서기 → 체결 → 보유 → 완료, 한 판에서", "order → queue → fill → hold → done, one board")}
           {ts9 && ` · ${ts9}`}</span>
-        <span className="ml-auto" style={{ color: "#1565c0" }}>{open9 ? "▲" : t("▼ 열기", "▼ open")}</span>
+        <span className="ml-auto font-bold">{open9 ? "▲" : t("▼ 열기", "▼ open")}</span>
       </div>
+      <div className="px-3 py-2" style={{ background: "var(--bg-elevated)" }}>
       {open9 && (
         <>
           {fire9.map((f) => (
@@ -941,6 +951,31 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
               🔥 {f.txt}
             </div>
           ))}
+          {/* TWO CLEAR WORLDS (boss 2026-08-27: "I could not find how I can
+              show real time, and the past case - these are 2 different
+              cases"): one tab for NOW, one tab for the recordings */}
+          <div className="mt-2 flex gap-1 flex-wrap items-center">
+            {([["live", t("🔴 실시간 — 지금 이 순간", "🔴 LIVE - right now")],
+               ["past", t("🎞 지난 기록 — 다시보기", "🎞 PAST - replay the recordings")]] as const)
+              .map(([m, lab]) => (
+              <button key={m} onClick={() => { setMode9(m); if (m === "live") { setDemoOn9(false); setRepRun9(false); setDRun9(false); } }}
+                className="px-3 py-1 rounded-t border-2 border-b-0 text-[11.5px] font-bold"
+                style={mode9 === m
+                  ? { background: m === "live" ? "#b71c1c" : "#4a148c", color: "#fff",
+                      borderColor: m === "live" ? "#b71c1c" : "#4a148c" }
+                  : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                {lab}</button>
+            ))}
+            <span className="mx-1 opacity-40">|</span>
+            {(["d1", "d2", "d3"] as const).map((f) => (
+              <button key={f} onClick={() => setFam9(f)}
+                className="px-2 py-0.5 rounded border text-[10.5px]"
+                style={fam9 === f ? { background: "#37474f", color: "#fff", borderColor: "#37474f", fontWeight: 700 }
+                                  : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                {t(`알고${f[1]}`, `Algo ${f[1]}`)}</button>
+            ))}
+          </div>
+          {mode9 === "live" && (<>
           {/* 🎓 THE 5 STEPS, pupil-simple (boss 2026-08-27: "a school pupil
               also able to understand — how our agent is buying/selling
               according to the rules") — every trade walks this exact road */}
@@ -989,11 +1024,15 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
                       {w.wall ? t(` (🧱벽 ₩${Number(w.wall).toLocaleString()} 바로 앞)`,
                                   ` (right in front of the 🧱 ₩${Number(w.wall).toLocaleString()} wall)`) : ""}
                       {" → "}<span className="animate-pulse">{t("대기 중…", "WAITING…")}</span>
+                      {" "}<button className="px-1.5 rounded border text-[9.5px] font-normal"
+                        style={{ borderColor: "#b8860b", color: "#b8860b" }}
+                        onClick={() => setExpWait9(expWait9 === w.code ? "" : w.code)}>
+                        📗 {expWait9 === w.code ? t("호가창 접기", "fold book") : t("호가창에서 우리 줄 보기", "see our place in the book")}</button>
                       <div className="text-[9.5px] font-normal opacity-70">
                         {t("가격이 닿는 순간 자동 체결 → 🔥 큰 알림 → 보유로 이동", "fills the moment price touches → 🔥 big alarm → moves to holding")}
                       </div>
                     </div>
-                    {bk && (
+                    {expWait9 === w.code && bk && (
                       <div className="text-[9.5px] tabular-nums leading-[1.5] rounded border px-1.5 py-1"
                         style={{ borderColor: "rgba(184,134,11,0.4)", minWidth: 168 }}>
                         {asks.slice().reverse().map(([p, q], j) => (
@@ -1020,56 +1059,7 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
               })}
             </div>
           )}
-          <div className="mt-1.5 flex gap-1 flex-wrap">
-            {(["m1", "m2", "demo"] as const).map((m) => (
-              <button key={m} onClick={() => setMenu9(m)}
-                className="px-2 py-0.5 rounded border text-[10.5px]"
-                style={menu9 === m ? { background: m === "demo" ? "#6a1b9a" : "#1565c0", color: "#fff",
-                                       borderColor: m === "demo" ? "#6a1b9a" : "#1565c0", fontWeight: 700 }
-                                   : { borderColor: "rgba(21,101,192,0.4)", color: m === "demo" ? "#6a1b9a" : "#1565c0" }}>
-                {m === "m1" ? t("메뉴1 (6종목)", "Menu 1 (the six)")
-                 : m === "m2" ? t("메뉴2 (체크리스트)", "Menu 2 (checklist)")
-                 : t("🎭 데모 (두산 재생)", "🎭 Demo (Doosan replay)")}</button>
-            ))}
-            {menu9 !== "demo" && (["d1", "d2", "d3"] as const).map((f) => (
-              <button key={f} onClick={() => setFam9(f)}
-                className="px-2 py-0.5 rounded border text-[10.5px]"
-                style={fam9 === f ? { background: "#1565c0", color: "#fff", borderColor: "#1565c0", fontWeight: 700 }
-                                  : { borderColor: "rgba(21,101,192,0.4)", color: "#1565c0" }}>
-                {t(`알고${f[1]}`, `Algo ${f[1]}`)}</button>
-            ))}
-          </div>
-          {menu9 === "demo" ? (
-            <div className="mt-2">
-              <div className="flex items-center gap-2 flex-wrap text-[10.5px]">
-                <b style={{ color: "#6a1b9a" }}>
-                  {t("🎭 데모 — 두산에너빌리티 실제 1분봉 재생 + 알고2 규칙 시연 (실전 판정과 미세하게 다를 수 있는 간이 재현)",
-                     "🎭 DEMO — replaying Doosan's REAL 1-min bars + Algo2 rules (simplified re-enactment)")}</b>
-                <button onClick={() => setDRun9((r) => !r)}
-                  className="px-2.5 py-0.5 rounded border font-bold"
-                  style={{ background: dRun9 ? "#fff" : "#6a1b9a", color: dRun9 ? "#6a1b9a" : "#fff", borderColor: "#6a1b9a" }}>
-                  {dRun9 ? t("⏸ 일시정지", "⏸ pause") : t("▶ 재생", "▶ play")}</button>
-                <button onClick={() => { setDPos9(0); dState9.current = { base: null, qty: 0, k: 0, ev: [], lo: null }; }}
-                  className="px-2 py-0.5 rounded border" style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
-                  ⏮ {t("처음부터", "restart")}</button>
-                {[1, 3, 10].map((s) => (
-                  <button key={s} onClick={() => setDSpeed9(s)}
-                    className="px-2 py-0.5 rounded border"
-                    style={dSpeed9 === s ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
-                                         : { borderColor: "#6a1b9a", color: "#6a1b9a" }}>×{s}</button>
-                ))}
-                <span className="tabular-nums opacity-70">
-                  {dBars9.length ? `${t("재생 시각", "clock")} ${String((dBars9[Math.max(0, dPos9 - 1)] || {}).hhmm || "").slice(0, 5)} · ${dPos9}/${dBars9.length}${t("봉", " bars")}` : t("두산 데이터 로딩…", "loading Doosan bars…")}</span>
-              </div>
-              <canvas ref={dCv9} className="w-full mt-1 rounded border"
-                style={{ height: 220, borderColor: "rgba(106,27,154,0.3)" }} />
-              <div className="mt-1 max-h-[140px] overflow-y-auto leading-relaxed tabular-nums text-[10.5px]">
-                {dState9.current.ev.length
-                  ? dState9.current.ev.slice(0, 20).map((e, i) => <div key={i}>{e}</div>)
-                  : <div className="opacity-60">{t("▶ 재생을 누르면 하루가 흘러가며 매수/매도가 여기 찍힙니다", "press ▶ and the day plays out — buys/sells print here")}</div>}
-              </div>
-            </div>
-          ) : holds9.length === 0 ? (
+          {holds9.length === 0 ? (
             <div className="mt-2 text-[var(--text-muted)]">
               {t("지금 보유 포지션이 없습니다 — 장중에 문이 열리면 이 자리에서 실시간으로 봅니다. (종 15:19 이후는 항상 빈손이 정상)",
                  "No open positions right now — when a door opens during the session you watch it here live. (After the 15:19 bell, empty hands are the law)")}</div>
@@ -1100,7 +1090,7 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
                               {t("차트 접기 ▲", "fold ▲")}</button>
                             <button className="text-[9.5px] px-1.5 rounded border"
                               style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}
-                              onClick={() => startReplay9(h, true)}>
+                              onClick={() => { setMode9("past"); setDemoOn9(false); startReplay9(h, true); }}>
                               🎞 {t("이 매매 처음부터 다시보기", "replay this trade from the start")}</button>
                           </div>
                         </div>
@@ -1120,47 +1110,13 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
               </div>
             </div>
           )}
-          {menu9 !== "demo" && rep9 && (
-            <div className="mt-2 px-2 py-1.5 rounded border"
-              style={{ borderColor: "#6a1b9a", background: "rgba(106,27,154,0.04)" }}>
-              <div className="flex items-center gap-2 flex-wrap text-[10.5px]">
-                <b style={{ color: "#6a1b9a" }}>
-                  🎞 {t(`다시보기 — ${rep9.name} (실제 기록 재생: 봉도 체결도 전부 그날 그대로)`,
-                        `REPLAY — ${rep9.name} (the real recording: every bar and every fill exactly as it happened)`)}</b>
-                <button onClick={() => setRepRun9((r2) => !r2)}
-                  className="px-2.5 py-0.5 rounded border font-bold"
-                  style={{ background: repRun9 ? "#fff" : "#6a1b9a", color: repRun9 ? "#6a1b9a" : "#fff", borderColor: "#6a1b9a" }}>
-                  {repRun9 ? t("⏸ 일시정지", "⏸ pause") : t("▶ 재생", "▶ play")}</button>
-                <button onClick={() => { setRepPos9(0); setRepRun9(true); }}
-                  className="px-2 py-0.5 rounded border" style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
-                  ⏮ {t("처음부터", "restart")}</button>
-                {[1, 3, 10].map((s2) => (
-                  <button key={s2} onClick={() => setRepSpeed9(s2)}
-                    className="px-2 py-0.5 rounded border"
-                    style={repSpeed9 === s2 ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
-                                            : { borderColor: "#6a1b9a", color: "#6a1b9a" }}>×{s2}</button>
-                ))}
-                <span className="tabular-nums opacity-70">
-                  {repBars9.length ? `${String((repBars9[Math.max(0, repPos9 - 1)] || {}).hhmm || "").slice(0, 5)} · ${repPos9}/${repBars9.length}${t("봉", " bars")}` : ""}</span>
-                <button onClick={() => { setRep9(null); setRepRun9(false); }}
-                  className="ml-auto px-2 py-0.5 rounded border" style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
-                  ✕ {t("닫기", "close")}</button>
-              </div>
-              <canvas ref={repCv9} className="w-full mt-1 rounded border"
-                style={{ height: 210, borderColor: "rgba(106,27,154,0.3)" }} />
-              <div className="text-[9.5px] opacity-70">
-                {t("▲초록 = 그날의 실제 매수 · ▼주황 = 실제 매도(사다리/손절) — 재생 시계가 그 분을 지나는 순간 나타납니다",
-                   "▲green = the real buys · ▼orange = the real sells (rungs/stop) - each appears the moment the replay clock passes its minute")}
-              </div>
-            </div>
-          )}
-          {menu9 !== "demo" && eps9.length > 0 && (
+          {eps9.length > 0 && (
             <div className="mt-2">
-              <b style={{ color: "#1565c0" }}>{t("5단계 — 오늘 완료된 매매 (누르면 🎞 그대로 다시보기)",
-                                                 "step ⑤ - today's completed trades (click to 🎞 replay)")}</b>
+              <b style={{ color: "#2e7d32" }}>{t("⑤ 오늘 완료된 매매 — 누르면 🎞 지난 기록 탭에서 그대로 다시보기",
+                                                 "⑤ today's completed trades - click to replay in the 🎞 PAST tab")}</b>
               <div className="mt-0.5 flex gap-1 flex-wrap">
                 {eps9.slice(0, 12).map((x, i) => (
-                  <button key={i} onClick={() => startReplay9(x)}
+                  <button key={i} onClick={() => { setMode9("past"); setDemoOn9(false); startReplay9(x); }}
                     className="px-1.5 py-0.5 rounded border text-[10px] tabular-nums"
                     style={{ borderColor: "rgba(106,27,154,0.4)", color: "#6a1b9a" }}>
                     ▶ {x.name} {String(x.buy_t).slice(0, 5)}→{String(x.sell_t).slice(0, 5)}{" "}
@@ -1215,8 +1171,104 @@ function OrderRoom({ t }: { t: (ko: string, en: string) => string }) {
             )}
           </div>
           )}
+          </>)}
+          {mode9 === "past" && (<>
+            {/* 🎞 THE PAST WORLD — recordings only, clearly separated from live */}
+            <div className="mt-2 px-2 py-1.5 rounded border" style={{ borderColor: "#4a148c", background: "rgba(74,20,140,0.04)" }}>
+              <b style={{ color: "#4a148c" }}>🎞 {t("무엇을 다시 볼까요?", "what shall we replay?")}</b>
+              <div className="text-[10px] opacity-75">
+                {t("전부 실제 기록입니다 — 그날의 봉과 그날의 체결이 그대로 재생됩니다. 초록▲=실제 매수 · 주황▼=실제 매도.",
+                   "all real recordings - that day's bars and fills play back exactly. green▲=real buy · orange▼=real sell.")}</div>
+              <div className="mt-1 flex gap-1 flex-wrap">
+                <button onClick={() => { setDemoOn9(true); setRep9(null); setDRun9(true); }}
+                  className="px-2 py-0.5 rounded border text-[10.5px] font-bold"
+                  style={demoOn9 ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
+                                 : { borderColor: "#6a1b9a", color: "#6a1b9a" }}>
+                  🎭 {t("두산 데모 (알고2 규칙 시연)", "Doosan demo (Algo2 rules)")}</button>
+                {eps9.slice(0, 12).map((x, i) => (
+                  <button key={i} onClick={() => { setDemoOn9(false); startReplay9(x); }}
+                    className="px-1.5 py-0.5 rounded border text-[10px] tabular-nums"
+                    style={rep9 && !demoOn9 && rep9.code === x.code ? { background: "#4a148c", color: "#fff", borderColor: "#4a148c" }
+                                                                    : { borderColor: "rgba(74,20,140,0.4)", color: "#4a148c" }}>
+                    ▶ {x.name} {String(x.buy_t).slice(0, 5)}→{String(x.sell_t).slice(0, 5)}{" "}
+                    {(x.net_pct ?? 0) >= 0 ? "+" : ""}{x.net_pct}%</button>
+                ))}
+                {holds9.map((h, i) => (
+                  <button key={`h${i}`} onClick={() => { setDemoOn9(false); startReplay9(h, true); }}
+                    className="px-1.5 py-0.5 rounded border text-[10px] tabular-nums"
+                    style={{ borderColor: "rgba(74,20,140,0.4)", color: "#4a148c" }}>
+                    ▶ {h.name} {t("(보유 중 — 처음부터)", "(holding - from the start)")}</button>
+                ))}
+              </div>
+            </div>
+            {demoOn9 ? (
+              <div className="mt-2">
+                <div className="flex items-center gap-2 flex-wrap text-[10.5px]">
+                  <b style={{ color: "#6a1b9a" }}>
+                    {t("🎭 데모 — 두산에너빌리티 실제 1분봉 재생 + 알고2 규칙 시연 (간이 재현)",
+                       "🎭 DEMO — Doosan's REAL 1-min bars + Algo2 rules (simplified re-enactment)")}</b>
+                  <button onClick={() => setDRun9((r) => !r)}
+                    className="px-2.5 py-0.5 rounded border font-bold"
+                    style={{ background: dRun9 ? "#fff" : "#6a1b9a", color: dRun9 ? "#6a1b9a" : "#fff", borderColor: "#6a1b9a" }}>
+                    {dRun9 ? t("⏸ 일시정지", "⏸ pause") : t("▶ 재생", "▶ play")}</button>
+                  <button onClick={() => { setDPos9(0); dState9.current = { base: null, qty: 0, k: 0, ev: [], lo: null }; }}
+                    className="px-2 py-0.5 rounded border" style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
+                    ⏮ {t("처음부터", "restart")}</button>
+                  {[1, 3, 10].map((s) => (
+                    <button key={s} onClick={() => setDSpeed9(s)}
+                      className="px-2 py-0.5 rounded border"
+                      style={dSpeed9 === s ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
+                                           : { borderColor: "#6a1b9a", color: "#6a1b9a" }}>×{s}</button>
+                  ))}
+                  <span className="tabular-nums opacity-70">
+                    {dBars9.length ? `${t("재생 시각", "clock")} ${String((dBars9[Math.max(0, dPos9 - 1)] || {}).hhmm || "").slice(0, 5)} · ${dPos9}/${dBars9.length}${t("봉", " bars")}` : t("두산 데이터 로딩…", "loading Doosan bars…")}</span>
+                </div>
+                <canvas ref={dCv9} className="w-full mt-1 rounded border"
+                  style={{ height: 220, borderColor: "rgba(106,27,154,0.3)" }} />
+                <div className="mt-1 max-h-[140px] overflow-y-auto leading-relaxed tabular-nums text-[10.5px]">
+                  {dState9.current.ev.length
+                    ? dState9.current.ev.slice(0, 20).map((e, i) => <div key={i}>{e}</div>)
+                    : <div className="opacity-60">{t("▶ 재생을 누르면 하루가 흘러가며 매수/매도가 여기 찍힙니다", "press ▶ and the day plays out — buys/sells print here")}</div>}
+                </div>
+              </div>
+            ) : rep9 ? (
+              <div className="mt-2 px-2 py-1.5 rounded border"
+                style={{ borderColor: "#6a1b9a", background: "rgba(106,27,154,0.04)" }}>
+                <div className="flex items-center gap-2 flex-wrap text-[10.5px]">
+                  <b style={{ color: "#6a1b9a" }}>
+                    🎞 {t(`다시보기 — ${rep9.name} (실제 기록: 봉도 체결도 그날 그대로)`,
+                          `REPLAY — ${rep9.name} (the real recording, bars and fills exactly as they happened)`)}</b>
+                  <button onClick={() => setRepRun9((r2) => !r2)}
+                    className="px-2.5 py-0.5 rounded border font-bold"
+                    style={{ background: repRun9 ? "#fff" : "#6a1b9a", color: repRun9 ? "#6a1b9a" : "#fff", borderColor: "#6a1b9a" }}>
+                    {repRun9 ? t("⏸ 일시정지", "⏸ pause") : t("▶ 재생", "▶ play")}</button>
+                  <button onClick={() => { setRepPos9(0); setRepRun9(true); }}
+                    className="px-2 py-0.5 rounded border" style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
+                    ⏮ {t("처음부터", "restart")}</button>
+                  {[1, 3, 10].map((s2) => (
+                    <button key={s2} onClick={() => setRepSpeed9(s2)}
+                      className="px-2 py-0.5 rounded border"
+                      style={repSpeed9 === s2 ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
+                                              : { borderColor: "#6a1b9a", color: "#6a1b9a" }}>×{s2}</button>
+                  ))}
+                  <span className="tabular-nums opacity-70">
+                    {repBars9.length ? `${String((repBars9[Math.max(0, repPos9 - 1)] || {}).hhmm || "").slice(0, 5)} · ${repPos9}/${repBars9.length}${t("봉", " bars")}` : ""}</span>
+                </div>
+                <canvas ref={repCv9} className="w-full mt-1 rounded border"
+                  style={{ height: 210, borderColor: "rgba(106,27,154,0.3)" }} />
+                <div className="text-[9.5px] opacity-70">
+                  {t("▲초록 = 그날의 실제 매수 · ▼주황 = 실제 매도(사다리/손절) — 재생 시계가 그 분을 지나는 순간 나타납니다",
+                     "▲green = the real buys · ▼orange = the real sells (rungs/stop) - each appears the moment the replay clock passes its minute")}</div>
+              </div>
+            ) : (
+              <div className="mt-2 text-[var(--text-muted)]">
+                {t("위에서 다시 볼 매매를 고르세요 — 완료된 매매, 보유 중 매매, 데모 전부 됩니다.",
+                   "pick a trade above - completed, holding, or the demo all work.")}</div>
+            )}
+          </>)}
         </>
       )}
+      </div>
     </div>
   );
 }
@@ -3007,7 +3059,9 @@ export default function LiveDeskPage() {
           human"). SELLs/stops always execute; the six always auto-trade. */}
       {deskView === "reco" && <SafeBox label="live-check"><RecoLiveCheckPanel t={t} lang={lang} /></SafeBox>}
       {deskView === "reco" && <SafeBox label="inspection-room"><InspectionRoom t={t} /></SafeBox>}
-      <SafeBox label="order-room"><OrderRoom t={t} /></SafeBox>
+      {/* the room follows ITS page: menu 1 shows only menu 1, menu 2 only
+          menu 2 (boss 2026-08-27) */}
+      <SafeBox label="order-room"><OrderRoom t={t} desk={deskView === "reco" ? "m2" : "m1"} /></SafeBox>
       {deskView === "reco" && <SafeBox label="auto/semi"><RecoTradeModePanel t={t} /></SafeBox>}
       {/* GO/NO-GO board removed at the boss's order (2026-08-25) — code preserved. */}
       {/* THE ALGORITHM CHOICE, its own bar above the panel (boss 2026-08-11: it was
