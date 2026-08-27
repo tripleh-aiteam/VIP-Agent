@@ -383,44 +383,73 @@ class SafeBox extends React.Component<{ children?: React.ReactNode; label?: stri
 // lines — the -1% stop (red), the next +1% ladder rung (green), the base
 // (gray) — plus a running event ticker of today's buys/sells with reasons.
 // All real recorded data from the same boards the desk trades by.
-function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
-                                  desk: "m1" | "m2" }) {
-  type Hold = { code: string; name: string; base?: number; entry?: number;
-    qty_left?: number; unreal_pct?: number; rule?: string; buy_t?: string;
-    slices?: [number, number, string, number, number][] };
-  type Row = { code: string; name: string; buy_t?: string; sell_t?: string;
-    net_pct?: number; exit_why?: string; rule?: string; entry?: number;
-    parts?: { buys?: unknown[][]; sells?: unknown[][] } };
-  const [fam9, setFam9] = useState<"d1" | "d2" | "d3">("d2");
-  // ONE DESK PER PAGE (boss 2026-08-27: "in menu 1 only menu 1 result, in
-  // menu 2 show menu 2") - the room follows the page it lives on; no cross
-  // buttons. The demo replay lives inside the 🎞 PAST tab.
-  const [mode9, setMode9] = useState<"live" | "past">("live");
-  // 🎭 demo theater removed at the boss's order (2026-08-27: "remove Demo
-  // Theater - only keep Live Order Room in menu 1, 2"). The 🎞 PAST tab
-  // replays REAL recorded trades only.
-  const menu9: "m1" | "m2" = desk;
-  const [expWait9, setExpWait9] = useState<string>("");   // ladder opens on click only
-  const [open9, setOpen9] = useState(false);
-  const repCv9 = useRef<HTMLCanvasElement | null>(null);
-  const drawRep9 = (rep9: NonNullable<{ code: string; name: string; base: number;
-    buys: [string, number, number][]; sells: [string, number, number, string][];
-    live?: boolean } | null>, repBars9: { hhmm: string; open: number; high: number;
-    low: number; close: number }[], repPos9: number) => {
-    const c = repCv9.current;
-    if (!c || !rep9 || !repBars9.length) return;
-    const bs = repBars9.slice(0, Math.max(1, repPos9));
+// TRADE REPLAY (boss 2026-08-27: "this already happened - if I click the
+// NAME of the company in the history it should show only this trading's past
+// play recording; the buy TIME keeps the arrow jump"). Plays the recorded
+// bars of that episode with the real fills appearing at their true minutes.
+// Playback of the record - prices are never invented.
+function TradeReplay({ ep, t, onClose }: {
+  ep: { code: string; name: string; entry?: number; base?: number;
+        buy_t?: string; sell_t?: string; live?: boolean; exit?: number;
+        exit_why?: string; qty?: number;
+        parts?: { buys?: unknown[][]; sells?: unknown[][] } };
+  t: (ko: string, en: string) => string; onClose: () => void }) {
+  type Bar = { hhmm: string; open: number; high: number; low: number; close: number };
+  const [bars, setBars] = useState<Bar[]>([]);
+  const [pos, setPos] = useState(0);
+  const [run, setRun] = useState(true);
+  const [speed, setSpeed] = useState(3);
+  const cv = useRef<HTMLCanvasElement | null>(null);
+  const base = Number(ep.base ?? ep.entry ?? 0);
+  const from = String(ep.buy_t || "09:00").slice(0, 5);
+  const to = ep.live ? "15:30" : String(ep.sell_t || "15:30").slice(0, 5);
+  const pb = (ep.parts?.buys || []) as [number, number, (string | null)?][];
+  const buys: [string, number, number][] = pb.length
+    ? pb.map((b) => [String(b[2] || ep.buy_t || from), Number(b[0]), Number(b[1])])
+    : [[from, base, Number(ep.qty || 0)]];
+  const ps = (ep.parts?.sells || []) as [number, number, string, unknown, unknown, unknown?][];
+  const sells: [string, number, number, string][] = ps.length
+    ? ps.map((s) => [String(s[2] || to), Number(s[0]), Number(s[1]), String(s[5] ?? "")])
+    : (ep.exit ? [[to, Number(ep.exit), Number(ep.qty || 0), String(ep.exit_why || "")]] : []);
+  useEffect(() => {
+    let live = true;
+    api<{ bars?: Bar[] }>(`/paper-desk/live/tape?code=${ep.code}&period=60&bars=100000`)
+      .then((d) => {
+        if (!live || !d?.bars?.length) return;
+        const all = d.bars;
+        let i0 = all.findIndex((b) => String(b.hhmm).slice(0, 5) >= from);
+        if (i0 < 0) i0 = 0;
+        let i1 = all.findIndex((b) => String(b.hhmm).slice(0, 5) > to);
+        if (i1 < 0) i1 = all.length;
+        setBars(all.slice(Math.max(0, i0 - 15), Math.min(all.length, i1 + 10)));
+        setPos(0); setRun(true);
+      }).catch(() => {});
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ep]);
+  useEffect(() => {
+    if (!run || !bars.length) return;
+    const h = setInterval(() => setPos((p) => {
+      const np = Math.min(p + speed, bars.length);
+      if (np >= bars.length) setRun(false);
+      return np;
+    }), 600);
+    return () => clearInterval(h);
+  }, [run, speed, bars]);
+  useEffect(() => {
+    const c = cv.current;
+    if (!c || !bars.length) return;
+    const bs = bars.slice(0, Math.max(1, pos));
     const W = c.clientWidth, H = c.clientHeight;
     c.width = W * 2; c.height = H * 2;
     const g = c.getContext("2d");
     if (!g) return;
     g.scale(2, 2); g.clearRect(0, 0, W, H);
-    const all = repBars9;
-    const stop = rep9.base ? rep9.base * 0.99 : 0;
-    const lo = Math.min(...all.map((b) => b.low), stop || Infinity) * 0.999;
-    const hi = Math.max(...all.map((b) => b.high), rep9.base || 0) * 1.001;
+    const stop = base ? base * 0.99 : 0;
+    const lo = Math.min(...bars.map((b) => b.low), stop || Infinity) * 0.999;
+    const hi = Math.max(...bars.map((b) => b.high), base || 0) * 1.001;
     const y = (v: number) => 8 + (hi - v) / Math.max(1e-9, hi - lo) * (H - 30);
-    const bw = (W - 56) / all.length;
+    const bw = (W - 56) / bars.length;
     g.font = "9px sans-serif";
     bs.forEach((b, i) => {
       const x = 56 + i * bw + bw / 2;
@@ -437,14 +466,13 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
       g.beginPath(); g.moveTo(56, y(v)); g.lineTo(W - 2, y(v)); g.stroke();
       g.setLineDash([]); g.fillStyle = col; g.fillText(lab, 2, y(v) + 3);
     };
-    line(rep9.base, "#9e9e9e", `기준 ${Math.round(rep9.base).toLocaleString()}`);
+    line(base, "#9e9e9e", `기준 ${Math.round(base).toLocaleString()}`);
     line(stop, "#c62828", `-1% ${Math.round(stop).toLocaleString()}`);
-    // the REAL fills appear the moment the replay clock passes their minute
     const clock = bs.length ? String(bs[bs.length - 1].hhmm).slice(0, 5) : "";
     const mark = (tt: string, px: number, up: boolean, lab: string) => {
       if (!tt || String(tt).slice(0, 5) > clock) return;
-      let bi = all.findIndex((b) => String(b.hhmm).slice(0, 5) >= String(tt).slice(0, 5));
-      if (bi < 0) bi = all.length - 1;
+      let bi = bars.findIndex((b) => String(b.hhmm).slice(0, 5) >= String(tt).slice(0, 5));
+      if (bi < 0) bi = bars.length - 1;
       const x = 56 + bi * bw + bw / 2;
       g.fillStyle = up ? "#2e7d32" : "#e65100";
       g.beginPath();
@@ -453,166 +481,94 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
       g.closePath(); g.fill();
       g.fillText(lab, Math.min(x + 4, W - 60), up ? y(px) + 30 : y(px) - 24);
     };
-    for (const [tt, px, qy] of rep9.buys) mark(tt, px, true, `▲매수 ${qy ? qy + "주" : ""}`);
-    for (const [tt, px, qy, why] of rep9.sells) mark(tt, px, false, `▼${String(why).slice(0, 6) || "매도"} ${qy}주`);
-  };
+    for (const [tt, px, qy] of buys) mark(tt, px, true, `▲매수 ${qy ? qy + "주" : ""}`);
+    for (const [tt, px, qy, why] of sells) mark(tt, px, false, `▼${String(why).slice(0, 6) || "매도"} ${qy ? qy + "주" : ""}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pos, bars]);
+  return (
+    <div className="my-2 px-2 py-1.5 rounded-lg border-2" style={{ borderColor: "#4a148c", background: "rgba(74,20,140,0.04)" }}>
+      <div className="flex items-center gap-2 flex-wrap text-[11px]">
+        <b style={{ color: "#4a148c" }}>
+          🎞 {ep.name} {from}→{ep.live ? t("지금", "now") : to} {t("다시보기 — 실제 기록 재생 (봉도 체결도 그날 그대로)", "replay - the real recording, bars and fills as they happened")}</b>
+        <button onClick={() => setRun((r) => !r)} className="px-2.5 py-0.5 rounded border font-bold"
+          style={{ background: run ? "#fff" : "#4a148c", color: run ? "#4a148c" : "#fff", borderColor: "#4a148c" }}>
+          {run ? t("⏸ 일시정지", "⏸ pause") : t("▶ 재생", "▶ play")}</button>
+        <button onClick={() => { setPos(0); setRun(true); }} className="px-2 py-0.5 rounded border"
+          style={{ borderColor: "#4a148c", color: "#4a148c" }}>⏮ {t("처음부터", "restart")}</button>
+        {[1, 3, 10].map((s) => (
+          <button key={s} onClick={() => setSpeed(s)} className="px-2 py-0.5 rounded border"
+            style={speed === s ? { background: "#4a148c", color: "#fff", borderColor: "#4a148c" }
+                               : { borderColor: "#4a148c", color: "#4a148c" }}>×{s}</button>
+        ))}
+        <span className="tabular-nums opacity-70">
+          {bars.length ? `${String((bars[Math.max(0, pos - 1)] || {}).hhmm || "").slice(0, 5)} · ${pos}/${bars.length}${t("봉", " bars")}` : t("기록 로딩…", "loading the record…")}</span>
+        <button onClick={onClose} className="ml-auto px-2 py-0.5 rounded border"
+          style={{ borderColor: "#4a148c", color: "#4a148c" }}>✕ {t("닫기", "close")}</button>
+      </div>
+      <canvas ref={cv} className="w-full mt-1 rounded border" style={{ height: 240, borderColor: "rgba(74,20,140,0.3)" }} />
+      <div className="text-[9.5px] opacity-70">
+        {t("▲초록 = 실제 매수 · ▼주황 = 실제 매도 — 재생 시계가 그 분을 지나는 순간 나타납니다",
+           "▲green = real buys · ▼orange = real sells - each appears as the replay clock passes its minute")}</div>
+    </div>
+  );
+}
+
+// ORDER ROOM, one stock BIG (boss 2026-08-27: "just a list of stock
+// companies - if I click SK hynix we watch ONLY SK hynix's upcoming tradings
+// in real time, big screen; right now table, chart and info are too small").
+// The desk's stocks are buttons; the chosen one fills the screen: big live
+// chart with the agent's lines, the order book with OUR order written in it,
+// that stock's own step, holding and events. Nothing else competes for space.
+function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
+                                  desk: "m1" | "m2" }) {
+  type Hold = { code: string; name: string; base?: number; entry?: number;
+    qty_left?: number; unreal_pct?: number; rule?: string; buy_t?: string;
+    slices?: [number, number, string, number, number][] };
+  type Row = { code: string; name: string; buy_t?: string; sell_t?: string;
+    net_pct?: number; exit_why?: string; rule?: string; entry?: number;
+    parts?: { buys?: unknown[][]; sells?: unknown[][] } };
+  type Bar = { hhmm: string; open: number; high: number; low: number; close: number };
+  const SIX9: { code: string; name: string }[] = [
+    { code: "000660", name: "SK하이닉스" }, { code: "005930", name: "삼성전자" },
+    { code: "035420", name: "NAVER" }, { code: "017670", name: "SK텔레콤" },
+    { code: "042660", name: "한화오션" }, { code: "034020", name: "두산에너빌리티" }];
+  const [fam9, setFam9] = useState<"d1" | "d2" | "d3">("d2");
+  const [open9, setOpen9] = useState(false);
+  const [sel9, setSel9] = useState("");
+  const [watchList9, setWatchList9] = useState<{ code: string; name: string }[]>([]);
   const [holds9, setHolds9] = useState<Hold[]>([]);
-  const [evts9, setEvts9] = useState<string[]>([]);
-  const [bars9, setBars9] = useState<Record<string, { hhmm: string; open: number;
-    high: number; low: number; close: number }[]>>({});
-  const [ts9, setTs9] = useState<string>("");
-  // 🔥 FILL ALARM (boss 2026-08-26: "if we offer any price and it reaches, it
-  // should show like big font or fire — we have to KNOW it reached and sold or
-  // bought"): new events vs the previous poll fire a big flashing banner.
+  const [waitsAll9, setWaitsAll9] = useState<{ code: string; name?: string; side: string;
+    qty?: number; px: number; wall?: number | null; chat: boolean }[]>([]);
+  const [evts9, setEvts9] = useState<{ code: string; txt: string }[]>([]);
+  const [ts9, setTs9] = useState("");
   const [fire9, setFire9] = useState<{ txt: string; buy: boolean; id: number }[]>([]);
   const prevEv9 = useRef<Set<string> | null>(null);
+  const prevWait9 = useRef<Set<number> | null>(null);
   const fireId9 = useRef(1);
   const pushFire9 = (txt: string, buy: boolean) => {
     const id = fireId9.current++;
     setFire9((f) => [{ txt, buy, id }, ...f].slice(0, 3));
     setTimeout(() => setFire9((f) => f.filter((x) => x.id !== id)), 14000);
   };
-  // 🧾 order book per held stock + ⏳ waiting limit orders (our price offers)
-  const [book9, setBook9] = useState<Record<string, { asks: [number, number][];
-    bids: [number, number][] }>>({});
-  const [waits9, setWaits9] = useState<{ id?: number; ticker?: string; name?: string;
-    side?: string; qty?: number; limit_price?: number; last?: number }[]>([]);
-  const prevWait9 = useRef<Set<number> | null>(null);
-  // the ALGO's own working offers (condition met → price offered → waiting)
-  const [algoWaits9, setAlgoWaits9] = useState<{ code: string; name: string;
-    t?: string; px?: number; qty?: number;
-    wall?: { price?: number } | number | null }[]>([]);
-  // ⚡ CHARTS ON CLICK ONLY (boss 2026-08-27: "whatever stock we wanna watch,
-  // click and it should load fast - other times it can be hidden"): a holding
-  // card starts compact; its chart+book data is fetched only while open.
-  const [openCards9, setOpenCards9] = useState<Set<string>>(new Set());
-  // 🔄 lifecycle glow: a code that JUST entered holding pulses green
-  const [glow9, setGlow9] = useState<Record<string, number>>({});
-  const prevHold9 = useRef<Set<string> | null>(null);
-  // 🎞 REPLAY of real recorded trades (boss 2026-08-27: "past, already-holding,
-  // completed tradings also we have to show the process - maybe recording all
-  // tradings"): the recorded bars play back with the REAL fills appearing at
-  // their true minutes. Prices are never invented - this is playback, not demo.
-  const [eps9, setEps9] = useState<Row[]>([]);
-  const [rep9, setRep9] = useState<{ code: string; name: string; base: number;
-    buys: [string, number, number][]; sells: [string, number, number, string][];
-    live?: boolean } | null>(null);
-  const [repBars9, setRepBars9] = useState<{ hhmm: string; open: number;
-    high: number; low: number; close: number }[]>([]);
-  const [repPos9, setRepPos9] = useState(0);
-  const [repRun9, setRepRun9] = useState(false);
-  const [repSpeed9, setRepSpeed9] = useState(3);
-  const startReplay9 = async (x: { code: string; name: string; entry?: number;
-    base?: number; buy_t?: string; sell_t?: string;
-    parts?: { buys?: unknown[][]; sells?: unknown[][] };
-    slices?: [number, number, string, number, number][] }, live = false) => {
-    try {
-      const tp = await api<{ bars?: typeof repBars9 }>(
-        `/paper-desk/live/tape?code=${x.code}&period=60&bars=100000`);
-      const bars = tp?.bars || [];
-      if (!bars.length) return;
-      const from = String(x.buy_t || "09:00").slice(0, 5);
-      const to = live ? "15:30" : String(x.sell_t || "15:30").slice(0, 5);
-      let i0 = bars.findIndex((b) => String(b.hhmm).slice(0, 5) >= from);
-      if (i0 < 0) i0 = 0;
-      let i1 = bars.findIndex((b) => String(b.hhmm).slice(0, 5) > to);
-      if (i1 < 0) i1 = bars.length;
-      const pb = (x.parts?.buys || []) as [number, number, (string | null)?][];
-      const buys: [string, number, number][] = pb.length
-        ? pb.map((b) => [String(b[2] || x.buy_t || from), Number(b[0]), Number(b[1])])
-        : [[String(x.buy_t || from), Number(x.entry ?? x.base ?? 0), 0]];
-      const ps = (x.parts?.sells || []) as [number, number, string, unknown, unknown, unknown?][];
-      const sl = (x.slices || []) as [number, number, string, number, number][];
-      const sells: [string, number, number, string][] = ps.length
-        ? ps.map((s) => [String(s[2] || to), Number(s[0]), Number(s[1]), String(s[5] ?? "")])
-        : sl.map((s) => [String(s[3] || ""), Number(s[0]), Number(s[1]), String(s[2] ?? "")]);
-      setRep9({ code: x.code, name: x.name,
-                base: Number(x.base ?? x.entry ?? buys[0]?.[1] ?? 0), buys, sells, live });
-      setRepBars9(bars.slice(Math.max(0, i0 - 15), Math.min(bars.length, i1 + 10)));
-      setRepPos9(0); setRepRun9(true);
-    } catch { /* tape unavailable - replay simply not started */ }
-  };
-  // 🎞 replay player: cursor walk + canvas with the REAL fills as markers
-  useEffect(() => {
-    if (!rep9 || !repRun9 || !repBars9.length) return;
-    const h = setInterval(() => {
-      setRepPos9((p) => {
-        const np = Math.min(p + repSpeed9, repBars9.length);
-        if (np >= repBars9.length) setRepRun9(false);
-        return np;
-      });
-    }, 600);
-    return () => clearInterval(h);
-  }, [rep9, repRun9, repSpeed9, repBars9]);
-  useEffect(() => { if (rep9) drawRep9(rep9, repBars9, repPos9); },
-    [rep9, repPos9, repBars9]);   // eslint-disable-line react-hooks/exhaustive-deps
-  // 🔭 self-service watcher: any stock's chart + full book, your own pick
-  const [watch9, setWatch9] = useState<string>("");
-  const [watchList9, setWatchList9] = useState<{ code: string; name: string }[]>([]);
-  const [wBars9, setWBars9] = useState<{ hhmm: string; open: number; high: number;
-    low: number; close: number }[]>([]);
-  const [wBook9, setWBook9] = useState<{ asks: [number, number][];
+  const [bars9, setBars9] = useState<Bar[]>([]);
+  const [book9, setBook9] = useState<{ asks: [number, number][];
     bids: [number, number][] } | null>(null);
+  const deskList9 = desk === "m1" ? SIX9 : watchList9;
   useEffect(() => {
-    if (!open9) return;
+    if (!open9 || desk === "m1") return;
     api<{ stocks: { code: string; name: string }[] }>("/paper-desk/live/status")
       .then((d) => { if (d?.stocks) setWatchList9(d.stocks.map(
         (s) => ({ code: s.code, name: s.name || s.code }))); })
       .catch(() => {});
-  }, [open9]);
-  useEffect(() => {
-    if (!open9 || !watch9) return;
-    let live = true;
-    const load = async () => {
-      try {
-        const tp = await api<{ bars?: typeof wBars9 }>(
-          `/paper-desk/live/tape?code=${watch9}&period=60&bars=90`);
-        if (live && tp?.bars) setWBars9(tp.bars);
-        const bk = await api<{ asks?: [number, number][]; bids?: [number, number][] }>(
-          `/paper-desk/live/book?code=${watch9}`);
-        if (live && bk?.asks) setWBook9({ asks: bk.asks, bids: bk.bids || [] });
-      } catch { /* keep last */ }
-    };
-    load();
-    const h = setInterval(load, 8000);
-    return () => { live = false; clearInterval(h); };
-  }, [open9, watch9]);
-  const wCv9 = useRef<HTMLCanvasElement | null>(null);
-  useEffect(() => {
-    const c = wCv9.current;
-    if (!c || !wBars9.length) return;
-    const W = c.clientWidth, H = c.clientHeight;
-    c.width = W * 2; c.height = H * 2;
-    const g = c.getContext("2d");
-    if (!g) return;
-    g.scale(2, 2); g.clearRect(0, 0, W, H);
-    const lo = Math.min(...wBars9.map((b) => b.low)) * 0.999;
-    const hi = Math.max(...wBars9.map((b) => b.high)) * 1.001;
-    const y = (v: number) => 8 + (hi - v) / Math.max(1e-9, hi - lo) * (H - 28);
-    const bw = (W - 54) / wBars9.length;
-    g.font = "9px sans-serif";
-    wBars9.forEach((b, i) => {
-      const x = 54 + i * bw + bw / 2;
-      const up = b.close >= b.open;
-      g.strokeStyle = g.fillStyle = up ? "#d32f2f" : "#1565c0";
-      g.beginPath(); g.moveTo(x, y(b.high)); g.lineTo(x, y(b.low)); g.stroke();
-      g.fillRect(x - Math.max(1, bw * 0.3), y(Math.max(b.open, b.close)),
-                 Math.max(2, bw * 0.6), Math.max(1, Math.abs(y(b.open) - y(b.close))));
-      if (i % 20 === 0) { g.fillStyle = "#888"; g.fillText(String(b.hhmm).slice(0, 5), x - 12, H - 6); }
-    });
-    g.fillStyle = "#888";
-    for (let i = 0; i <= 3; i++) {
-      const v = lo + (hi - lo) * i / 3;
-      g.fillText(Math.round(v).toLocaleString(), 2, y(v) + 3);
-    }
-  }, [wBars9]);
+  }, [open9, desk]);
+  // the desk's living state - holdings, waiting offers, events - every 12s
   useEffect(() => {
     if (!open9) return;
     let live = true;
     const load = async () => {
       try {
         let codes = "";
-        if (menu9 === "m2") {
+        if (desk === "m2") {
           const st = await api<{ stocks: { code: string }[] }>("/paper-desk/live/status");
           codes = (st?.stocks || []).map((s) => s.code).join(",");
         }
@@ -624,41 +580,17 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
         if (!live || !r || r.computing) return;
         const hh = (r.holding || []).filter((h) => h.rule !== "chatbot");
         setHolds9(hh);
-        setAlgoWaits9(r.waiting || []);
-        // completed episodes, newest first - the 🎞 replay list reads these
-        setEps9((r.rows || []).filter((x) => x.rule !== "chatbot")
-          .sort((a, b) => (String(a.sell_t) < String(b.sell_t) ? 1 : -1)).slice(0, 20));
-        // 🔄 lifecycle: a code that JUST appeared in holding glows green 6s
-        const hset = new Set(hh.map((h) => h.code));
-        if (prevHold9.current) {
-          for (const cc of Array.from(hset)) {
-            if (!prevHold9.current.has(cc)) {
-              setGlow9((gg) => ({ ...gg, [cc]: Date.now() }));
-              setTimeout(() => setGlow9((gg) => {
-                const n2 = { ...gg }; delete n2[cc]; return n2; }), 6000);
-            }
-          }
-        }
-        prevHold9.current = hset;
-        // the day's event ticker, newest first: every buy and every slice sell
-        const ev: [string, string][] = [];
+        const ev: [string, string, string][] = [];
         for (const x of (r.rows || [])) {
           if (x.rule === "chatbot") continue;
-          if (x.buy_t) ev.push([String(x.buy_t), `🟢 ${t("매수", "BUY")} ${x.name} (${String(x.buy_t).slice(0, 5)})`]);
-          for (const s of ((x.parts?.sells || []) as [number, number, string, number, number, unknown, unknown][])) {
-            const [px, qy, tt, , , , ] = s;
-            const why = String(s[5] ?? "");
-            ev.push([String(tt), `🔴 ${t("매도", "SELL")} ${x.name} ${qy}주 @ ${Number(px).toLocaleString()} (${String(tt).slice(0, 5)})${why && why !== "true" && why !== "false" ? "" : ""}`]);
-          }
-          if (x.sell_t && x.exit_why) ev.push([String(x.sell_t), `✔ ${x.name} ${t("종료", "closed")} ${x.net_pct ?? ""}% — ${String(x.exit_why).slice(0, 22)} (${String(x.sell_t).slice(0, 5)})`]);
+          if (x.buy_t) ev.push([String(x.buy_t), x.code, `🟢 ${t("매수", "BUY")} ${x.name} (${String(x.buy_t).slice(0, 5)})`]);
+          if (x.sell_t && x.exit_why) ev.push([String(x.sell_t), x.code, `✔ ${x.name} ${t("종료", "closed")} ${x.net_pct ?? ""}% — ${String(x.exit_why).slice(0, 22)} (${String(x.sell_t).slice(0, 5)})`]);
         }
         for (const h of hh) {
           if (h.slices) for (const s of h.slices) {
             const why = String(s[2] ?? "");
-            // ✓/⚠ RULE CHECK (boss 2026-08-27: "is it following the rules -
-            // show visually"): a +k% rung must fill AT OR ABOVE its formula
-            // price, a -1% stop within its floor - verified per event, per
-            // slice, against the base RECORDED at that sale (s[4])
+            // rule-check chip: the fill price verified against the rule's own
+            // formula at the base RECORDED at that sale (s[4])
             const b0 = Number(s[4] ?? h.base ?? 0);
             const px = Number(s[0] ?? 0);
             let chip = "";
@@ -672,23 +604,28 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
                   ? " ✓" + t("손절가", "stop px") : " ⚠" + t("규칙과 다름", "off-rule");
               }
             }
-            ev.push([String(s[3] ?? ""), `🔴 ${t("매도", "SELL")} ${h.name} ${s[1]}주 @ ${Number(s[0]).toLocaleString()} — ${why.slice(0, 16)}${chip}`]);
+            ev.push([String(s[3] ?? ""), h.code, `🔴 ${t("매도", "SELL")} ${h.name} ${s[1]}주 @ ${Number(s[0]).toLocaleString()} — ${why.slice(0, 16)}${chip}`]);
           }
         }
         ev.sort((a, b) => (a[0] < b[0] ? 1 : -1));
-        const evTexts = ev.slice(0, 14).map((e) => e[1]);
-        // 🔥 fire the alarm on genuinely NEW events (skip the first load)
+        const evRows = ev.slice(0, 40).map((e) => ({ code: e[1], txt: e[2] }));
         if (prevEv9.current) {
-          for (const e of evTexts) {
-            if (!prevEv9.current.has(e)) {
-              pushFire9(e, e.startsWith("🟢"));
-            }
+          for (const e of evRows.slice(0, 14)) {
+            if (!prevEv9.current.has(e.txt)) pushFire9(e.txt, e.txt.startsWith("🟢"));
           }
         }
-        prevEv9.current = new Set(evTexts);
-        setEvts9(evTexts);
+        prevEv9.current = new Set(evRows.slice(0, 14).map((e) => e.txt));
+        setEvts9(evRows);
         setTs9(new Date().toLocaleTimeString("ko-KR", { hour12: false }));
-        // ⏳ our waiting price offers (chat limit orders) + fill detection
+        // waiting offers: the algo's working pends + the boss's chat limits
+        // (menu 1 is the six, pure - boss 2026-08-27)
+        const SIXSET = new Set(SIX9.map((s) => s.code));
+        const merged: { code: string; name?: string; side: string; qty?: number;
+          px: number; wall?: number | null; chat: boolean }[] =
+          (r.waiting || []).map((w) => ({
+            code: w.code, name: w.name, side: "BUY", qty: w.qty, px: Number(w.px || 0),
+            wall: (typeof w.wall === "object" && w.wall ? w.wall.price : w.wall) as number | null,
+            chat: false }));
         try {
           const stt = await api<{ open_orders?: { id?: number; ticker?: string;
             name?: string; side?: string; qty?: number; limit_price?: number }[];
@@ -708,423 +645,216 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
             }
           }
           prevWait9.current = new Set(oo.map((o) => Number(o.id)));
-          // menu 1 is the six, pure (boss 2026-08-27) - chat waits of other
-          // companies show only on menu 2
-          const SIX9 = new Set(["000660", "005930", "017670", "034020", "035420", "042660"]);
-          if (live) setWaits9(desk === "m1" ? oo.filter((o) => SIX9.has(String(o.ticker || ""))) : oo);
+          for (const w of oo) {
+            const cc = String(w.ticker || "");
+            if (desk === "m1" && !SIXSET.has(cc)) continue;
+            merged.push({ code: cc, name: w.name || cc, side: String(w.side || "BUY"),
+                          qty: w.qty, px: Number(w.limit_price || 0), wall: null, chat: true });
+          }
         } catch { /* state optional */ }
-        // LIGHT BY LAW (boss 2026-08-27: "make it lighter"): tape only for
-        // OPENED holding cards, order book only for the ONE clicked waiting
-        // card + opened holdings. Nothing downloads for a closed card.
-        const nb: typeof bars9 = {};
-        const nbk: typeof book9 = {};
-        for (const h of hh.slice(0, 10)) {
-          if (!openCards9.has(h.code)) continue;
-          const tp = await api<{ bars?: { hhmm: string; open: number; high: number;
-            low: number; close: number }[] }>(
-            `/paper-desk/live/tape?code=${h.code}&period=60&bars=70`);
-          if (tp?.bars) nb[h.code] = tp.bars;
-        }
-        const bkCodes = Array.from(new Set([
-          ...hh.filter((h) => openCards9.has(h.code)).map((h) => h.code),
-          ...(expWait9 ? [expWait9] : []),
-        ])).slice(0, 8);
-        for (const cc of bkCodes) {
-          try {
-            const bk = await api<{ asks?: [number, number][]; bids?: [number, number][] }>(
-              `/paper-desk/live/book?code=${cc}`);
-            if (bk?.asks) nbk[cc] = { asks: bk.asks, bids: bk.bids || [] };
-          } catch { /* book optional */ }
-        }
-        if (live) { setBars9(nb); setBook9(nbk); }
+        if (live) setWaitsAll9(merged);
       } catch { /* keep the last good frame */ }
     };
     load();
-    const hh2 = setInterval(load, 12000);
-    return () => { live = false; clearInterval(hh2); };
-  }, [open9, fam9, menu9, t, openCards9, expWait9]);
-  const Chart = ({ h }: { h: Hold }) => {
-    const cv = useRef<HTMLCanvasElement | null>(null);
-    const bs = bars9[h.code] || [];
-    const base0 = Number(h.base ?? h.entry ?? 0);
-    const k9 = (h.slices || []).filter((s) => String(s[2] ?? "").startsWith("+")).length;
-    const step9 = fam9 === "d3" ? null : base0 * (1 + ((k9 + 1) * 1.0 - 0.15) / 100);
-    const stop9 = base0 * 0.99;
-    useEffect(() => {
-      const c = cv.current;
-      if (!c || !bs.length || !base0) return;
-      const W = c.clientWidth, H = c.clientHeight;
-      c.width = W * 2; c.height = H * 2;
-      const g = c.getContext("2d");
-      if (!g) return;
-      g.scale(2, 2); g.clearRect(0, 0, W, H);
-      const lo = Math.min(...bs.map((b) => b.low), stop9) * 0.999;
-      const hi = Math.max(...bs.map((b) => b.high), step9 || 0, base0) * 1.001;
-      const y = (v: number) => 6 + (hi - v) / Math.max(1e-9, hi - lo) * (H - 24);
-      const bw = (W - 46) / bs.length;
-      bs.forEach((b, i) => {
-        const x = 46 + i * bw + bw / 2;
-        const up = b.close >= b.open;
-        g.strokeStyle = g.fillStyle = up ? "#d32f2f" : "#1565c0";
-        g.beginPath(); g.moveTo(x, y(b.high)); g.lineTo(x, y(b.low)); g.stroke();
-        g.fillRect(x - Math.max(1, bw * 0.3), y(Math.max(b.open, b.close)),
-                   Math.max(2, bw * 0.6),
-                   Math.max(1, Math.abs(y(b.open) - y(b.close))));
-      });
-      const line = (v: number, col: string, lab: string) => {
-        g.strokeStyle = col; g.setLineDash([4, 3]);
-        g.beginPath(); g.moveTo(46, y(v)); g.lineTo(W - 2, y(v)); g.stroke();
-        g.setLineDash([]); g.fillStyle = col; g.font = "9px sans-serif";
-        g.fillText(lab, 1, y(v) + 3);
-      };
-      line(stop9, "#c62828", `-1% ${Math.round(stop9).toLocaleString()}`);
-      if (step9) line(step9, "#2e7d32", `+${k9 + 1}% ${Math.round(step9).toLocaleString()}`);
-      line(base0, "#9e9e9e", `${t("기준", "base")} ${Math.round(base0).toLocaleString()}`);
-    }, [bs, base0, step9, stop9, k9]);
-    const last = bs[bs.length - 1], prev = bs[bs.length - 2];
-    const fast = last && prev && Math.abs(last.close / prev.close - 1) * 100 >= 0.5;
-    const bk = book9[h.code];
-    const maxAsk = bk ? Math.max(...bk.asks.slice(0, 5).map((a) => a[1])) : 0;
-    const maxBid = bk ? Math.max(...bk.bids.slice(0, 5).map((a) => a[1])) : 0;
-    const near = (p: number) => step9 && Math.abs(p - step9) < (step9 * 0.0015)
-      ? ` ←+${k9 + 1}%` : Math.abs(p - stop9) < (stop9 * 0.0015) ? " ←-1%" : "";
-    return (
-      <div className="rounded border p-1.5" style={{ borderColor: "rgba(21,101,192,0.3)", minWidth: 250 }}>
-        <div className="text-[10.5px] font-bold tabular-nums flex gap-1 items-center">
-          {h.name} <span className="opacity-70">{h.qty_left ?? "?"}{t("주", "sh")}</span>
-          <span style={{ color: (h.unreal_pct ?? 0) >= 0 ? "#d32f2f" : "#1565c0" }}>
-            {(h.unreal_pct ?? 0) >= 0 ? "+" : ""}{h.unreal_pct}%</span>
-          {fast && <span className="animate-pulse" style={{ color: "#e65100" }}>⚡{t("급변동", "fast")}</span>}
-        </div>
-        <div className="flex gap-1">
-          <canvas ref={cv} className="flex-1" style={{ height: 118 }} />
-          {bk && (
-            <div className="text-[8.5px] tabular-nums leading-[1.35] shrink-0" style={{ width: 92 }}>
-              {bk.asks.slice(0, 5).reverse().map(([p, q], i) => (
-                <div key={`a${i}`} style={{ color: "#1565c0" }}>
-                  {q === maxAsk ? "🧱" : ""}{p.toLocaleString()} <span className="opacity-60">{q.toLocaleString()}</span>{near(p)}
-                </div>))}
-              <div className="border-t my-0.5" style={{ borderColor: "rgba(128,128,128,0.3)" }} />
-              {bk.bids.slice(0, 5).map(([p, q], i) => (
-                <div key={`b${i}`} style={{ color: "#d32f2f" }}>
-                  {q === maxBid ? "🧱" : ""}{p.toLocaleString()} <span className="opacity-60">{q.toLocaleString()}</span>{near(p)}
-                </div>))}
-            </div>
-          )}
-        </div>
-        <div className="text-[9.5px] opacity-70 tabular-nums">
-          {fam9 === "d3"
-            ? t("고점 후 3음봉 전량 매도 대기", "sells ALL at 3rd blue after peak")
-            : t(`다음: +${k9 + 1}% 도달 시 ${fam9 === "d1" ? "50%" : "10%"} 매도 · 빨간선 터치 시 전량 · 🧱=최대 대기벽`,
-                `next: sell ${fam9 === "d1" ? "50%" : "10%"} at +${k9 + 1}% · ALL at the red line · 🧱=biggest wall`)}
-        </div>
-      </div>
-    );
-  };
+    const h2 = setInterval(load, 12000);
+    return () => { live = false; clearInterval(h2); };
+  }, [open9, fam9, desk, t]);
+  // THE ONE BIG STOCK - its tape and book, 8s (nothing loads until a click)
+  useEffect(() => {
+    if (!open9 || !sel9) return;
+    let live = true;
+    const load = async () => {
+      try {
+        const tp = await api<{ bars?: Bar[] }>(
+          `/paper-desk/live/tape?code=${sel9}&period=60&bars=240`);
+        if (live && tp?.bars) setBars9(tp.bars);
+        const bk = await api<{ asks?: [number, number][]; bids?: [number, number][] }>(
+          `/paper-desk/live/book?code=${sel9}`);
+        if (live && bk?.asks) setBook9({ asks: bk.asks, bids: bk.bids || [] });
+      } catch { /* keep last */ }
+    };
+    setBars9([]); setBook9(null);
+    load();
+    const h = setInterval(load, 8000);
+    return () => { live = false; clearInterval(h); };
+  }, [open9, sel9]);
+  const selHold9 = holds9.find((h) => h.code === sel9) || null;
+  const selWaits9 = waitsAll9.filter((w) => w.code === sel9);
+  const cv9 = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const c = cv9.current;
+    if (!c || !bars9.length) return;
+    const W = c.clientWidth, H = c.clientHeight;
+    c.width = W * 2; c.height = H * 2;
+    const g = c.getContext("2d");
+    if (!g) return;
+    g.scale(2, 2); g.clearRect(0, 0, W, H);
+    const base0 = Number(selHold9?.base ?? selHold9?.entry ?? 0);
+    const k9 = (selHold9?.slices || []).filter((s) => String(s[2] ?? "").startsWith("+")).length;
+    const stop9 = base0 ? base0 * 0.99 : 0;
+    const step9 = base0 && fam9 !== "d3" ? base0 * (1 + ((k9 + 1) * 1.0 - 0.15) / 100) : 0;
+    const lo = Math.min(...bars9.map((b) => b.low), stop9 || Infinity) * 0.999;
+    const hi = Math.max(...bars9.map((b) => b.high), step9 || 0, base0 || 0) * 1.001;
+    const y = (v: number) => 8 + (hi - v) / Math.max(1e-9, hi - lo) * (H - 30);
+    const bw = (W - 60) / bars9.length;
+    g.font = "10px sans-serif";
+    bars9.forEach((b, i) => {
+      const x = 60 + i * bw + bw / 2;
+      const up = b.close >= b.open;
+      g.strokeStyle = g.fillStyle = up ? "#d32f2f" : "#1565c0";
+      g.beginPath(); g.moveTo(x, y(b.high)); g.lineTo(x, y(b.low)); g.stroke();
+      g.fillRect(x - Math.max(1, bw * 0.3), y(Math.max(b.open, b.close)),
+                 Math.max(2, bw * 0.6), Math.max(1, Math.abs(y(b.open) - y(b.close))));
+      if (i % 30 === 0) { g.fillStyle = "#888"; g.fillText(String(b.hhmm).slice(0, 5), x - 14, H - 8); }
+    });
+    g.fillStyle = "#888";
+    for (let i = 0; i <= 4; i++) {
+      const v = lo + (hi - lo) * i / 4;
+      g.fillText(Math.round(v).toLocaleString(), 2, y(v) + 3);
+    }
+    const line = (v: number, col: string, lab: string) => {
+      if (!v) return;
+      g.strokeStyle = col; g.setLineDash([5, 3]);
+      g.beginPath(); g.moveTo(60, y(v)); g.lineTo(W - 2, y(v)); g.stroke();
+      g.setLineDash([]); g.fillStyle = col; g.font = "11px sans-serif";
+      g.fillText(lab, 2, y(v) - 4); g.font = "10px sans-serif";
+    };
+    if (base0) {
+      line(stop9, "#c62828", `-1% 전량 ${Math.round(stop9).toLocaleString()}`);
+      if (step9) line(step9, "#2e7d32", `+${k9 + 1}% ${fam9 === "d1" ? "50%" : "10%"} 매도 ${Math.round(step9).toLocaleString()}`);
+      line(base0, "#9e9e9e", `기준 ${Math.round(base0).toLocaleString()}`);
+    }
+    for (const w of selWaits9) {
+      line(w.px, "#b8860b", `⏳ ${w.side === "BUY" ? "매수" : "매도"} 제시 ${Math.round(w.px).toLocaleString()}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bars9, selHold9, fam9, sel9, waitsAll9]);
+  const selName9 = (deskList9.find((s) => s.code === sel9) || { name: sel9 }).name;
+  const selEvts9 = evts9.filter((e) => e.code === sel9);
+  const step9now = selHold9 ? 4 : selWaits9.length ? 2 : 1;
+  const maxA9 = book9 ? Math.max(0, ...book9.asks.slice(0, 7).map((a) => a[1])) : 0;
+  const maxB9 = book9 ? Math.max(0, ...book9.bids.slice(0, 7).map((a) => a[1])) : 0;
   return (
     <div className="mt-2 rounded-xl text-[11px] overflow-hidden border-2"
       style={{ borderColor: "#37474f" }}>
-      {/* NEW LOOK (boss 2026-08-27: "do it different UI"): a control-tower
-          band on top, the desk's own name, and inside a 3-lane flow board */}
       <div className="px-3 py-2 flex items-center gap-2 flex-wrap cursor-pointer select-none"
         style={{ background: "#37474f", color: "#eceff1" }}
         onClick={() => setOpen9((o) => !o)}>
         <b className="text-[13px]">🗼 {t("오더룸", "ORDER ROOM")} · {desk === "m1" ? t("메뉴1 — 6종목", "Menu 1 - the six") : t("메뉴2 — 체크리스트", "Menu 2 - checklist")}</b>
         <span style={{ opacity: 0.75 }}>
-          {t("주문 → 줄서기 → 체결 → 보유 → 완료, 한 판에서", "order → queue → fill → hold → done, one board")}
+          {t("종목을 고르면 그 종목만 크게 — 실시간", "pick a stock, watch only it - big, live")}
           {ts9 && ` · ${ts9}`}</span>
         <span className="ml-auto font-bold">{open9 ? "▲" : t("▼ 열기", "▼ open")}</span>
       </div>
-      <div className="px-3 py-2" style={{ background: "var(--bg-elevated)" }}>
       {open9 && (
-        <>
-          {fire9.map((f) => (
-            <div key={f.id} className="mt-2 px-4 py-3 rounded-xl font-extrabold animate-pulse tabular-nums"
-              style={{ fontSize: 19, background: f.buy ? "rgba(46,125,50,0.14)" : "rgba(198,40,40,0.14)",
-                       border: `3px solid ${f.buy ? "#2e7d32" : "#c62828"}`,
-                       color: f.buy ? "#2e7d32" : "#c62828" }}>
-              🔥 {f.txt}
-            </div>
+      <div className="px-3 py-2" style={{ background: "var(--bg-elevated)" }}>
+        {fire9.map((f) => (
+          <div key={f.id} className="mb-2 px-4 py-3 rounded-xl font-extrabold animate-pulse tabular-nums"
+            style={{ fontSize: 19, background: f.buy ? "rgba(46,125,50,0.14)" : "rgba(198,40,40,0.14)",
+                     border: `3px solid ${f.buy ? "#2e7d32" : "#c62828"}`,
+                     color: f.buy ? "#2e7d32" : "#c62828" }}>
+            🔥 {f.txt}
+          </div>
+        ))}
+        <div className="flex gap-1 flex-wrap items-center">
+          {(["d1", "d2", "d3"] as const).map((f) => (
+            <button key={f} onClick={() => setFam9(f)}
+              className="px-2 py-0.5 rounded border text-[10.5px]"
+              style={fam9 === f ? { background: "#37474f", color: "#fff", borderColor: "#37474f", fontWeight: 700 }
+                                : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+              {t(`알고${f[1]}`, `Algo ${f[1]}`)}</button>
           ))}
-          {/* TWO CLEAR WORLDS (boss 2026-08-27: "I could not find how I can
-              show real time, and the past case - these are 2 different
-              cases"): one tab for NOW, one tab for the recordings */}
-          <div className="mt-2 flex gap-1 flex-wrap items-center">
-            {([["live", t("🔴 실시간 — 지금 이 순간", "🔴 LIVE - right now")],
-               ["past", t("🎞 지난 기록 — 다시보기", "🎞 PAST - replay the recordings")]] as const)
-              .map(([m, lab]) => (
-              <button key={m} onClick={() => { setMode9(m); if (m === "live") setRepRun9(false); }}
-                className="px-3 py-1 rounded-t border-2 border-b-0 text-[11.5px] font-bold"
-                style={mode9 === m
-                  ? { background: m === "live" ? "#b71c1c" : "#4a148c", color: "#fff",
-                      borderColor: m === "live" ? "#b71c1c" : "#4a148c" }
-                  : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
-                {lab}</button>
-            ))}
-            <span className="mx-1 opacity-40">|</span>
-            {(["d1", "d2", "d3"] as const).map((f) => (
-              <button key={f} onClick={() => setFam9(f)}
-                className="px-2 py-0.5 rounded border text-[10.5px]"
-                style={fam9 === f ? { background: "#37474f", color: "#fff", borderColor: "#37474f", fontWeight: 700 }
-                                  : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
-                {t(`알고${f[1]}`, `Algo ${f[1]}`)}</button>
-            ))}
-          </div>
-          {mode9 === "live" && (<>
-          {/* 🎓 THE 5 STEPS, pupil-simple (boss 2026-08-27: "a school pupil
-              also able to understand — how our agent is buying/selling
-              according to the rules") — every trade walks this exact road */}
-          <div className="mt-2 px-2 py-1.5 rounded border flex items-center gap-1 flex-wrap text-[10.5px]"
-            style={{ borderColor: "rgba(21,101,192,0.35)", background: "var(--bg-elevated)" }}>
-            <b style={{ color: "#1565c0" }}>🎓 {t("매매의 5단계", "the 5 steps of a trade")}:</b>
-            {[t("① 신호 — 규칙의 조건이 맞음", "① signal - the rule's condition is met"),
-              t(`② 호가창에 줄서기 (${algoWaits9.length + waits9.length}건 대기 중)`, `② queue in the order book (${algoWaits9.length + waits9.length} waiting)`),
-              t("③ 체결! 🔥", "③ filled! 🔥"),
-              t(`④ 보유·사다리 매도 (${holds9.length}건)`, `④ holding · ladder sells (${holds9.length})`),
-              t(`⑤ 완료 → 기록 (오늘 ${eps9.length}건)`, `⑤ done → history (${eps9.length} today)`)]
-              .map((s2, i) => (
-                <span key={i} className="px-1.5 py-0.5 rounded"
-                  style={{ background: "rgba(21,101,192,0.08)" }}>{s2}{i < 4 ? " →" : ""}</span>
-              ))}
-          </div>
-          {(waits9.length > 0 || algoWaits9.length > 0) && (
-            <div className="mt-2 px-2 py-1.5 rounded border tabular-nums"
-              style={{ borderColor: "#b8860b", background: "rgba(184,134,11,0.06)" }}>
-              <b style={{ color: "#b8860b" }}>⏳ {t("2단계 — 우리 주문이 호가창(대기 리스트)에 줄 서 있음", "step ② - our order queued in the order book (waiting list)")}</b>
-              <div className="text-[10px] opacity-80">
-                {t("규칙: 살 때는 제일 큰 사자 벽(🧱) 바로 한 틱 위에, 팔 때는 제일 싼 팔자 바로 한 틱 아래에 줄을 섭니다 — 그래야 제일 먼저 걸립니다.",
-                   "the rule: to BUY we queue one tick above the biggest buy wall (🧱); to SELL one tick under the cheapest ask - so we get filled first.")}
-              </div>
-              {[...algoWaits9.map((w) => ({ code: w.code, name: w.name, side: "BUY",
-                  qty: w.qty, px: Number(w.px || 0),
-                  wall: typeof w.wall === "object" && w.wall ? w.wall.price : w.wall,
-                  chat: false })),
-                ...waits9.map((w) => ({ code: String(w.ticker || ""), name: w.name || w.ticker,
-                  side: String(w.side || "BUY"), qty: w.qty,
-                  px: Number(w.limit_price || 0), wall: null, chat: true }))].map((w, i) => {
-                const bk = book9[w.code];
-                // build the ladder WITH our order written inside it, exactly
-                // at its price (boss: "you could write your order in the
-                // waiting list - show this")
-                const asks = (bk?.asks || []).slice(0, 5);
-                const bids = (bk?.bids || []).slice(0, 5);
-                const maxA = Math.max(0, ...asks.map((a) => a[1]));
-                const maxB = Math.max(0, ...bids.map((a) => a[1]));
-                return (
-                  <div key={i} className="mt-1.5 flex gap-3 flex-wrap items-start">
-                    <div className="font-bold text-[12px]" style={{ minWidth: 230 }}>
-                      {w.chat ? "💬 " : "🟠 "}{t("조건 충족", "condition MET")} → {w.name}{" "}
-                      {w.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")} {w.qty ? `${w.qty}${t("주", "sh")}` : ""}{" "}
-                      <b>₩{w.px.toLocaleString()}</b>
-                      {w.wall ? t(` (🧱벽 ₩${Number(w.wall).toLocaleString()} 바로 앞)`,
-                                  ` (right in front of the 🧱 ₩${Number(w.wall).toLocaleString()} wall)`) : ""}
-                      {" → "}<span className="animate-pulse">{t("대기 중…", "WAITING…")}</span>
-                      {" "}<button className="px-1.5 rounded border text-[9.5px] font-normal"
-                        style={{ borderColor: "#b8860b", color: "#b8860b" }}
-                        onClick={() => setExpWait9(expWait9 === w.code ? "" : w.code)}>
-                        📗 {expWait9 === w.code ? t("호가창 접기", "fold book") : t("호가창에서 우리 줄 보기", "see our place in the book")}</button>
-                      <div className="text-[9.5px] font-normal opacity-70">
-                        {t("가격이 닿는 순간 자동 체결 → 🔥 큰 알림 → 보유로 이동", "fills the moment price touches → 🔥 big alarm → moves to holding")}
-                      </div>
-                    </div>
-                    {expWait9 === w.code && bk && (
-                      <div className="text-[9.5px] tabular-nums leading-[1.5] rounded border px-1.5 py-1"
-                        style={{ borderColor: "rgba(184,134,11,0.4)", minWidth: 168 }}>
-                        {asks.slice().reverse().map(([p, q], j) => (
-                          <div key={`la${j}`} style={{ color: "#1565c0" }}>
-                            {q === maxA ? "🧱" : ""}{p.toLocaleString()} <span className="opacity-60">{q.toLocaleString()}</span>
-                            {w.side === "SELL" && Math.abs(p - w.px) < p * 0.0012 ? <b style={{ color: "#b8860b" }}> ←{t("우리 주문", "OUR order")}</b> : ""}
-                          </div>))}
-                        {w.side === "SELL" && !asks.some(([p]) => Math.abs(p - w.px) < p * 0.0012) && (
-                          <div style={{ color: "#b8860b", fontWeight: 700 }}>
-                            {w.px.toLocaleString()} ←{t("우리 주문 (여기 줄 섰어요)", "OUR order queued here")}</div>)}
-                        <div className="border-t my-0.5" style={{ borderColor: "rgba(128,128,128,0.35)" }} />
-                        {w.side === "BUY" && !bids.some(([p]) => Math.abs(p - w.px) < p * 0.0012) && (
-                          <div style={{ color: "#b8860b", fontWeight: 700 }}>
-                            {w.px.toLocaleString()} ←{t("우리 주문 (여기 줄 섰어요)", "OUR order queued here")}</div>)}
-                        {bids.map(([p, q], j) => (
-                          <div key={`lb${j}`} style={{ color: "#d32f2f" }}>
-                            {q === maxB ? "🧱" : ""}{p.toLocaleString()} <span className="opacity-60">{q.toLocaleString()}</span>
-                            {w.side === "BUY" && Math.abs(p - w.px) < p * 0.0012 ? <b style={{ color: "#b8860b" }}> ←{t("우리 주문", "OUR order")}</b> : ""}
-                          </div>))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {holds9.length === 0 ? (
-            <div className="mt-2 text-[var(--text-muted)]">
-              {t("지금 보유 포지션이 없습니다 — 장중에 문이 열리면 이 자리에서 실시간으로 봅니다. (종 15:19 이후는 항상 빈손이 정상)",
-                 "No open positions right now — when a door opens during the session you watch it here live. (After the 15:19 bell, empty hands are the law)")}</div>
-          ) : (
-            <div className="mt-2">
-              <b style={{ color: "#1565c0" }}>{t("4단계 — 보유 중 (이름을 누르면 차트+호가창이 열립니다 · 닫혀 있으면 가볍습니다)",
-                                                 "step ④ - holding (click a name to open its chart+book · closed = light)")}</b>
-              <div className="mt-1 grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))" }}>
-                {holds9.slice(0, 10).map((h) => {
-                  const isOpen = openCards9.has(h.code);
-                  const fresh = !!glow9[h.code];
-                  const k9c = (h.slices || []).filter((s) => String(s[2] ?? "").startsWith("+")).length;
-                  return (
-                    <div key={h.code}
-                      style={fresh ? { boxShadow: "0 0 0 3px #2e7d32", borderRadius: 6,
-                                       transition: "box-shadow 0.4s" } : undefined}>
-                      {fresh && (
-                        <div className="text-[10px] font-bold" style={{ color: "#2e7d32" }}>
-                          ✨ {t("방금 체결 → 보유로 들어옴", "just filled → moved into holding")}</div>
-                      )}
-                      {isOpen ? (
-                        <div>
-                          <Chart h={h} />
-                          <div className="flex gap-1 mt-0.5">
-                            <button className="text-[9.5px] px-1.5 rounded border"
-                              style={{ borderColor: "rgba(21,101,192,0.4)", color: "#1565c0" }}
-                              onClick={() => setOpenCards9((sc) => { const n2 = new Set(sc); n2.delete(h.code); return n2; })}>
-                              {t("차트 접기 ▲", "fold ▲")}</button>
-                            <button className="text-[9.5px] px-1.5 rounded border"
-                              style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}
-                              onClick={() => { setMode9("past"); startReplay9(h, true); }}>
-                              🎞 {t("이 매매 처음부터 다시보기", "replay this trade from the start")}</button>
-                          </div>
-                        </div>
-                      ) : (
-                        <button className="w-full text-left rounded border px-2 py-1.5 tabular-nums text-[11px]"
-                          style={{ borderColor: "rgba(21,101,192,0.3)" }}
-                          onClick={() => setOpenCards9((sc) => new Set(sc).add(h.code))}>
-                          <b>{h.name}</b> {h.qty_left ?? "?"}{t("주", "sh")}{" "}
-                          <span style={{ color: (h.unreal_pct ?? 0) >= 0 ? "#d32f2f" : "#1565c0", fontWeight: 700 }}>
-                            {(h.unreal_pct ?? 0) >= 0 ? "+" : ""}{h.unreal_pct}%</span>
-                          <span className="opacity-60"> · {t(`사다리 ${k9c}칸 판매됨`, `${k9c} rungs banked`)} · 📈 {t("눌러서 차트 열기", "click to open chart")}</span>
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-          {eps9.length > 0 && (
-            <div className="mt-2">
-              <b style={{ color: "#2e7d32" }}>{t("⑤ 오늘 완료된 매매 — 누르면 🎞 지난 기록 탭에서 그대로 다시보기",
-                                                 "⑤ today's completed trades - click to replay in the 🎞 PAST tab")}</b>
-              <div className="mt-0.5 flex gap-1 flex-wrap">
-                {eps9.slice(0, 12).map((x, i) => (
-                  <button key={i} onClick={() => { setMode9("past"); startReplay9(x); }}
-                    className="px-1.5 py-0.5 rounded border text-[10px] tabular-nums"
-                    style={{ borderColor: "rgba(106,27,154,0.4)", color: "#6a1b9a" }}>
-                    ▶ {x.name} {String(x.buy_t).slice(0, 5)}→{String(x.sell_t).slice(0, 5)}{" "}
-                    <b style={{ color: (x.net_pct ?? 0) >= 0 ? "#d32f2f" : "#1565c0" }}>
-                      {(x.net_pct ?? 0) >= 0 ? "+" : ""}{x.net_pct}%</b>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="mt-2">
-            <b style={{ color: "#1565c0" }}>{t("오늘의 이벤트 (최신순)", "Today's events (newest first)")}</b>
-            <div className="mt-0.5 max-h-[130px] overflow-y-auto leading-relaxed tabular-nums">
-              {evts9.length ? evts9.map((e, i) => <div key={i}>{e}</div>)
-                            : <div className="opacity-60">{t("아직 이벤트 없음", "no events yet")}</div>}
-            </div>
-          </div>
-          <div className="mt-2 pt-2 border-t" style={{ borderColor: "rgba(21,101,192,0.2)" }}>
-            <b style={{ color: "#1565c0" }}>🔭 {t("직접 보기 — 아무 종목이나 골라 차트+호가창", "watch any stock yourself — chart + order book")}</b>
-            <div className="mt-1 flex gap-1 flex-wrap">
-              {watchList9.map((s) => (
-                <button key={s.code} onClick={() => setWatch9(watch9 === s.code ? "" : s.code)}
-                  className="px-1.5 py-0.5 rounded border text-[10px]"
-                  style={watch9 === s.code
-                    ? { background: "#1565c0", color: "#fff", borderColor: "#1565c0", fontWeight: 700 }
-                    : { borderColor: "rgba(21,101,192,0.35)", color: "#1565c0" }}>
-                  {s.name}</button>
-              ))}
-            </div>
-            {watch9 && (
-              <div className="mt-1.5 flex gap-2 flex-wrap">
-                <canvas ref={wCv9} className="rounded border"
-                  style={{ height: 190, flex: "1 1 380px", minWidth: 300, borderColor: "rgba(21,101,192,0.3)" }} />
-                {wBook9 && (
-                  <div className="text-[10px] tabular-nums leading-[1.5] shrink-0" style={{ width: 150 }}>
-                    <b>{t("호가창 (대기 리스트)", "order book (waiting list)")}</b>
-                    {wBook9.asks.slice(0, 5).reverse().map(([p, q], i) => (
-                      <div key={`wa${i}`} style={{ color: "#1565c0" }}>
-                        {q === Math.max(...wBook9.asks.slice(0, 5).map((a) => a[1])) ? "🧱" : ""}
-                        {p.toLocaleString()} <span className="opacity-60">{q.toLocaleString()}</span></div>))}
-                    <div className="border-t my-0.5" style={{ borderColor: "rgba(128,128,128,0.35)" }} />
-                    {wBook9.bids.slice(0, 5).map(([p, q], i) => (
-                      <div key={`wb${i}`} style={{ color: "#d32f2f" }}>
-                        {q === Math.max(...wBook9.bids.slice(0, 5).map((a) => a[1])) ? "🧱" : ""}
-                        {p.toLocaleString()} <span className="opacity-60">{q.toLocaleString()}</span></div>))}
-                  </div>
-                )}
-              </div>
+          <span className="mx-1 opacity-40">|</span>
+          {deskList9.map((s) => {
+            const isH = holds9.some((h) => h.code === s.code);
+            const isW = waitsAll9.some((w) => w.code === s.code);
+            return (
+              <button key={s.code} onClick={() => setSel9(sel9 === s.code ? "" : s.code)}
+                className="px-2 py-1 rounded-lg border text-[11.5px] font-bold"
+                style={sel9 === s.code
+                  ? { background: "#1565c0", color: "#fff", borderColor: "#1565c0" }
+                  : { borderColor: "var(--border-default)", color: "var(--text-primary)" }}>
+                {s.name}{isH ? " 🟢" : isW ? " ⏳" : ""}</button>
+            );
+          })}
+        </div>
+        {!sel9 ? (
+          <div className="mt-2 text-[var(--text-muted)] text-[11.5px]">
+            {t("종목 이름을 누르면 그 종목의 매매만 크게 실시간으로 봅니다 — 🟢 보유 중 · ⏳ 주문 대기 중. (지난 매매 다시보기는 아래 매매 내역에서 회사 이름을 누르세요)",
+               "click a stock to watch ONLY its trading, big and live - 🟢 holding · ⏳ order waiting. (to replay a past trade, click the company NAME in the trading history below)")}</div>
+        ) : (
+        <div className="mt-2">
+          <div className="flex items-baseline gap-3 flex-wrap tabular-nums">
+            <b className="text-[17px]">{selName9}</b>
+            {bars9.length > 0 && (
+              <b className="text-[17px]">₩{Math.round(bars9[bars9.length - 1].close).toLocaleString()}</b>
             )}
-          </div>
-          </>)}
-          {mode9 === "past" && (<>
-            {/* 🎞 THE PAST WORLD — recordings only, clearly separated from live */}
-            <div className="mt-2 px-2 py-1.5 rounded border" style={{ borderColor: "#4a148c", background: "rgba(74,20,140,0.04)" }}>
-              <b style={{ color: "#4a148c" }}>🎞 {t("무엇을 다시 볼까요?", "what shall we replay?")}</b>
-              <div className="text-[10px] opacity-75">
-                {t("전부 실제 기록입니다 — 그날의 봉과 그날의 체결이 그대로 재생됩니다. 초록▲=실제 매수 · 주황▼=실제 매도.",
-                   "all real recordings - that day's bars and fills play back exactly. green▲=real buy · orange▼=real sell.")}</div>
-              <div className="mt-1 flex gap-1 flex-wrap">
-                {eps9.slice(0, 12).map((x, i) => (
-                  <button key={i} onClick={() => startReplay9(x)}
-                    className="px-1.5 py-0.5 rounded border text-[10px] tabular-nums"
-                    style={rep9 && rep9.code === x.code ? { background: "#4a148c", color: "#fff", borderColor: "#4a148c" }
-                                                        : { borderColor: "rgba(74,20,140,0.4)", color: "#4a148c" }}>
-                    ▶ {x.name} {String(x.buy_t).slice(0, 5)}→{String(x.sell_t).slice(0, 5)}{" "}
-                    {(x.net_pct ?? 0) >= 0 ? "+" : ""}{x.net_pct}%</button>
-                ))}
-                {holds9.map((h, i) => (
-                  <button key={`h${i}`} onClick={() => startReplay9(h, true)}
-                    className="px-1.5 py-0.5 rounded border text-[10px] tabular-nums"
-                    style={{ borderColor: "rgba(74,20,140,0.4)", color: "#4a148c" }}>
-                    ▶ {h.name} {t("(보유 중 — 처음부터)", "(holding - from the start)")}</button>
-                ))}
-              </div>
-            </div>
-            {rep9 ? (
-              <div className="mt-2 px-2 py-1.5 rounded border"
-                style={{ borderColor: "#6a1b9a", background: "rgba(106,27,154,0.04)" }}>
-                <div className="flex items-center gap-2 flex-wrap text-[10.5px]">
-                  <b style={{ color: "#6a1b9a" }}>
-                    🎞 {t(`다시보기 — ${rep9.name} (실제 기록: 봉도 체결도 그날 그대로)`,
-                          `REPLAY — ${rep9.name} (the real recording, bars and fills exactly as they happened)`)}</b>
-                  <button onClick={() => setRepRun9((r2) => !r2)}
-                    className="px-2.5 py-0.5 rounded border font-bold"
-                    style={{ background: repRun9 ? "#fff" : "#6a1b9a", color: repRun9 ? "#6a1b9a" : "#fff", borderColor: "#6a1b9a" }}>
-                    {repRun9 ? t("⏸ 일시정지", "⏸ pause") : t("▶ 재생", "▶ play")}</button>
-                  <button onClick={() => { setRepPos9(0); setRepRun9(true); }}
-                    className="px-2 py-0.5 rounded border" style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
-                    ⏮ {t("처음부터", "restart")}</button>
-                  {[1, 3, 10].map((s2) => (
-                    <button key={s2} onClick={() => setRepSpeed9(s2)}
-                      className="px-2 py-0.5 rounded border"
-                      style={repSpeed9 === s2 ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
-                                              : { borderColor: "#6a1b9a", color: "#6a1b9a" }}>×{s2}</button>
-                  ))}
-                  <span className="tabular-nums opacity-70">
-                    {repBars9.length ? `${String((repBars9[Math.max(0, repPos9 - 1)] || {}).hhmm || "").slice(0, 5)} · ${repPos9}/${repBars9.length}${t("봉", " bars")}` : ""}</span>
-                </div>
-                <canvas ref={repCv9} className="w-full mt-1 rounded border"
-                  style={{ height: 210, borderColor: "rgba(106,27,154,0.3)" }} />
-                <div className="text-[9.5px] opacity-70">
-                  {t("▲초록 = 그날의 실제 매수 · ▼주황 = 실제 매도(사다리/손절) — 재생 시계가 그 분을 지나는 순간 나타납니다",
-                     "▲green = the real buys · ▼orange = the real sells (rungs/stop) - each appears the moment the replay clock passes its minute")}</div>
-              </div>
+            {selHold9 ? (
+              <span className="text-[13px] font-bold">
+                🟢 {t("보유", "holding")} {selHold9.qty_left ?? "?"}{t("주", "sh")}{" "}
+                <span style={{ color: (selHold9.unreal_pct ?? 0) >= 0 ? "#d32f2f" : "#1565c0" }}>
+                  {(selHold9.unreal_pct ?? 0) >= 0 ? "+" : ""}{selHold9.unreal_pct}%</span>
+                {" · "}{t(`사다리 ${(selHold9.slices || []).filter((s) => String(s[2] ?? "").startsWith("+")).length}칸 판매됨`,
+                          `${(selHold9.slices || []).filter((s) => String(s[2] ?? "").startsWith("+")).length} rungs banked`)}
+              </span>
+            ) : selWaits9.length ? (
+              <span className="text-[13px] font-bold" style={{ color: "#b8860b" }}>
+                ⏳ {t("주문이 호가창에 줄 서 있음", "order queued in the book")} — ₩{selWaits9[0].px.toLocaleString()}
+              </span>
             ) : (
-              <div className="mt-2 text-[var(--text-muted)]">
-                {t("위에서 다시 볼 매매를 고르세요 — 완료된 매매, 보유 중 매매, 데모 전부 됩니다.",
-                   "pick a trade above - completed, holding, or the demo all work.")}</div>
+              <span className="text-[12px] text-[var(--text-muted)]">
+                {t("포지션 없음 — 규칙의 문이 조건을 기다리는 중", "no position - the rule's doors are watching for their condition")}</span>
             )}
-          </>)}
-        </>
-      )}
+            <span className="text-[10.5px] text-[var(--text-muted)]">
+              {["", t("① 신호 대기", "① watching"), t("② 줄서기", "② queued"), "",
+                t("④ 보유·사다리", "④ holding·ladder")][step9now]}
+            </span>
+          </div>
+          <div className="mt-1.5 flex gap-2 flex-wrap">
+            <canvas ref={cv9} className="rounded border"
+              style={{ height: 340, flex: "1 1 560px", minWidth: 320, borderColor: "rgba(21,101,192,0.35)" }} />
+            <div className="text-[11.5px] tabular-nums leading-[1.65] shrink-0 rounded border px-2 py-1.5"
+              style={{ minWidth: 190, borderColor: "var(--border-default)" }}>
+              <b>{t("호가창 — 대기 리스트", "order book - the waiting list")}</b>
+              {(book9?.asks || []).slice(0, 7).reverse().map(([p, q], j) => (
+                <div key={`a${j}`} style={{ color: "#1565c0" }}>
+                  {q === maxA9 ? "🧱" : ""}{p.toLocaleString()} <span className="opacity-60">{q.toLocaleString()}</span>
+                  {selWaits9.some((w) => w.side === "SELL" && Math.abs(p - w.px) < p * 0.0012)
+                    ? <b style={{ color: "#b8860b" }}> ←{t("우리 주문", "OUR order")}</b> : ""}
+                </div>))}
+              {selWaits9.filter((w) => w.side === "SELL"
+                  && !(book9?.asks || []).slice(0, 7).some(([p]) => Math.abs(p - w.px) < p * 0.0012))
+                .map((w, j) => (
+                  <div key={`sx${j}`} style={{ color: "#b8860b", fontWeight: 700 }}>
+                    {w.px.toLocaleString()} ←{t("우리 주문 (여기 줄)", "OUR order queued here")}</div>))}
+              <div className="border-t my-0.5" style={{ borderColor: "rgba(128,128,128,0.35)" }} />
+              {selWaits9.filter((w) => w.side === "BUY"
+                  && !(book9?.bids || []).slice(0, 7).some(([p]) => Math.abs(p - w.px) < p * 0.0012))
+                .map((w, j) => (
+                  <div key={`bx${j}`} style={{ color: "#b8860b", fontWeight: 700 }}>
+                    {w.px.toLocaleString()} ←{t("우리 주문 (여기 줄)", "OUR order queued here")}</div>))}
+              {(book9?.bids || []).slice(0, 7).map(([p, q], j) => (
+                <div key={`b${j}`} style={{ color: "#d32f2f" }}>
+                  {q === maxB9 ? "🧱" : ""}{p.toLocaleString()} <span className="opacity-60">{q.toLocaleString()}</span>
+                  {selWaits9.some((w) => w.side === "BUY" && Math.abs(p - w.px) < p * 0.0012)
+                    ? <b style={{ color: "#b8860b" }}> ←{t("우리 주문", "OUR order")}</b> : ""}
+                </div>))}
+              <div className="mt-1 text-[9.5px] opacity-70">
+                {t("살 때: 제일 큰 사자 벽(🧱) 한 틱 위 · 팔 때: 제일 싼 팔자 한 틱 아래",
+                   "buy: one tick above the biggest 🧱 buy wall · sell: one tick under the cheapest ask")}</div>
+            </div>
+          </div>
+          <div className="mt-1.5">
+            <b style={{ color: "#1565c0" }}>{selName9} {t("오늘의 매매 기록 (최신순)", "today's trades (newest first)")}</b>
+            <div className="mt-0.5 max-h-[150px] overflow-y-auto leading-relaxed tabular-nums text-[12px]">
+              {selEvts9.length ? selEvts9.map((e, i) => <div key={i}>{e.txt}</div>)
+                : <div className="opacity-60">{t("오늘 이 종목의 매매가 아직 없습니다", "no trades on this stock yet today")}</div>}
+            </div>
+          </div>
+        </div>
+        )}
       </div>
+      )}
     </div>
   );
 }
@@ -1543,6 +1273,11 @@ export default function LiveDeskPage() {
     const d = new Date(); const m = d.getHours() * 60 + d.getMinutes();
     return !(m >= 540 && m <= 930);
   });
+  // 🎞 replay of one finished trade, opened by clicking the company NAME in
+  // the history (boss 2026-08-27; the buy TIME keeps its arrow jump)
+  const [repEp9, setRepEp9] = useState<{ code: string; name: string; entry?: number;
+    buy_t?: string; sell_t?: string; exit?: number; exit_why?: string; qty?: number;
+    parts?: { buys?: unknown[][]; sells?: unknown[][] } } | null>(null);
   // ONE truth for "is any chart wanted right now" — the strip was pressed OR a
   // trade row is picked. NOT `sel`: an open drill-down's trades TABLE stays on
   // screen with the chart folded, and folding must never clear `sel` — clearing
@@ -4219,6 +3954,7 @@ export default function LiveDeskPage() {
           </div>
 
           {/* the trades */}
+          {repEp9 && <TradeReplay ep={repEp9} t={t} onClose={() => setRepEp9(null)} />}
           <div className="overflow-y-auto" style={{ maxHeight: 340 }}>
             <table className="w-full text-[11.5px] tabular-nums">
               <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0" style={{ background: "var(--bg-elevated)" }}>
@@ -4253,7 +3989,16 @@ export default function LiveDeskPage() {
                             { behavior: "smooth", block: "center" }); }}
                       className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]"
                       style={{ background: pick === i ? "rgba(230,81,0,0.10)" : "transparent" }}>
-                      <td className="px-3 py-1 font-bold text-[var(--text-primary)]">{pick === i ? "▶ " : ""}{tr.name}
+                      <td className="px-3 py-1 font-bold text-[var(--text-primary)] cursor-pointer underline decoration-dotted"
+                        title={t("클릭: 이 매매의 기록을 그대로 재생 (🎞 다시보기)", "click: replay this trade's recording (🎞)")}
+                        onClick={(e) => { e.stopPropagation();
+                          setRepEp9({ code: tr.code, name: tr.name, entry: tr.entry,
+                            buy_t: tr.buy_t, sell_t: tr.sell_t, exit: tr.exit,
+                            exit_why: (tr as unknown as { exit_why?: string }).exit_why,
+                            qty: (tr as unknown as { qty?: number }).qty,
+                            parts: (tr as unknown as { parts?: { buys?: unknown[][];
+                              sells?: unknown[][] } }).parts }); }}>
+                        🎞 {pick === i ? "▶ " : ""}{tr.name}
                         {tr.day && (
                           <span className="ml-1 text-[9px] font-bold px-1 py-0.5 rounded"
                             style={{ background: "rgba(230,81,0,0.12)", color: "#e65100" }}>{tr.day}</span>
