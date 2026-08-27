@@ -1508,6 +1508,20 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            # 한전기술 case: +15% in 23 min, then the burst door
                            # boarded the exhaustion 3 times into stops): a day
                            # already up spike_guard% takes no NEW entries
+            elif (v.get("gap_guard") and s.get("prev_close") and closes[0]
+                  and (closes[0] / s["prev_close"] - 1) * 100
+                      >= float(v["gap_guard"])
+                  and (c >= closes[0]
+                       if v.get("gap_wait", "below_open") == "below_open"
+                       else (s.get("times")
+                             and str(s["times"][i])[:5] < "10:00"))):
+                pass       # 갭상승 GUARD (boss 2026-08-27, the +5.2% 하이닉스 /
+                           # +4.6% 전기 morning: "if the day starts with 갭상승
+                           # do not buy - wait the decrease"): a stock that
+                           # OPENED gap_guard% above yesterday's close takes no
+                           # NEW entries while the price still sits at/above
+                           # its own open ("below_open" form) or before 10:00
+                           # ("t10" form). Exits untouched; default off.
             elif (v.get("ctx") and s.get("daily_pos") is not None
                   and v["ctx"].get("no_buy_top") is not None
                   and s["daily_pos"] >= v["ctx"]["no_buy_top"]):
