@@ -218,7 +218,10 @@ VARIANTS: list[dict] = [
      # stock that OPENED >=2% above yesterday's close takes no NEW entries
      # before 10:00. Court 2026-08-27 (251 days): +16.6M/+17.7M/+6.2M per
      # algo, t10 form; today's exhibit 하이닉스 +5.2% gap then -3.6%.
-     "gap_guard": 2.0, "gap_wait": "t10",
+     # threshold 1.0 (boss 2026-08-27 evening: "check all historical data,
+     # find the best %"): full sweep 1.0-4.0 on 251 days - 1.0% is best desk-
+     # wide (+42.1M/yr vs +28.5M at 2.0; D1 +24.1M, D2 +5.5M, D3 +12.5M).
+     "gap_guard": 1.0, "gap_wait": "t10",
      # the boss's buying-zone law, his 3-red form (measured cost ~0): in the
      # bottom zone the +1% ladder holds until 3 consecutive rises confirm the turn
      "bot_ladder": "3red",
@@ -291,7 +294,10 @@ VARIANTS: list[dict] = [
      # stock that OPENED >=2% above yesterday's close takes no NEW entries
      # before 10:00. Court 2026-08-27 (251 days): +16.6M/+17.7M/+6.2M per
      # algo, t10 form; today's exhibit 하이닉스 +5.2% gap then -3.6%.
-     "gap_guard": 2.0, "gap_wait": "t10",
+     # threshold 1.0 (boss 2026-08-27 evening: "check all historical data,
+     # find the best %"): full sweep 1.0-4.0 on 251 days - 1.0% is best desk-
+     # wide (+42.1M/yr vs +28.5M at 2.0; D1 +24.1M, D2 +5.5M, D3 +12.5M).
+     "gap_guard": 1.0, "gap_wait": "t10",
      # the boss's buying-zone law, his 3-red form (measured cost ~0): in the
      # bottom zone the +1% ladder holds until 3 consecutive rises confirm the turn
      "bot_ladder": "3red",
@@ -380,7 +386,10 @@ VARIANTS: list[dict] = [
      # stock that OPENED >=2% above yesterday's close takes no NEW entries
      # before 10:00. Court 2026-08-27 (251 days): +16.6M/+17.7M/+6.2M per
      # algo, t10 form; today's exhibit 하이닉스 +5.2% gap then -3.6%.
-     "gap_guard": 2.0, "gap_wait": "t10",
+     # threshold 1.0 (boss 2026-08-27 evening: "check all historical data,
+     # find the best %"): full sweep 1.0-4.0 on 251 days - 1.0% is best desk-
+     # wide (+42.1M/yr vs +28.5M at 2.0; D1 +24.1M, D2 +5.5M, D3 +12.5M).
+     "gap_guard": 1.0, "gap_wait": "t10",
      # the boss's buying-zone law, his 3-red form (measured cost ~0): in the
      # bottom zone the +1% ladder holds until 3 consecutive rises confirm the turn
      "bot_ladder": "3red",
@@ -524,13 +533,10 @@ VARIANTS: list[dict] = [
 # to watch.
 import copy as _copy9
 _D4 = _copy9.deepcopy(next(v for v in VARIANTS if v["id"] == "D2"))
-# "t10" form chosen over "below_open" (both court-measured: +17.7M vs +18.2M
-# on 알고2's book, statistically the same) because the boss's words were
-# "removing the huge gap things FROM THE MORNING" - below_open released the
-# doors seconds after the fade began and still caught 09:0x knives below the
-# open; t10 keeps the whole gap morning visibly clean.
-_D4.update({"id": "D4", "family": "d4",
-            "gap_guard": 2.0, "gap_wait": "t10"})
+# Since the boss armed the gap law on ALL algos (08-27 evening), 알고4 is the
+# DEMO/BACKTEST bench: an exact mirror of 알고2's book, inheriting every dial
+# (gap threshold included) so future rule trials diff against the real thing.
+_D4.update({"id": "D4", "family": "d4"})
 VARIANTS.append(_D4)
 
 
