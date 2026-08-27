@@ -816,7 +816,10 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
             }
           }
           prevWait9.current = new Set(oo.map((o) => Number(o.id)));
-          if (live) setWaits9(oo);
+          // menu 1 is the six, pure (boss 2026-08-27) - chat waits of other
+          // companies show only on menu 2
+          const SIX9 = new Set(["000660", "005930", "017670", "034020", "035420", "042660"]);
+          if (live) setWaits9(desk === "m1" ? oo.filter((o) => SIX9.has(String(o.ticker || ""))) : oo);
         } catch { /* state optional */ }
         // LIGHT BY LAW (boss 2026-08-27: "make it lighter"): tape only for
         // OPENED holding cards, order book only for the ONE clicked waiting

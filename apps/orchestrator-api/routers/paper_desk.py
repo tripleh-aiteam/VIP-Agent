@@ -856,13 +856,20 @@ def _chat_fam_entries(code_set: set, day8: str = ""):
                     _mkt9[_c9] = str(_m9 or "").upper()
             except Exception:
                 _mkt9 = {}
+        # MENU 1 IS THE SIX, PURE (boss 2026-08-27: "in menu 1 we have only 6
+        # stock companies - keep them and remove others; menu 2 is different,
+        # every day it can change, so it is OK"). Supersedes the 08-26 "on both"
+        # ruling: when the desk asking is exactly the six, chat trades of any
+        # OTHER company stay off that board. Menu 2 keeps showing them all.
+        _SIX9 = {"000660", "005930", "017670", "034020", "035420", "042660"}
+        _menu1_9 = set(code_set) == _SIX9
         by_code: dict = {}
         for r in recs:
             c = r[0]
             if _mkt9 and _mkt9.get(c, "") != "KOSPI":
                 continue
-            # NO menu split (boss 2026-08-26: "why only menu1, it must be on both") —
-            # the boss's own trades follow him to whichever desk he is looking at
+            if _menu1_9 and c not in _SIX9:
+                continue
             # only the SELECTED day's orders (boss 2026-08-26: old days leaked into
             # today's view and confused the room)
             if day8:
@@ -971,6 +978,8 @@ def _chat_fam_entries(code_set: set, day8: str = ""):
             "AND order_type='limit' ORDER BY id")).fetchall()
         for r in opens:
             c = r[0]
+            if _menu1_9 and c not in _SIX9:
+                continue              # menu 1 is the six, pure (boss 08-27)
             try:
                 _m8 = db.execute(_sqt(
                     "SELECT market FROM krx_stocks WHERE code=:c"), {"c": c}).scalar()
