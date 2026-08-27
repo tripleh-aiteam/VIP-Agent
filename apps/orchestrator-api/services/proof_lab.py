@@ -212,6 +212,13 @@ VARIANTS: list[dict] = [
      # spike-exhaustion guard (한전기술 +15% case; measured +13.3M/yr desk-wide):
      # a day already up 8% takes no NEW entries
      "spike_guard": 8,
+     # 개상승 GUARD ON ALL ALGOS (boss 2026-08-27 evening, final: "in
+     # the algorithm if there is 개상승 it should not buy - update and
+     # fix it, both menus"; 알고4 stays as the demo/backtest bench): a
+     # stock that OPENED >=2% above yesterday's close takes no NEW entries
+     # before 10:00. Court 2026-08-27 (251 days): +16.6M/+17.7M/+6.2M per
+     # algo, t10 form; today's exhibit 하이닉스 +5.2% gap then -3.6%.
+     "gap_guard": 2.0, "gap_wait": "t10",
      # the boss's buying-zone law, his 3-red form (measured cost ~0): in the
      # bottom zone the +1% ladder holds until 3 consecutive rises confirm the turn
      "bot_ladder": "3red",
@@ -278,6 +285,13 @@ VARIANTS: list[dict] = [
      # spike-exhaustion guard (한전기술 +15% case; measured +13.3M/yr desk-wide):
      # a day already up 8% takes no NEW entries
      "spike_guard": 8,
+     # 개상승 GUARD ON ALL ALGOS (boss 2026-08-27 evening, final: "in
+     # the algorithm if there is 개상승 it should not buy - update and
+     # fix it, both menus"; 알고4 stays as the demo/backtest bench): a
+     # stock that OPENED >=2% above yesterday's close takes no NEW entries
+     # before 10:00. Court 2026-08-27 (251 days): +16.6M/+17.7M/+6.2M per
+     # algo, t10 form; today's exhibit 하이닉스 +5.2% gap then -3.6%.
+     "gap_guard": 2.0, "gap_wait": "t10",
      # the boss's buying-zone law, his 3-red form (measured cost ~0): in the
      # bottom zone the +1% ladder holds until 3 consecutive rises confirm the turn
      "bot_ladder": "3red",
@@ -360,6 +374,13 @@ VARIANTS: list[dict] = [
      # spike-exhaustion guard (한전기술 +15% case; measured +13.3M/yr desk-wide):
      # a day already up 8% takes no NEW entries
      "spike_guard": 8,
+     # 개상승 GUARD ON ALL ALGOS (boss 2026-08-27 evening, final: "in
+     # the algorithm if there is 개상승 it should not buy - update and
+     # fix it, both menus"; 알고4 stays as the demo/backtest bench): a
+     # stock that OPENED >=2% above yesterday's close takes no NEW entries
+     # before 10:00. Court 2026-08-27 (251 days): +16.6M/+17.7M/+6.2M per
+     # algo, t10 form; today's exhibit 하이닉스 +5.2% gap then -3.6%.
+     "gap_guard": 2.0, "gap_wait": "t10",
      # the boss's buying-zone law, his 3-red form (measured cost ~0): in the
      # bottom zone the +1% ladder holds until 3 consecutive rises confirm the turn
      "bot_ladder": "3red",
@@ -1843,6 +1864,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     pos["qty_add"] = 0
                     pos["added"] = True
                     pos["add_px"] = c
+                    pos["add_i"] = i        # the bar this add landed on
                     pos["base"] = pos["cost"] / pos["qty"]
                     pos["entry"] = pos["base"]
                 _chop_now = (_dip_state(s, (v.get("dip") or {}).get("win_sec", 600))
@@ -1916,7 +1938,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # is falling and never confirmed its turn - the scout law upside
                 # down). A new dip signal re-enters normally.
                 _stpl9 = pos["base"] * (1 - dp.get("stop_reset", 1.5) / 100)
-                _lo9 = (s.get("lows") or closes)[i]
+                # SAME-BAR ADD → NO LOW-TRIGGER (boss 2026-08-27, the 한전기술
+                # 15:01 +0.04% artifact: the confirm added at the bar's top and
+                # the stop then fired off the same bar's LOW - a price that
+                # existed BEFORE the add raised the base. On the add's own bar
+                # only the CLOSE may trip the stop; the low arms from the next
+                # bar, when the raised base has actually lived through a bar.
+                _lo9 = (c if pos.get("add_i") == i
+                        else (s.get("lows") or closes)[i])
                 if _lo9 <= _stpl9 or c <= _stpl9:
                     # boss 2026-08-13 12:1x: "in ALL cases if it decreases -1.5%,
                     # sell out all and again buy" - the scout-only exception from
@@ -2101,7 +2130,16 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                             and c <= pos.get("base", 0)
                             and pos.get("pr_pk", 0) < pos.get("base", 0)
                             * (1 + _pr.get("arm", 0.0) / 100)
-                            and pos.get("pr_blues", 0) >= _blues9):
+                            and pos.get("pr_blues", 0) >= _blues9
+                            # NO SELLING IN THE BUYING ZONE (boss 2026-08-27
+                            # evening, final: "in the buying zone no selling -
+                            # implement in both menus"): the never-rose cleanup
+                            # HOLDS in the bottom fifth - the -1% stop and the
+                            # 15:19 bell stay above every zone (protection and
+                            # the closing law are his older, higher laws)
+                            and not (_sc9.get("sell_bot") is not None
+                                     and _dps9 is not None
+                                     and _dps9 <= _sc9["sell_bot"])):
                         _dsell(pos["qty"], c, "미상승 3음봉 조기 정리")
                         _drow(f"미상승 3음봉 전량 정리 · 조각 {len(pos['slices'])}회")
                         if dp.get("reboard"):
