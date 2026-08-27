@@ -7338,6 +7338,29 @@ def _run_agent_impl(
         except Exception as e:
             log.warning(f"readiness failed: {str(e)[:120]}")
 
+    # === 🪪 IDENTITY ("who are you?" answered "I'm Qwen, developed by Alibaba
+    # Cloud" — 2026-08-27): the assistant is the VIP assistant, whatever engine
+    # happens to run under the hood. Deterministic, instant, bilingual. ===
+    _t_id = (transcript or "").strip().lower()
+    if (not confirmed_tool and transcript and len(_t_id) <= 40
+            and any(k in _t_id for k in ("who are you", "who r u", "what are you",
+                                         "your name", "네 이름", "이름이 뭐", "누구야",
+                                         "누구세요", "누구니", "정체가", "너는 누구", "넌 누구"))):
+        _en_id = not _re.search(r"[가-힣]", transcript)
+        _rep_id = (("**저는 VIP 트레이딩 어시스턴트입니다.**\n"
+                    "· 실시간 주가·과거 데이터(우리 서버 DB), 100체크리스트 추천, 채팅 매수·매도, "
+                    "포지션 감시(🔔)까지 담당합니다\n"
+                    "· 내부 AI 엔진은 상황에 따라 자동 전환됩니다 — \"어떤 모델 쓰고 있어?\"라고 "
+                    "물으시면 정확히 알려드립니다") if not _en_id else
+                   ("**I'm your VIP trading assistant.**\n"
+                    "· I handle live & historical prices (from our own DB), 100-checklist "
+                    "recommendations, buy/sell by chat, and the 🔔 position watchdog\n"
+                    "· The AI engine underneath switches automatically — ask "
+                    "\"which model are you using?\" for the exact one"))
+        return {"intent": "identity", "language": lang, "reply": _rep_id,
+                "action": None, "speak": True, "transcript": transcript,
+                "tool_used": "identity"}
+
     # === 💨 CASUAL FAST-PATH (boss 2026-08-27: "very simple question but it is
     # answering very late") — greetings/thanks/help-asks skip the whole tool-decision
     # machinery (its system prompt alone is thousands of tokens) and take one tiny
@@ -8338,9 +8361,12 @@ def _run_agent_impl(
             _msgs_o.append({"role": "user", "content": transcript})
             _sys_o = ("You are the VIP assistant. Answer helpfully, accurately and "
                       "concisely in the user's language. If you genuinely do not know "
-                      "a fact, say so briefly — never invent one." if _en_o else
+                      "a fact, say so briefly — never invent one. Never state you are "
+                      "Qwen/Gemini/GPT/Claude or name an AI vendor — you are simply "
+                      "the VIP assistant." if _en_o else
                       "당신은 VIP 어시스턴트입니다. 사용자의 언어로 정확하고 간결하게 답하세요. "
-                      "모르는 사실은 짧게 모른다고 말하고, 절대 지어내지 마세요.")
+                      "모르는 사실은 짧게 모른다고 말하고, 절대 지어내지 마세요. Qwen/Gemini/GPT "
+                      "등 특정 AI 회사·모델명을 자신의 정체로 말하지 마세요 — 당신은 VIP 어시스턴트입니다.")
             _out_o = chat_completion_sync(_sys_o, _msgs_o, max_tokens=700,
                                           temperature=0.5, model=forced_model or None)
             if (_out_o or "").strip():
