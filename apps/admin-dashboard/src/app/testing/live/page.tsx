@@ -391,10 +391,24 @@ class SafeBox extends React.Component<{ children?: React.ReactNode; label?: stri
 function TradeReplay({ ep, t, onClose }: {
   ep: { code: string; name: string; entry?: number; base?: number;
         buy_t?: string; sell_t?: string; live?: boolean; exit?: number;
-        exit_why?: string; qty?: number;
+        exit_why?: string; qty?: number; rule?: string; net_pct?: number;
+        sig?: unknown; wall?: { price?: number; qty?: number } | null;
+        judge?: unknown;
         parts?: { buys?: unknown[][]; sells?: unknown[][] } };
   t: (ko: string, en: string) => string; onClose: () => void }) {
   type Bar = { hhmm: string; open: number; high: number; low: number; close: number };
+  // ① why THIS stock - the recorded checklist rank at the buy moment
+  const [rank, setRank] = useState<{ rank?: number | null; avg?: number;
+    of?: number; in_top?: boolean } | null>(null);
+  useEffect(() => {
+    let live = true;
+    api<{ ok: boolean; rank?: number | null; avg?: number; of?: number; in_top?: boolean }>(
+      `/paper-desk/live/reco-rank-at?code=${ep.code}&t=${encodeURIComponent(String(ep.buy_t || "").slice(0, 8))}`)
+      .then((d) => { if (live && d?.ok) setRank(d); })
+      .catch(() => {});
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ep]);
   const [bars, setBars] = useState<Bar[]>([]);
   const [pos, setPos] = useState(0);
   const [run, setRun] = useState(true);
@@ -505,6 +519,50 @@ function TradeReplay({ ep, t, onClose }: {
         <button onClick={onClose} className="ml-auto px-2 py-0.5 rounded border"
           style={{ borderColor: "#4a148c", color: "#4a148c" }}>✕ {t("닫기", "close")}</button>
       </div>
+      {/* THE WHOLE PROCESS (boss 2026-08-27: "show how we selected this
+          stock, how we decided the price with the order book, how we bought,
+          how we sold - all detail"): four numbered blocks, all from the RECORD */}
+      <div className="mt-1.5 grid gap-1.5 text-[11px]" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))" }}>
+        <div className="px-2 py-1.5 rounded border" style={{ borderColor: "var(--border-default)" }}>
+          <b style={{ color: "#4a148c" }}>{t("① 왜 이 종목을 골랐나", "① why this stock")}</b>
+          <div className="mt-0.5">
+            {rank && rank.rank != null
+              ? t(`매수 순간의 100항목 체크리스트 기록: 전체 ${rank.of ?? "?"}종목 중 ${rank.rank}위 (점수 ${rank.avg ?? "?"}) — ${rank.in_top ? "상위 자리(좌석) 안이라 매수 자격이 있었습니다" : "당시 순위 기록"}`,
+                  `the recorded 100-item checklist at the buy moment: rank ${rank.rank} of ${rank.of ?? "?"} (score ${rank.avg ?? "?"}) — ${rank.in_top ? "inside the top seats, so it was allowed to buy" : "the rank at that time"}`)
+              : t("회장님의 고정 6종목 데스크 — 이 종목은 항상 감시·매매 대상입니다 (메뉴2 종목이면 매수 순간의 순위 기록이 여기 뜹니다)",
+                  "the boss's fixed six-stock desk - always watched and traded (a menu-2 stock shows its recorded rank here)")}
+          </div>
+        </div>
+        <div className="px-2 py-1.5 rounded border" style={{ borderColor: "var(--border-default)" }}>
+          <b style={{ color: "#4a148c" }}>{t("② 가격을 어떻게 정했나 (호가창)", "② how the price was decided (order book)")}</b>
+          <div className="mt-0.5">
+            {ep.wall && ep.wall.price
+              ? t(`호가창의 제일 큰 매수벽 ₩${Number(ep.wall.price).toLocaleString()}${ep.wall.qty ? ` (${Number(ep.wall.qty).toLocaleString()}주)` : ""} 바로 한 틱 위 ₩${Math.round(base).toLocaleString()}에 제시 — 벽보다 먼저 체결되는 자리에 줄을 섰습니다`,
+                  `queued at ₩${Math.round(base).toLocaleString()}, one tick in front of the book's biggest buy wall ₩${Number(ep.wall.price).toLocaleString()}${ep.wall.qty ? ` (${Number(ep.wall.qty).toLocaleString()}sh)` : ""} - the spot that fills before the wall`)
+              : t(`신호봉의 가격 ₩${Math.round(base).toLocaleString()}으로 지정가 제시, 2봉 대기 법 — 오지 않으면 추격하지 않고 포기합니다`,
+                  `offered the signal bar's price ₩${Math.round(base).toLocaleString()} as a limit, 2-bar wait law - if the market doesn't come, we don't chase`)}
+          </div>
+        </div>
+        <div className="px-2 py-1.5 rounded border" style={{ borderColor: "var(--border-default)" }}>
+          <b style={{ color: "#2e7d32" }}>{t("③ 어떻게 샀나", "③ how it bought")}</b>
+          <div className="mt-0.5 tabular-nums">
+            {buys.map(([tt, px, qy], i) => (
+              <div key={i}>▲ {String(tt).slice(0, 5)} ₩{Math.round(px).toLocaleString()}{qy ? ` × ${qy}${t("주", "sh")}` : ""}
+                {i === 0 ? t(" — 규칙의 문이 열려 진입", " - the rule's door opened") : t(" — 보유 중 추가 매수", " - add-on while holding")}</div>
+            ))}
+          </div>
+        </div>
+        <div className="px-2 py-1.5 rounded border" style={{ borderColor: "var(--border-default)" }}>
+          <b style={{ color: "#e65100" }}>{t("④ 어떻게 팔았나", "④ how it sold")}</b>
+          <div className="mt-0.5 tabular-nums">
+            {sells.length ? sells.map(([tt, px, qy, why], i) => (
+              <div key={i}>▼ {String(tt).slice(0, 5)} ₩{Math.round(px).toLocaleString()}{qy ? ` × ${qy}${t("주", "sh")}` : ""}
+                {why ? ` — ${String(why).slice(0, 22)}` : ""}</div>
+            )) : <div>{ep.live ? t("아직 보유 중 — 매도 기록이 생기면 여기 쌓입니다", "still holding - sells will stack here") : "-"}</div>}
+            {ep.exit_why && <div className="opacity-80">✔ {String(ep.exit_why).slice(0, 40)}{ep.net_pct != null ? ` · ${t("실수익", "net")} ${ep.net_pct}%` : ""}</div>}
+          </div>
+        </div>
+      </div>
       <canvas ref={cv} className="w-full mt-1 rounded border" style={{ height: 240, borderColor: "rgba(74,20,140,0.3)" }} />
       <div className="text-[9.5px] opacity-70">
         {t("▲초록 = 실제 매수 · ▼주황 = 실제 매도 — 재생 시계가 그 분을 지나는 순간 나타납니다",
@@ -553,6 +611,24 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
   const [bars9, setBars9] = useState<Bar[]>([]);
   const [book9, setBook9] = useState<{ asks: [number, number][];
     bids: [number, number][] } | null>(null);
+  // 1분 / 일봉 (boss 2026-08-27: "in the chart put 2 buttons, 1 minute and
+  // daily") - daily = the year's candles WITH the zone lines, so the chosen
+  // stock's top/bottom law is visible in the same screen
+  const [per9, setPer9] = useState<"1m" | "day">("1m");
+  const [dayC9, setDayC9] = useState<{ candles: { d8: string; open: number;
+    high: number; low: number; close: number }[]; lines?: { no_buy_85?: number;
+    caution_60?: number; bottom_20?: number } } | null>(null);
+  useEffect(() => {
+    if (!open9 || !sel9 || per9 !== "day") return;
+    let live = true;
+    api<{ candles?: { d8: string; open: number; high: number; low: number;
+      close: number }[]; lines?: { no_buy_85?: number; caution_60?: number;
+      bottom_20?: number } }>(`/paper-desk/live/daily-chart?code=${sel9}`)
+      .then((d) => { if (live && d?.candles?.length)
+        setDayC9({ candles: d.candles, lines: d.lines }); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [open9, sel9, per9]);
   const deskList9 = desk === "m1" ? SIX9 : watchList9;
   useEffect(() => {
     if (!open9 || desk === "m1") return;
@@ -683,7 +759,53 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
   const cv9 = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
     const c = cv9.current;
-    if (!c || !bars9.length) return;
+    if (!c) return;
+    // 일봉: the year with the zone laws drawn (매도구간 85 / 주의 60 / 매수구간 20)
+    if (per9 === "day") {
+      const cd = dayC9?.candles || [];
+      if (!cd.length) return;
+      const W = c.clientWidth, H = c.clientHeight;
+      c.width = W * 2; c.height = H * 2;
+      const g = c.getContext("2d");
+      if (!g) return;
+      g.scale(2, 2); g.clearRect(0, 0, W, H);
+      const lo = Math.min(...cd.map((b) => b.low)) * 0.995;
+      const hi = Math.max(...cd.map((b) => b.high)) * 1.005;
+      const y = (v: number) => 8 + (hi - v) / Math.max(1e-9, hi - lo) * (H - 30);
+      const bw = (W - 60) / cd.length;
+      g.font = "10px sans-serif";
+      cd.forEach((b, i) => {
+        const x = 60 + i * bw + bw / 2;
+        const up = b.close >= b.open;
+        g.strokeStyle = g.fillStyle = up ? "#d32f2f" : "#1565c0";
+        g.beginPath(); g.moveTo(x, y(b.high)); g.lineTo(x, y(b.low)); g.stroke();
+        g.fillRect(x - Math.max(0.5, bw * 0.3), y(Math.max(b.open, b.close)),
+                   Math.max(1, bw * 0.6), Math.max(1, Math.abs(y(b.open) - y(b.close))));
+        if (i % 50 === 0) { g.fillStyle = "#888";
+          g.fillText(`${b.d8.slice(4, 6)}/${b.d8.slice(6)}`, x - 12, H - 8); }
+      });
+      g.fillStyle = "#888";
+      for (let i = 0; i <= 4; i++) {
+        const v = lo + (hi - lo) * i / 4;
+        g.fillText(Math.round(v).toLocaleString(), 2, y(v) + 3);
+      }
+      const zline = (v: number | undefined, col: string, lab: string) => {
+        if (!v) return;
+        g.strokeStyle = col; g.setLineDash([6, 4]);
+        g.beginPath(); g.moveTo(60, y(v)); g.lineTo(W - 2, y(v)); g.stroke();
+        g.setLineDash([]); g.fillStyle = col; g.font = "11px sans-serif";
+        g.fillText(lab, 64, y(v) - 4); g.font = "10px sans-serif";
+      };
+      zline(dayC9?.lines?.no_buy_85, "#c62828", "🔴 매도구간 (85% — 신규 매수 금지)");
+      zline(dayC9?.lines?.caution_60, "#e65100", "🟠 주의 (60% — 절반만 매수)");
+      zline(dayC9?.lines?.bottom_20, "#2e7d32", "🟢 매수구간 (20% — 바닥)");
+      // today, marked on the last candle
+      const lx = 60 + (cd.length - 1) * bw + bw / 2;
+      g.fillStyle = "#6a1b9a"; g.font = "11px sans-serif";
+      g.fillText("← 오늘", Math.min(lx + 4, W - 44), y(cd[cd.length - 1].close));
+      return;
+    }
+    if (!bars9.length) return;
     const W = c.clientWidth, H = c.clientHeight;
     c.width = W * 2; c.height = H * 2;
     const g = c.getContext("2d");
@@ -728,7 +850,7 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
       line(w.px, "#b8860b", `⏳ ${w.side === "BUY" ? "매수" : "매도"} 제시 ${Math.round(w.px).toLocaleString()}`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bars9, selHold9, fam9, sel9, waitsAll9]);
+  }, [bars9, selHold9, fam9, sel9, waitsAll9, per9, dayC9]);
   const selName9 = (deskList9.find((s) => s.code === sel9) || { name: sel9 }).name;
   const selEvts9 = evts9.filter((e) => e.code === sel9);
   const step9now = selHold9 ? 4 : selWaits9.length ? 2 : 1;
@@ -805,10 +927,67 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
               <span className="text-[12px] text-[var(--text-muted)]">
                 {t("포지션 없음 — 규칙의 문이 조건을 기다리는 중", "no position - the rule's doors are watching for their condition")}</span>
             )}
-            <span className="text-[10.5px] text-[var(--text-muted)]">
-              {["", t("① 신호 대기", "① watching"), t("② 줄서기", "② queued"), "",
-                t("④ 보유·사다리", "④ holding·ladder")][step9now]}
+            <span className="ml-auto flex gap-1">
+              {([["1m", t("1분", "1min")], ["day", t("일봉 (연간+구간선)", "daily (year+zones)")]] as const).map(([pp, lab]) => (
+                <button key={pp} onClick={() => setPer9(pp)}
+                  className="px-2 py-0.5 rounded border text-[10.5px] font-bold"
+                  style={per9 === pp ? { background: "#1565c0", color: "#fff", borderColor: "#1565c0" }
+                                     : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                  {lab}</button>
+              ))}
             </span>
+          </div>
+          {/* 🧭 THE PROCESS, live (boss 2026-08-27: "how we can see process?"):
+              the step road with the current step lit, and the exact next move
+              with the live distance to it - the story tells itself each refresh */}
+          <div className="mt-1.5 px-2 py-1.5 rounded border text-[12px] font-bold tabular-nums"
+            style={{ borderColor: "#1565c0", background: "rgba(21,101,192,0.05)" }}>
+            <span className="flex gap-1 flex-wrap items-center">
+              {[t("① 신호", "① signal"), t("② 줄서기", "② queue"), t("③ 체결", "③ fill"),
+                t("④ 보유·사다리", "④ hold·ladder"), t("⑤ 완료", "⑤ done")].map((s2, i) => (
+                <span key={i} className="px-1.5 py-0.5 rounded"
+                  style={i + 1 === step9now || (step9now === 4 && i === 2)
+                    ? { background: "#1565c0", color: "#fff" }
+                    : { background: "rgba(21,101,192,0.08)", color: "var(--text-secondary)" }}>
+                  {s2}{i < 4 ? " →" : ""}</span>
+              ))}
+            </span>
+            <div className="mt-1">
+              {(() => {
+                const last = bars9.length ? bars9[bars9.length - 1].close : 0;
+                if (selHold9) {
+                  const b0 = Number(selHold9.base ?? selHold9.entry ?? 0);
+                  const k9c = (selHold9.slices || []).filter((s) => String(s[2] ?? "").startsWith("+")).length;
+                  const rung = b0 * (1 + ((k9c + 1) * 1.0 - 0.15) / 100);
+                  const stop = b0 * 0.99;
+                  const dRung = last ? (rung / last - 1) * 100 : 0;
+                  const dStop = last ? (stop / last - 1) * 100 : 0;
+                  return <>
+                    🟢 {t(`${String(selHold9.buy_t || "").slice(0, 5)} 체결 ₩${Math.round(b0).toLocaleString()} → 보유 중`,
+                          `filled ${String(selHold9.buy_t || "").slice(0, 5)} @ ₩${Math.round(b0).toLocaleString()} → holding`)}
+                    {fam9 === "d3"
+                      ? t(" · 다음: 고점 후 3음봉이면 전량 매도", " · next: sells ALL at the 3rd blue after a peak")
+                      : t(` · 다음: ₩${Math.round(rung).toLocaleString()} (+${(k9c + 1)}% 계단, 지금가에서 ${dRung >= 0 ? "+" : ""}${dRung.toFixed(2)}%) 도달 시 ${fam9 === "d1" ? "50%" : "10%"} 매도`,
+                          ` · next: sell ${fam9 === "d1" ? "50%" : "10%"} at ₩${Math.round(rung).toLocaleString()} (+${(k9c + 1)}% rung, ${dRung >= 0 ? "+" : ""}${dRung.toFixed(2)}% from here)`)}
+                    {t(` · ₩${Math.round(stop).toLocaleString()} (-1%선, ${dStop.toFixed(2)}%) 터치 시 전량 → ⑤ 완료로`,
+                       ` · ALL out at ₩${Math.round(stop).toLocaleString()} (the -1% line, ${dStop.toFixed(2)}% away) → then ⑤ done`)}
+                  </>;
+                }
+                if (selWaits9.length) {
+                  const w = selWaits9[0];
+                  const dPx = last ? (w.px / last - 1) * 100 : 0;
+                  return <>
+                    ⏳ {t(`조건 충족 → ₩${w.px.toLocaleString()} 제시하고 호가창에 줄 서 있음`,
+                          `condition MET → offered ₩${w.px.toLocaleString()}, queued in the book`)}
+                    {w.wall ? t(` (🧱 벽 ₩${Number(w.wall).toLocaleString()} 바로 앞)`, ` (right in front of the 🧱 ₩${Number(w.wall).toLocaleString()} wall)`) : ""}
+                    {t(` · 지금가에서 ${dPx >= 0 ? "+" : ""}${dPx.toFixed(2)}% — 닿는 순간 🔥 체결 → ④ 보유로`,
+                       ` · ${dPx >= 0 ? "+" : ""}${dPx.toFixed(2)}% from here - touches → 🔥 filled → ④ holding`)}
+                  </>;
+                }
+                return <>👀 {t("① 규칙의 문이 조건을 기다리는 중 — 조건이 맞으면 ② 호가창에 가격을 제시하고, 체결되면 ④ 보유·사다리가 시작됩니다. 아래 기록에서 오늘 이 종목의 지난 과정을 볼 수 있습니다.",
+                               "① the rule's doors are watching - when the condition fits it ② offers a price in the book, and a fill starts ④ the holding ladder. Today's past steps for this stock are in the log below.")}</>;
+              })()}
+            </div>
           </div>
           <div className="mt-1.5 flex gap-2 flex-wrap">
             <canvas ref={cv9} className="rounded border"
@@ -1277,6 +1456,8 @@ export default function LiveDeskPage() {
   // the history (boss 2026-08-27; the buy TIME keeps its arrow jump)
   const [repEp9, setRepEp9] = useState<{ code: string; name: string; entry?: number;
     buy_t?: string; sell_t?: string; exit?: number; exit_why?: string; qty?: number;
+    live?: boolean; rule?: string; net_pct?: number;
+    wall?: { price?: number; qty?: number } | null;
     parts?: { buys?: unknown[][]; sells?: unknown[][] } } | null>(null);
   // ONE truth for "is any chart wanted right now" — the strip was pressed OR a
   // trade row is picked. NOT `sel`: an open drill-down's trades TABLE stays on
@@ -3026,8 +3207,19 @@ export default function LiveDeskPage() {
                                              } }}
                             style={{ display: "none" }}></td>
                           <td className="px-2 font-bold cursor-pointer underline decoration-dotted text-[var(--text-primary)]" style={CELL}
+                            title={t("클릭: 이 매매의 전 과정 재생 + 설명", "click: replay this trade's whole process + the story")}
                             onClick={() => { const kk = `h-${h.rule}-${k}`;
-                                             setFamExp(famExp === kk ? null : kk); }}>{h.name || h.code}</td>
+                                             setFamExp(famExp === kk ? null : kk);
+                                             const hh9 = h as unknown as { entry?: number;
+                                               qty_left?: number; wall?: { price?: number; qty?: number } | null;
+                                               parts?: { buys?: unknown[][]; sells?: unknown[][] } };
+                                             setRepEp9({ code: h.code, name: h.name || h.code,
+                                               entry: hh9.entry, buy_t: h.buy_t, live: true,
+                                               qty: hh9.qty_left, rule: h.rule, wall: hh9.wall,
+                                               parts: hh9.parts });
+                                             setTimeout(() => document.getElementById("trade-replay9")
+                                               ?.scrollIntoView({ behavior: "smooth", block: "center" }), 300); }}>
+                            🎞 {h.name || h.code}</td>
                           <td className="px-2 cursor-pointer underline decoration-dotted"
                             style={{ ...CELL, color: RED }}
                             title={t("클릭: 이 매수를 차트에서 확인 (열린 포지션은 매수부터 지금까지 표시)",
@@ -3191,6 +3383,9 @@ export default function LiveDeskPage() {
                               exit: (r as unknown as { exit?: number }).exit,
                               exit_why: (r as unknown as { exit_why?: string }).exit_why,
                               qty: (r as unknown as { qty?: number }).qty,
+                              net_pct: r.net_pct, rule: r.rule,
+                              wall: (r as unknown as { wall?: { price?: number;
+                                qty?: number } | null }).wall,
                               parts: (r as unknown as { parts?: { buys?: unknown[][];
                                 sells?: unknown[][] } }).parts });
                               setTimeout(() => document.getElementById("trade-replay9")
