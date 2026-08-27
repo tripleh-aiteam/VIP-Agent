@@ -1328,11 +1328,14 @@ export default function LiveDeskPage() {
     const d = new Date(); const m = d.getHours() * 60 + d.getMinutes();
     return !(m >= 540 && m <= 930);
   });
-  // ONE truth for "is any chart wanted right now" — a clicked trade (sel) or a
-  // picked slice (pick) counts as wanting it. The ref version lets pull() skip
-  // the multi-thousand-bar tape download entirely while everything is folded
-  // (boss 2026-08-27: "live chart should close, because it makes heavy our app").
-  const chartOn9 = chartOpen9 || sel !== null || pick !== null;
+  // ONE truth for "is any chart wanted right now" — the strip was pressed OR a
+  // trade row is picked. NOT `sel`: an open drill-down's trades TABLE stays on
+  // screen with the chart folded, and folding must never clear `sel` — clearing
+  // it left the table's clicks dead (`if (sel)` guards) and the chart frozen on
+  // another company (boss 2026-08-27 morning). The ref lets pull() skip the
+  // multi-thousand-bar tape download entirely while folded ("it makes heavy
+  // our app").
+  const chartOn9 = chartOpen9 || pick !== null;
   const chartOn9Ref = useRef(chartOn9); chartOn9Ref.current = chartOn9;
   const [money, setMoney] = useState(false);      // off until he asks - see the button
   // the rule's law-book text, folded by default (boss 2026-08-19: "it is showing
@@ -1899,7 +1902,7 @@ export default function LiveDeskPage() {
     // clicking a TIME is the proof gesture - it must open the chart, not leave it
     // behind the 차트 보기 button (boss 2026-08-12: "when I click the time it is
     // not showing the chart")
-    setChartOpen(true); chartOpenRef.current = true;
+    setChartOpen(true); chartOpenRef.current = true; setChartOpen9(true);
     openRule(r.rule, r.idx, r.code);
     if (chartOpenRef.current)
       setTimeout(() => chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
@@ -3056,7 +3059,7 @@ export default function LiveDeskPage() {
                                              const open = famExp === kk;
                                              setFamExp(open ? null : kk);
                                              if (!open) {
-                                               setChartOpen(true); chartOpenRef.current = true;
+                                               setChartOpen(true); chartOpenRef.current = true; setChartOpen9(true);
                                                setSel(h.rule); autoOpenRef.current = h.rule;
                                                openRule(h.rule, null, h.code);
                                              } }}
@@ -3069,7 +3072,7 @@ export default function LiveDeskPage() {
                             title={t("클릭: 이 매수를 차트에서 확인 (열린 포지션은 매수부터 지금까지 표시)",
                                      "click: see this buy on the chart (an open position is drawn from its buy to now)")}
                             onClick={() => { setFocusSide("b");
-                                             setChartOpen(true); chartOpenRef.current = true;
+                                             setChartOpen(true); chartOpenRef.current = true; setChartOpen9(true);
                                              setSel(h.rule); autoOpenRef.current = h.rule;
                                              openRule(h.rule, null, h.code);
                                              setTimeout(() => chartRef.current?.scrollIntoView(
@@ -3091,7 +3094,7 @@ export default function LiveDeskPage() {
                                                     why: k2 === 0 ? t("진입 매수", "entry buy")
                                                                   : t("보유 중 추가 매수 (보강·재매수·확정)", "add-on buy (reinforce/reload/confirm)") });
                                                    setFocusSide("b");
-                                                   setChartOpen(true); chartOpenRef.current = true;
+                                                   setChartOpen(true); chartOpenRef.current = true; setChartOpen9(true);
                                                    setSel(h.rule); autoOpenRef.current = h.rule;
                                                    openRule(h.rule, null, h.code);
                                                    setTimeout(() => chartRef.current?.scrollIntoView(
@@ -3214,7 +3217,7 @@ export default function LiveDeskPage() {
                                              const open = famExp === k;
                                              setFamExp(open ? null : k);
                                              if (!open) {
-                                               setChartOpen(true); chartOpenRef.current = true;
+                                               setChartOpen(true); chartOpenRef.current = true; setChartOpen9(true);
                                                openFamTrade(r, "b");
                                              } }}
                             style={{ display: "none" }}></td>
@@ -3690,7 +3693,7 @@ export default function LiveDeskPage() {
               trade history and the boss asked for the same here (2026-08-04). */}
           {!chartOpen && (
             <div className="mx-4 my-2">
-              <button onClick={() => { setChartOpen(true); chartOpenRef.current = true;
+              <button onClick={() => { setChartOpen(true); chartOpenRef.current = true; setChartOpen9(true);
                                        if (sel) openRule(sel, pick, det?.chart?.code); }}
                 className="text-[11px] font-bold px-3 py-1 rounded-md border"
                 style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
@@ -3756,7 +3759,7 @@ export default function LiveDeskPage() {
                 dawn (2026-08-06). A rule's own chart must show whenever IT has bars. */}
             {/* CHART ON DEMAND (boss 2026-08-27): collapsed during the session
                 until a trade is clicked or the strip is pressed */}
-            {!(chartOpen9 || sel || pick !== null) && (
+            {!chartOn9 && (
               <div className="mx-1 my-1 px-3 py-2 rounded-lg border text-[11.5px] cursor-pointer select-none text-center"
                 style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}
                 onClick={() => setChartOpen9(true)}>
@@ -3764,17 +3767,17 @@ export default function LiveDeskPage() {
                       "chart collapsed — click a trade's time in the history, or press here to open (keeping it closed lightens the server)")}
               </div>
             )}
-            {(chartOpen9 || sel || pick !== null) && (
+            {chartOn9 && (
               <div className="mx-1 text-right">
                 <button className="text-[10px] px-2 py-0.5 rounded border"
                   style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}
-                  onClick={() => { setChartOpen9(false); setPick(null); setSel(null); setDet(null); }}>
+                  onClick={() => { setChartOpen9(false); setPick(null); }}>
                   {t("차트 접기 ▲", "collapse chart ▲")}</button>
               </div>
             )}
             {/* THE DAILY VIEW (boss 2026-08-24): a year of daily candles with
                 the judges' zone lines - the map the layers read, visible */}
-            {(chartOpen9 || sel || pick !== null) && dailyView && daily9?.candles?.length ? (<>
+            {chartOn9 && dailyView && daily9?.candles?.length ? (<>
               <div className="mx-1 mb-1 px-2 py-1 rounded text-[11px] tabular-nums"
                 style={{ background: "rgba(46,125,50,0.06)", border: "1px solid var(--border-default)" }}>
                 <b style={{ color: "#2e7d32" }}>📅 {t("일봉 1년", "daily, 1 year")}</b>
@@ -3822,7 +3825,7 @@ export default function LiveDeskPage() {
                             label: `${t("매수", "buy")} ₩${Math.round(ptr9.entry).toLocaleString()}` }];
                 })() as never} />
             </>) : null}
-            {(chartOpen9 || sel || pick !== null) && !dailyView && (sel && det?.chart ? det.chart.candles.length : bars.length) ? <LiveChart
+            {chartOn9 && !dailyView && (sel && det?.chart ? det.chart.candles.length : bars.length) ? <LiveChart
                 key={`det-${sel ?? "tape"}-${det?.chart?.code ?? code}-${tick}-${period}`}
                 off={sel && det?.chart ? det.chart.off : (tape?.off ?? 0)}
                 bars={sel && det?.chart ? det.chart.candles : bars}
@@ -4014,7 +4017,13 @@ export default function LiveDeskPage() {
                   const col = tr.result === "win" ? RED : tr.result === "loss" ? BLUE : "var(--text-muted)";
                   return (
                     <tr key={i} onClick={() => { const off2 = pick === i ? null : i;
-                          setPick(off2); if (sel) openRule(sel, off2, off2 === null ? undefined : tr.code);
+                          // the rule this table belongs to, even if `sel` was cleared
+                          // by a fold — a dead click here froze the chart on another
+                          // company (boss 2026-08-27)
+                          const rid = sel ?? lastReqRef.current?.id ?? null;
+                          setPick(off2);
+                          if (rid) { if (!sel) setSel(rid);
+                                     openRule(rid, off2, off2 === null ? undefined : tr.code); }
                           // the chart sits ABOVE this table, so a click that only reloads
                           // it looks like nothing happened - put it on screen
                           if (off2 !== null) chartRef.current?.scrollIntoView(
@@ -4029,9 +4038,11 @@ export default function LiveDeskPage() {
                       <td className="px-2 cursor-pointer underline decoration-dotted" style={{ color: RED }}
                         title={t(`클릭하면 차트가 이 매수로 이동합니다 (${tr.buy_t})`, `click: chart jumps to this BUY (${tr.buy_t})`)}
                         onClick={(e) => { e.stopPropagation(); setFocusSide("b");
+                                          const rid = sel ?? lastReqRef.current?.id ?? null;
                                           if (pick !== i || detRef.current?.chart?.code !== tr.code
                                               || (tr.d8 ?? "") !== detDayRef.current) {
-                                            setPick(i); if (sel) openRule(sel, i, tr.code);
+                                            setPick(i);
+                                            if (rid) { if (!sel) setSel(rid); openRule(rid, i, tr.code); }
                                           }
                                           if (chartOpenRef.current) chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>
                         ▲ {tr.buy_t.slice(0, 5)}
@@ -4042,9 +4053,11 @@ export default function LiveDeskPage() {
                       <td className="px-2 cursor-pointer underline decoration-dotted" style={{ color: BLUE }}
                         title={t(`클릭하면 차트가 이 매도로 이동합니다 (${tr.sell_t})`, `click: chart jumps to this SELL (${tr.sell_t})`)}
                         onClick={(e) => { e.stopPropagation(); setFocusSide("s");
+                                          const rid = sel ?? lastReqRef.current?.id ?? null;
                                           if (pick !== i || detRef.current?.chart?.code !== tr.code
                                               || (tr.d8 ?? "") !== detDayRef.current) {
-                                            setPick(i); if (sel) openRule(sel, i, tr.code);
+                                            setPick(i);
+                                            if (rid) { if (!sel) setSel(rid); openRule(rid, i, tr.code); }
                                           }
                                           if (chartOpenRef.current) chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>
                         ▼ {tr.sell_t.slice(0, 5)}</td>
@@ -4408,7 +4421,7 @@ export default function LiveDeskPage() {
       <div className="mt-3 rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
         <div className="px-2 pt-1 pb-2 text-[11.5px] flex items-center gap-2 flex-wrap" style={{ color: "#6a1b9a" }}>
           <b>📈 {tape?.name ?? ""} — {tape?.clock ?? ""} {t("실시간 차트", "live chart")}</b>
-          <button onClick={() => { setChartOpen9(false); setPick(null); setSel(null); }}
+          <button onClick={() => { setChartOpen9(false); setPick(null); }}
             className="text-[10px] font-bold px-1.5 py-0.5 rounded border"
             style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
             {t("차트 접기 ▲", "fold chart ▲")}
