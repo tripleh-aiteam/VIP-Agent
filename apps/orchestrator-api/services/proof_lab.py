@@ -482,6 +482,25 @@ VARIANTS: list[dict] = [
     {"id": "4u+1.0ML", "entry": 4, "kind": "target", "a": 1.0, "b": 1.0, "ml": True},
 ]
 
+# 알고4 = 알고2 + 갭상승 GUARD, its own button (boss 2026-08-27: "I wanna
+# implement 갭상승 from tomorrow's market - for now create another separate
+# button to see it, like Algo 4"). Exact 알고2 book, one addition: a stock that
+# OPENED >=2% above yesterday's close takes no NEW entries while its price
+# still sits at/above its own open ("wait the decrease"). Court 2026-08-27:
+# this form measured +18.2M/yr on 알고2's book (gap>=2% below_open; 251 days).
+# D1/D2/D3 untouched - the live duel 알고2 vs 알고4 is the proof the boss asked
+# to watch.
+import copy as _copy9
+_D4 = _copy9.deepcopy(next(v for v in VARIANTS if v["id"] == "D2"))
+# "t10" form chosen over "below_open" (both court-measured: +17.7M vs +18.2M
+# on 알고2's book, statistically the same) because the boss's words were
+# "removing the huge gap things FROM THE MORNING" - below_open released the
+# doors seconds after the fade began and still caught 09:0x knives below the
+# open; t10 keeps the whole gap morning visibly clean.
+_D4.update({"id": "D4", "family": "d4",
+            "gap_guard": 2.0, "gap_wait": "t10"})
+VARIANTS.append(_D4)
+
 
 def label(v: dict, ko: bool = True) -> str:
     # the boss's scenarios wear their own name (2026-08-19: the generic label

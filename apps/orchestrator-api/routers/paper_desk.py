@@ -1899,7 +1899,7 @@ def live_warm():
         _recow = []
     for _cw in ([_sixw, _recow] if _recow else [_sixw]):
         _ncw = ",".join(sorted(_cw))
-        for fam in ("d1", "d2", "d3"):
+        for fam in ("d1", "d2", "d3", "d4"):
             try:
                 _SWR[("fam", fam, 5, 60, _kd9(), "", "", 1, 1, _ncw)] = (
                     _t2.time(), _fam_compute(fam, 5, 60, "", "", "", 1, 1,
