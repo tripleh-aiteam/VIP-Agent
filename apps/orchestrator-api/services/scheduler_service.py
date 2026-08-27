@@ -2702,6 +2702,31 @@ def init_scheduler():
         id="dip-alert-pass",
         replace_existing=True, max_instances=1, coalesce=True,
     )
+    # LOCAL LLM keep-warm — the fallback star must never cold-load mid-chat
+    # ("hello" took 22.8s because Ollama had unloaded qwen3-vl 30b after 5 idle
+    # minutes, boss 2026-08-27 "for one question taking 30 sec"). A no-prompt
+    # /api/generate pins it in VRAM with keep_alive=24h; every 20 min re-pins,
+    # so even an Ollama restart is warm again within minutes. First run ~15s
+    # (the one cold load), later runs instant.
+    def _ollama_keep_warm():
+        try:
+            import httpx as _hx
+            _star = (os.getenv("OLLAMA_PICKER_MODEL")
+                     or "qwen3-vl:30b-a3b-instruct-q4_K_M")
+            _hx.post((os.getenv("OLLAMA_URL") or "http://localhost:11434")
+                     + "/api/generate",
+                     json={"model": _star, "keep_alive": "24h"}, timeout=180)
+        except Exception:
+            pass                       # Ollama down/absent — nothing to warm
+    from apscheduler.triggers.interval import IntervalTrigger as _IvT
+    from datetime import datetime as _dtw, timedelta as _tdw
+    _scheduler.add_job(
+        _ollama_keep_warm,
+        _IvT(minutes=20),
+        next_run_time=_dtw.now() + _tdw(seconds=20),   # warm right after boot
+        id="ollama-keep-warm",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
     # Paper trader — every 5 min during market: virtual execution of the bot's signals
     # (readiness-gate evidence at 10x speed). Morning scorecard at 08:20 KST.
     _scheduler.add_job(

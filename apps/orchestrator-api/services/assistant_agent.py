@@ -8452,7 +8452,11 @@ def _run_agent_impl(
                       "당신은 VIP 어시스턴트입니다. 사용자의 언어로 정확하고 간결하게 답하세요. "
                       "모르는 사실은 짧게 모른다고 말하고, 절대 지어내지 마세요. Qwen/Gemini/GPT "
                       "등 특정 AI 회사·모델명을 자신의 정체로 말하지 마세요 — 당신은 VIP 어시스턴트입니다.")
-            _out_o = chat_completion_sync(_sys_o, _msgs_o, max_tokens=700,
+            # 450 tokens, not 700 — when the free tier is out and the LOCAL star is
+            # generating, answer length IS latency (~45 tok/s: 700 tok ≈ 15s, felt
+            # as "30 sec for one question", boss 2026-08-27). 450 keeps concept
+            # answers complete and lands them inside the step-1 budget.
+            _out_o = chat_completion_sync(_sys_o, _msgs_o, max_tokens=450,
                                           temperature=0.5, model=forced_model or None)
             if (_out_o or "").strip():
                 return {"intent": "llm_chat", "language": lang, "reply": _out_o.strip(),
