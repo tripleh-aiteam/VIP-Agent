@@ -295,8 +295,10 @@ function LiveChart({ bars, marks, focus, off = 0 }:
            shape: "arrowUp", text: k.label || "▲" }]
       : k.part
       // a sold slice of a still-open ladder: one sell arrow, no buy pair
+      // (매도 written on every sell arrow - boss 2026-08-27: "you wrote 매수
+      // on the buy arrow but not 매도 on the sell")
       ? [{ time: off + k.s, position: "aboveBar", color: k.g > 0 ? RED : BLUE,
-           shape: "arrowDown", text: `조각 ${k.g > 0 ? "+" : ""}${k.g}%` }]
+           shape: "arrowDown", text: `매도 조각 ${k.g > 0 ? "+" : ""}${k.g}%` }]
       : k.open
       // an OPEN position is proof of a buy, not of a sell: the buy arrow stands at
       // its bar and a gold badge rides the live edge - no fake sell arrow
@@ -308,7 +310,7 @@ function LiveChart({ bars, marks, focus, off = 0 }:
       : [
         { time: off + k.b, position: "belowBar", color: RED, shape: "arrowUp", text: "매수" },
         { time: off + k.s, position: "aboveBar", color: k.g > 0 ? RED : BLUE,
-          shape: "arrowDown", text: `${k.g > 0 ? "+" : ""}${k.g}%` },
+          shape: "arrowDown", text: `매도 ${k.g > 0 ? "+" : ""}${k.g}%` },
       ]).filter((x) => (x.time as number) >= off && (x.time as number) < off + bars.length);
     // the clicked trade gets its own gold marker, so it is obvious WHICH of the arrows
     // on screen is the row he clicked
@@ -496,7 +498,8 @@ function TradeReplay({ ep, t, onClose }: {
       g.fillText(lab, Math.min(x + 4, W - 60), up ? y(px) + 30 : y(px) - 24);
     };
     for (const [tt, px, qy] of buys) mark(tt, px, true, `▲매수 ${qy ? qy + "주" : ""}`);
-    for (const [tt, px, qy, why] of sells) mark(tt, px, false, `▼${String(why).slice(0, 6) || "매도"} ${qy ? qy + "주" : ""}`);
+    for (const [tt, px, qy, why] of sells) mark(tt, px, false,
+      `▼매도${why ? " " + String(why).slice(0, 6) : ""} ${qy ? qy + "주" : ""}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pos, bars]);
   return (
