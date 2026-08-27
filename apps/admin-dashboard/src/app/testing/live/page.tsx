@@ -997,8 +997,8 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
                   const gp9 = (op9 / pv9 - 1) * 100;
                   const dOp9 = (last / op9 - 1) * 100;
                   return <span style={{ color: "#b71c1c" }}>
-                    ⛔ {t(`갭상승 +${gp9.toFixed(1)}% (전일 ₩${Math.round(pv9).toLocaleString()} → 시가 ₩${Math.round(op9).toLocaleString()}) — 규칙에 따라 매수 대기 중. 가격이 시가 아래로 내려오는 순간 문이 열립니다 (지금 시가 대비 +${dOp9.toFixed(2)}%). 장중 대형 호재(30분 내 호재 3건+)가 오면 예외로 합류합니다. 그 외에는 오늘 사지 않습니다 — 그것이 법입니다.`,
-                          `gap-up +${gp9.toFixed(1)}% (prev ₩${Math.round(pv9).toLocaleString()} → open ₩${Math.round(op9).toLocaleString()}) — waiting by law. The doors open the moment price falls below its own open (now +${dOp9.toFixed(2)}% above it). BIG news during the session (3+ 호재 stamps in 30min) lifts the pause as the exception. Otherwise we don't buy today — that is the law.`)}</span>;
+                    ⛔ {t(`갭상승 +${gp9.toFixed(1)}% (전일 ₩${Math.round(pv9).toLocaleString()} → 시가 ₩${Math.round(op9).toLocaleString()}) — 규칙에 따라 매수 대기 중. 가격이 시가 아래로 내려오는 순간 문이 열립니다 (지금 시가 대비 +${dOp9.toFixed(2)}%). 장중 대형 호재(30분 내 서로 다른 언론사 3곳+의 호재)가 오면 예외로 합류합니다. 그 외에는 오늘 사지 않습니다 — 그것이 법입니다.`,
+                          `gap-up +${gp9.toFixed(1)}% (prev ₩${Math.round(pv9).toLocaleString()} → open ₩${Math.round(op9).toLocaleString()}) — waiting by law. The doors open the moment price falls below its own open (now +${dOp9.toFixed(2)}% above it). BIG news during the session (호재 from 3+ DIFFERENT outlets within 30min) lifts the pause as the exception. Otherwise we don't buy today — that is the law.`)}</span>;
                 }
                 return <>👀 {t("① 규칙의 문이 조건을 기다리는 중 — 조건이 맞으면 ② 호가창에 가격을 제시하고, 체결되면 ④ 보유·사다리가 시작됩니다. 아래 기록에서 오늘 이 종목의 지난 과정을 볼 수 있습니다.",
                                "① the rule's doors are watching - when the condition fits it ② offers a price in the book, and a fill starts ④ the holding ladder. Today's past steps for this stock are in the log below.")}</>;

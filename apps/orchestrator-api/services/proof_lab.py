@@ -1538,13 +1538,19 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 _tb9 = str(s["times"][i])
                 _sec9 = (int(_tb9[0:2]) * 3600 + int(_tb9[3:5]) * 60
                          + int(_tb9[6:8] or "0"))
-                _cnt9 = 0
+                # 3+ 호재 in 30min from 3 DIFFERENT outlets (boss: "one
+                # source cannot continuously publish one-sided news and
+                # count") - the burst must be a chorus, not an echo
+                _outs9 = set()
                 for _nt9 in s["news_hits"]:
-                    _ns9 = (int(_nt9[0:2]) * 3600 + int(_nt9[3:5]) * 60
-                            + int(_nt9[6:8] or "0"))
+                    _tt9 = _nt9[0] if isinstance(_nt9, (list, tuple)) else _nt9
+                    _oo9 = (_nt9[1] if isinstance(_nt9, (list, tuple))
+                            and len(_nt9) > 1 else _tt9)
+                    _ns9 = (int(_tt9[0:2]) * 3600 + int(_tt9[3:5]) * 60
+                            + int(_tt9[6:8] or "0"))
                     if _sec9 - 1800 <= _ns9 <= _sec9:
-                        _cnt9 += 1
-                if _cnt9 >= 3:
+                        _outs9.add(_oo9)
+                if len(_outs9) >= 3:
                     gap_news_ok[si] = True
             except Exception:
                 pass

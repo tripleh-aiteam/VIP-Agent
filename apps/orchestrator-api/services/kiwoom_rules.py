@@ -210,9 +210,16 @@ def _news_times(code: str) -> list:
                 ts = str(r.get("ts") or "")
                 hh = ts[11:19] if len(ts) >= 19 else ""
                 if hh >= "09:00:00":
-                    by.setdefault(r.get("code"), []).append(hh)
+                    # WHICH OUTLET (boss 2026-08-27: "we should search
+                    # different sources - one source can continuously publish
+                    # one-sided news"): the outlet rides the title's tail
+                    # ("... - 주간동아"); the aggregator name is the fallback
+                    _ttl = str(r.get("title") or "")
+                    _out = (_ttl.rsplit(" - ", 1)[-1].strip()
+                            if " - " in _ttl else str(r.get("src") or "?"))
+                    by.setdefault(r.get("code"), []).append([hh, _out])
             for k in by:
-                by[k].sort()
+                by[k].sort(key=lambda x: x[0])
             _NEWS_T9["mtime"] = mt
             _NEWS_T9["by_code"] = by
         return _NEWS_T9["by_code"].get(code, [])
