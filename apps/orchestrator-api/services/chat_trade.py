@@ -434,11 +434,15 @@ def cancel_open(db, transcript: Optional[str], lang: str) -> Optional[str]:
     return "\n".join(L)
 
 
-def stash_offer(code: str, name: str, en: bool) -> None:
-    """A BUY verdict's '도와드릴까요?' offer — the next '네' opens the order preview
-    (which then needs its own '네' to execute; money keeps its two-step gate)."""
+def stash_offer(code: str, name: str, en: bool, side: str = "BUY") -> None:
+    """An advice/watchdog offer — the next '네' opens the order preview (which then
+    needs its own '네' to execute; money keeps its two-step gate). The watchdog's
+    3rd-blue alert stashes a SELL offer the same way."""
+    _load_pending()
+    if _PENDING and time.time() - _PENDING.get("ts", 0) <= _TTL and not _PENDING.get("offer"):
+        return          # never clobber a REAL order confirmation in progress
     _PENDING.clear()
-    _PENDING.update({"offer": True, "side": "BUY", "code": code, "name": name,
+    _PENDING.update({"offer": True, "side": side, "code": code, "name": name,
                      "ts": time.time(), "en": en})
     _save_pending()
 
@@ -759,11 +763,13 @@ def finish(db, word: str) -> Optional[str]:
     # the advice lane's OFFER ("매수 도와드릴까요?"): "네" opens the real order
     # preview (a fresh pending), "아니요" just drops it — nothing was ordered yet
     if p.get("offer"):
+        _oside = p.get("side") or "BUY"
         if word == "no":
-            return ("알겠습니다 — 주문 없이 두겠습니다. 언제든 \"{n} 매수\"라고 말씀하세요."
-                    .format(n=p["name"]) if not en else
-                    f"Understood — no order placed. Say \"buy {p['name']}\" anytime.")
-        return _make_preview(db, p["code"], p["name"], "BUY", None, False, en)
+            _ow = "매수" if _oside == "BUY" else "매도"
+            return (f"알겠습니다 — 주문 없이 두겠습니다. 언제든 \"{p['name']} {_ow}\"라고 말씀하세요."
+                    if not en else
+                    f"Understood — no order placed. Say \"{_oside.lower()} {p['name']}\" anytime.")
+        return _make_preview(db, p["code"], p["name"], _oside, None, False, en)
     side_ko = "매수" if p["side"] == "BUY" else "매도"
     if word == "no":
         return (f"🚫 취소했습니다 — {side_ko} {p['name']} {p['qty']:,}주 주문은 실행되지 않았습니다."

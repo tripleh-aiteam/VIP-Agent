@@ -924,6 +924,44 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 🔔 POSITION WATCHDOG (boss 2026-08-27: "the same employee, but with permission
+  // to call you") — poll the alert feed every 8s; each new alert appears as an
+  // assistant bubble the boss did not have to ask for.
+  const storeRef2 = useRef(store);
+  storeRef2.current = store;
+  useEffect(() => {
+    let live = true;
+    const KEY = `chatbot-${agentId}-alert-last`;
+    const tick = async () => {
+      try {
+        const r = await fetch(`${base}/chat/alerts`).then(x => x.json());
+        if (!live || !r?.alerts?.length) return;
+        const last = Number(localStorage.getItem(KEY) || "0");
+        const fresh = (r.alerts as { id: number; text: string }[]).filter(a => a.id > last);
+        if (!fresh.length) return;
+        localStorage.setItem(KEY, String(r.last_id || fresh[fresh.length - 1].id));
+        const cur = storeRef2.current;
+        const sid = cur.activeSessionId || cur.sessions[0]?.id;
+        if (!sid) return;
+        const turns: AssistantTurn[] = fresh.map(a => ({
+          who: "assistant", text: a.text, ts: Date.now(),
+          intent: "watchdog", tool_used: "🔔 watchdog",
+        }));
+        const next = {
+          ...cur,
+          sessions: cur.sessions.map(s => s.id === sid
+            ? { ...s, turns: [...s.turns, ...turns], updatedAt: Date.now() } : s),
+        };
+        setStore(next);
+        saveStore(agentId, next);
+      } catch { /* silent — the guard just tries again */ }
+    };
+    tick();
+    const h = setInterval(tick, 8000);
+    return () => { live = false; clearInterval(h); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [base, agentId]);
+
   // Models
   useEffect(() => {
     fetch(`${base}/api/twins/llm/models`)

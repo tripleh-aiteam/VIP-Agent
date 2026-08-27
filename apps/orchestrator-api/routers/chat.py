@@ -268,6 +268,21 @@ def _agent_command_impl(body: AgentCommandBody, db: Session):
                 "tool_used": None}
 
 
+@router.get("/alerts")
+def chat_alerts(db: Session = Depends(get_db)):
+    """🔔 The position watchdog's voice (boss 2026-08-27): evaluated on each poll —
+    fills, stuck orders, 3rd-blue, break-even crossings, selling-zone entries,
+    위험 news on the boss's own chat trades. Returns the recent alert list; the
+    chat UI shows the ones it hasn't shown yet."""
+    from services.chat_watchdog import poll as _wd_poll
+    try:
+        return _wd_poll(db)
+    except Exception as e:
+        from services.logger import log as _lg
+        _lg.warning(f"watchdog poll failed: {str(e)[:150]}")
+        return {"last_id": 0, "alerts": []}
+
+
 @router.post("/agent/stream")
 def agent_command_stream(
     body: AgentCommandBody,
