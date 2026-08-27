@@ -804,7 +804,7 @@ def gemini_multimodal_sync(
 
 
 def _call_gemini(model: str, system_prompt: str, messages: list[dict],
-                 max_tokens: int, temperature: float, timeout: float = 60.0) -> tuple[bool, str]:
+                 max_tokens: int, temperature: float, timeout: float = 15.0) -> tuple[bool, str]:
     """Google Gemini generateContent API."""
     gemini_key = _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")
     if not gemini_key:
