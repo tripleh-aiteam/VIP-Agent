@@ -1320,6 +1320,14 @@ export default function LiveDeskPage() {
                  / moneyRows.length)
     : null);
   const [pick, setPick] = useState<number | null>(null);
+  // chart CLOSED by default during market hours (boss 2026-08-27: "we do not
+  // need this open by default — if we wanna then we will click time, then it
+  // should open") — clicking a trade opens it; off-hours it starts open for
+  // review. Closed = fewer tape polls = lighter backend.
+  const [chartOpen9, setChartOpen9] = useState<boolean>(() => {
+    const d = new Date(); const m = d.getHours() * 60 + d.getMinutes();
+    return !(m >= 540 && m <= 930);
+  });
   const [money, setMoney] = useState(false);      // off until he asks - see the button
   // the rule's law-book text, folded by default (boss 2026-08-19: "it is showing
   // by default explanations" - the story opens when asked, like the money does)
@@ -3734,9 +3742,27 @@ export default function LiveDeskPage() {
                 so before 09:00 (or after a restart) a stored day's fully loaded chart was
                 replaced by "market is closed" - the boss could not review 08-04/08-05 at
                 dawn (2026-08-06). A rule's own chart must show whenever IT has bars. */}
+            {/* CHART ON DEMAND (boss 2026-08-27): collapsed during the session
+                until a trade is clicked or the strip is pressed */}
+            {!(chartOpen9 || sel || pick !== null) && (
+              <div className="mx-1 my-1 px-3 py-2 rounded-lg border text-[11.5px] cursor-pointer select-none text-center"
+                style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}
+                onClick={() => setChartOpen9(true)}>
+                📈 {t("차트 접혀 있음 — 매매 내역의 시간을 클릭하거나 여기를 눌러 열기 (닫아두면 서버가 가볍습니다)",
+                      "chart collapsed — click a trade's time in the history, or press here to open (keeping it closed lightens the server)")}
+              </div>
+            )}
+            {(chartOpen9 || sel || pick !== null) && (
+              <div className="mx-1 text-right">
+                <button className="text-[10px] px-2 py-0.5 rounded border"
+                  style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}
+                  onClick={() => { setChartOpen9(false); setPick(null); setSel(null); setDet(null); }}>
+                  {t("차트 접기 ▲", "collapse chart ▲")}</button>
+              </div>
+            )}
             {/* THE DAILY VIEW (boss 2026-08-24): a year of daily candles with
                 the judges' zone lines - the map the layers read, visible */}
-            {dailyView && daily9?.candles?.length ? (<>
+            {(chartOpen9 || sel || pick !== null) && dailyView && daily9?.candles?.length ? (<>
               <div className="mx-1 mb-1 px-2 py-1 rounded text-[11px] tabular-nums"
                 style={{ background: "rgba(46,125,50,0.06)", border: "1px solid var(--border-default)" }}>
                 <b style={{ color: "#2e7d32" }}>📅 {t("일봉 1년", "daily, 1 year")}</b>
@@ -3784,7 +3810,7 @@ export default function LiveDeskPage() {
                             label: `${t("매수", "buy")} ₩${Math.round(ptr9.entry).toLocaleString()}` }];
                 })() as never} />
             </>) : null}
-            {!dailyView && (sel && det?.chart ? det.chart.candles.length : bars.length) ? <LiveChart
+            {(chartOpen9 || sel || pick !== null) && !dailyView && (sel && det?.chart ? det.chart.candles.length : bars.length) ? <LiveChart
                 key={`det-${sel ?? "tape"}-${det?.chart?.code ?? code}-${tick}-${period}`}
                 off={sel && det?.chart ? det.chart.off : (tape?.off ?? 0)}
                 bars={sel && det?.chart ? det.chart.candles : bars}
