@@ -77,6 +77,21 @@ _last_used = {"provider": "none", "model": "none"}  # reload tag v2
 # use Groq (free) until the cooldown expires — then we retry OpenAI (money may
 # have been topped up). This makes the switch fully automatic in both directions.
 _paid_state = {"cooldown_until": 0.0, "reason": ""}
+# Gemini free-tier cooldown (boss 2026-08-27: 'hello' took 13.6s because EVERY message
+# first paid a failing Gemini attempt while the free quota was exhausted): after a
+# quota/rate failure, skip Gemini entirely for a while and go straight to the next rung.
+_gemini_state = {"cooldown_until": 0.0, "reason": ""}
+
+
+def _note_gemini_failure(err: str) -> None:
+    e = (err or "").lower()
+    quota = any(k in e for k in ("429", "quota", "rate", "resource_exhausted", "exceeded"))
+    _gemini_state["cooldown_until"] = time.time() + (120.0 if quota else 30.0)
+    _gemini_state["reason"] = str(err)[:120]
+
+
+def _gemini_cooling() -> bool:
+    return time.time() < _gemini_state["cooldown_until"]
 
 
 def get_last_provider() -> str:
@@ -928,7 +943,12 @@ def _chat_completion_sync_inner(
         if provider == "anthropic":
             ok, result = _call_anthropic(real_model, system_prompt, messages, max_tokens, temperature)
         elif provider == "gemini":
-            ok, result = _call_gemini(real_model, system_prompt, messages, max_tokens, temperature)
+            if _gemini_cooling():
+                ok, result = False, f"gemini cooling down ({_gemini_state['reason'][:60]})"
+            else:
+                ok, result = _call_gemini(real_model, system_prompt, messages, max_tokens, temperature)
+                if not ok:
+                    _note_gemini_failure(str(result))
         elif provider == "openai":
             if openai_key:
                 ok, result = _call_openai_compatible(openai_base, openai_key, real_model,
@@ -957,13 +977,14 @@ def _chat_completion_sync_inner(
     # Gemini free → LOCAL Ollama (his RTX 5090, unlimited) → Groq free (in case the
     # local box is down) → paid OpenAI only as the very last resort.
 
-    # Free tier #1 — Gemini Flash (free quota)
-    if _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY"):
+    # Free tier #1 — Gemini Flash (free quota; skipped entirely while cooling down)
+    if (_env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")) and not _gemini_cooling():
         ok, result = _call_gemini("gemini-3.5-flash", system_prompt, messages,
                                   max_tokens, temperature)
         if ok:
             _last_used.update({"provider": "gemini", "model": "gemini-3.5-flash (free fallback)"})
             return result
+        _note_gemini_failure(str(result))
         attempt_log.append(f"gemini-3.5-flash (free fallback): {str(result)[:200]}")
 
     # Free tier #2 — LOCAL Ollama star (unlimited, private; 6.8s warm on the 5090)
