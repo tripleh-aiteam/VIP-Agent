@@ -587,7 +587,14 @@ _D4 = _copy9.deepcopy(next(v for v in VARIANTS if v["id"] == "D2"))
 # Since the boss armed the gap law on ALL algos (08-27 evening), 알고4 is the
 # DEMO/BACKTEST bench: an exact mirror of 알고2's book, inheriting every dial
 # (gap threshold included) so future rule trials diff against the real thing.
-_D4.update({"id": "D4", "family": "d4"})
+_D4.update({"id": "D4", "family": "d4",
+            # THE BOTTOM-HOLD DOOR + LATE GUARD (boss 2026-08-28 evening, the
+            # SK하이닉스 exhibit) - 알고4-only trial: after a sharp fall, 3 bars
+            # holding above the trough (no new low, closes above it) open the
+            # door at the 3rd, but never more than 1.5% above the bottom.
+            # 알고2 keeps the plain consecutive-rise book; the two boards now
+            # diff exactly this door until the year court speaks.
+            "bot_hold": {"bars": 3, "max_above": 1.5}})
 VARIANTS.append(_D4)
 
 
@@ -1068,6 +1075,54 @@ def _dip_entry(s: dict, v: dict, i: int, ups: int, closes: list) -> bool:
     # of a finished bounce. Equality means the buy exists only at the moment his rule
     # names; if the hand is busy then, that dip is honestly missed, not chased.
     return ups == d.get("ups", 1)
+
+
+def _bot_hold_entry(s: dict, v: dict, i: int, closes: list) -> bool:
+    """THE BOTTOM-HOLD DOOR (boss 2026-08-28 evening, the SK하이닉스 case: low
+    1,687,000 at 09:07, then 09:08/09/10 all held ABOVE it while the candle
+    colors alternated - the consecutive-rise door waited until 09:32 and bought
+    the top at +1.9%). His ruler: judge the bottom by the bottom, not by candle
+    colors. After a sharp fall, N bars that close above the trough without
+    making a new low prove the fall ended - buy at the Nth, but only while the
+    price is still NEAR the bottom (the late guard: a confirmation that arrives
+    high is a chase, not a turn). 알고4-only until the year court speaks."""
+    bh = v.get("bot_hold")
+    if not bh:
+        return False
+    d = v.get("dip") or {}
+    st = _dip_state(s, d.get("win_sec", 600))
+    if st.get("by_time") and st["span"][i] < 60:
+        return False
+    if st["rng"][i] < d.get("chop", 0.40):
+        return False
+    n = int(bh.get("bars", 3))
+    j = i - n
+    if j < 1:
+        return False
+    cl = s["closes"]
+    lows = s.get("lows") or cl
+    bot = lows[j]
+    if not bot:
+        return False
+    # a sharp fall INTO the trough - same ruler as the dip door, judged at j
+    hi = st["hi"][j]
+    typ = st["typ"][j]
+    dropped = (hi - bot) / hi * 100 if hi else 0.0
+    if dropped < d.get("drop", 0.8):
+        return False
+    if typ and (hi - bot) < d.get("sharp", 3.0) * typ:
+        return False
+    # N bars after the trough: no new low, every close above the bottom
+    for k in range(j + 1, i + 1):
+        if lows[k] < bot or cl[k] <= bot:
+            return False
+    # the confirming bar itself must close up (keeps step with the entry gate)
+    if cl[i] <= cl[i - 1]:
+        return False
+    # LATE GUARD: only while still near the bottom - never chase the recovery
+    if cl[i] > bot * (1 + bh.get("max_above", 1.5) / 100):
+        return False
+    return True
 
 
 def _dip_state(s: dict, win_sec: int = 600) -> dict:
@@ -1714,6 +1769,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            and _morning_entry(s, v, i, closes, _now))
                   and not (v.get("burst")
                            and _burst_entry(s, v, i, closes, _now))
+                  and not (v.get("bot_hold")
+                           and _bot_hold_entry(s, v, i, closes))
                   and not (v.get("recovery")
                            and _recovery_entry(s, v, i, closes, _now))
                   and not (v.get("family_door")
