@@ -83,7 +83,7 @@ const TEAL = "#00838f";
 const GOLD = "#e65100";
 
 type Bar = { time: number; hhmm: string; open: number; high: number; low: number;
-             close: number; dir: number; vol: number; n: number };
+             close: number; dir: number; vol: number; n: number; d8?: string };
 type Tape = { ok: boolean; code: string; name?: string; clock: string; ticks: number;
               first?: string; last?: string; bars: Bar[]; note?: string;
               off?: number; total_bars?: number };
@@ -220,6 +220,7 @@ function LiveChart({ bars, marks, focus, off = 0, h = 320 }:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cs = useRef<{ chart: any; series: any } | null>(null);
   const label = useRef<Map<number, string>>(new Map());
+  const dlabel = useRef<Map<number, string>>(new Map());   // "MM/DD HH:MM:SS"
   const applied = useRef<number | null | undefined>(undefined);
   // HIS view vs OUR view. Every 3s poll re-feeds the data, and the library then
   // re-decides what is visible - which yanked the chart out from under him while he was
@@ -248,12 +249,19 @@ function LiveChart({ bars, marks, focus, off = 0, h = 320 }:
         grid: { vertLines: { color: "rgba(128,128,128,0.10)" }, horzLines: { color: "rgba(128,128,128,0.10)" } },
         // fixLeftEdge: zooming OUT used to open blank space left of the first bar —
         // both edges pinned, the zoom stops at the data (boss 2026-08-18)
+        // 가격축 explicit (boss 2026-08-28: "on the y axis add the price") -
+        // the right scale was default-on but is now pinned and bordered so it
+        // can never be configured away
+        rightPriceScale: { visible: true, borderColor: "rgba(128,128,128,0.4)" },
         timeScale: { timeVisible: true, secondsVisible: true, rightOffset: 2, fixRightEdge: true,
-                     fixLeftEdge: true,
+                     fixLeftEdge: true, borderColor: "rgba(128,128,128,0.4)",
                      // a tick bar has no duration, so its x value is a COUNT, not a clock;
                      // the real time of each bar lives in hhmm and is shown from there
                      tickMarkFormatter: (t: number) => (label.current.get(t) ?? "").slice(0, 5) },
-        localization: { timeFormatter: (t: number) => label.current.get(t) ?? "" },
+        // the crosshair speaks DATE + TIME like Kiwoom (boss 2026-08-28: "if
+        // I see yesterday it should show the date also")
+        localization: { timeFormatter: (t: number) =>
+          dlabel.current.get(t) ?? label.current.get(t) ?? "" },
       });
       const series = chart.addCandlestickSeries({
         upColor: RED, downColor: BLUE, borderUpColor: RED, borderDownColor: BLUE,
@@ -280,6 +288,9 @@ function LiveChart({ bars, marks, focus, off = 0, h = 320 }:
     // the boss kept catching. With `off` (the bar's permanent position in the day) a bar
     // keeps one number for ever, so labels cannot mix and updates cannot shift.
     label.current = new Map(bars.map((b, i) => [off + i, b.hhmm]));
+    dlabel.current = new Map(bars.map((b, i) => [off + i,
+      (b.d8 ? `${b.d8.slice(4, 6)}/${b.d8.slice(6)} ` : "")
+      + (b.hhmm.includes("/") ? "09:00" : b.hhmm)]));
     c.series.setData(bars.map((b, i) => {
       const col = b.dir > 0 ? RED : b.dir < 0 ? BLUE : "#9e9e9e";
       return { time: off + i, open: b.open, high: b.high, low: b.low, close: b.close,
@@ -1498,7 +1509,11 @@ export default function LiveDeskPage() {
       .then((d) => {
         if (!live || !d?.bars) return;
         const bs = d.bars.map((b) => ({ ...b }));
-        for (const dd of (d.days || [])) {
+        const dys = (d.days || []) as { d8: string; i: number; n?: number }[];
+        for (let k = 0; k < dys.length; k++) {
+          const dd = dys[k];
+          const end = k + 1 < dys.length ? dys[k + 1].i : bs.length;
+          for (let j = dd.i; j < end; j++) bs[j].d8 = dd.d8;
           if (bs[dd.i]) bs[dd.i].hhmm = `${dd.d8.slice(4, 6)}/${dd.d8.slice(6)}`;
         }
         setHist9(bs);
@@ -4651,10 +4666,15 @@ export default function LiveDeskPage() {
             ⛶ {t("전체화면으로 열기", "open FULL SCREEN")}</button>
         </div>
       ) : (
-      <div className={fsMkt9 ? "fixed inset-0 z-[200] p-3 overflow-auto"
-                             : "mt-3 rounded-xl border p-2"}
-        style={fsMkt9 ? { background: "var(--bg-primary)" }
-                      : { borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+      <div className={fsMkt9 ? "p-3" : "mt-3 rounded-xl border p-2"}
+        style={fsMkt9
+          ? { position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+              zIndex: 9999, overflow: "auto",
+              // SOLID ground - nothing from the page may show through
+              // (boss 2026-08-28: "the background is showing other things
+              // like tables - not appropriate to see")
+              background: "var(--bg-primary, #ffffff)" }
+          : { borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
         <div className="px-2 pt-1 pb-2 text-[11.5px] flex items-center gap-2 flex-wrap" style={{ color: "#6a1b9a" }}>
           <b>📈 {tape?.name ?? ""} — {tape?.clock ?? ""} {t("실시간 차트", "live chart")}</b>
           <button onClick={() => setFsMkt9((v) => !v)}
@@ -4694,7 +4714,9 @@ export default function LiveDeskPage() {
         </div>
         {bars.length || hist9.length ? <LiveChart key={`mkt-${code}-${tick}-${period}-h${hist9.length}-${fsMkt9 ? "fs" : "n"}`}
                                   off={0}
-                                  bars={[...hist9, ...bars]}
+                                  bars={[...hist9, ...bars.map((b) => ({ ...b,
+                                    d8: new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" })
+                                      .format(new Date()).replace(/-/g, "") }))]}
                                   focus={hist9.length && bars.length ? hist9.length : null}
                                   h={fsMkt9 ? (typeof window !== "undefined" ? window.innerHeight - 130 : 600) : 320} /> : (
           <div className="px-4 py-8 text-center text-[12px] text-[var(--text-muted)]">
