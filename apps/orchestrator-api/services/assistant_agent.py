@@ -2710,7 +2710,9 @@ def _is_movers_q(transcript: Optional[str]) -> bool:
                                   "most", "top", "상위",
                                   # imperative list-asks count too ("give me increased
                                   # stocks after opening market", 2026-08-28)
-                                  "give me", "list", "show", "보여", "알려"))
+                                  "give me", "list", "show", "보여", "알려",
+                                  # "오늘 오른 종목 뭐야?" fell to the LLM (2026-08-28)
+                                  "뭐야", "뭐가", "뭐 있", "뭐있"))
     _stok = "종목" in tl or bool(_re.search(r"\bstocks?\b|\bstokcs?\b", tl)) \
         or "급등" in tl or "급락" in tl \
         or bool(_re.search(r"compan(?:y|ys|ies)", tl)) \
@@ -7714,6 +7716,72 @@ def _run_agent_impl(
                 return {"intent": "stock_volume", "language": lang, "reply": _rep_v,
                         "action": None, "speak": True, "transcript": transcript,
                         "tool_used": "realtime_quote"}
+
+    # === 📈📉 UP-OR-DOWN (boss 2026-08-28: "today Skhynix price increased or
+    # decreased?" got the generic price card — he wants the verdict first, then
+    # open → current, total change, then a follow-up offer). Deterministic. ===
+    _t_ud = (transcript or "").lower()
+    if (not confirmed_tool and not attachment_ids and transcript
+            and _re.search(r"increased?\s+or\s+decreased?|increase\s+or\s+decrease"
+                           r"|up\s+or\s+down|rise\s+or\s+fall|higher\s+or\s+lower"
+                           r"|\b(?:increased?|decreased?|went\s+up|went\s+down|rose|fell)\b"
+                           r"|올랐|내렸|떨어졌|올랐나|내렸나|상승했|하락했", _t_ud)
+            and not _re.search(r"왜|이유|\bwhy\b|because"                       # why has its own lane
+                               r"|오를까|내릴까|갈까|전망|예측|predict|forecast|will\b|tomorrow|내일"
+                               r"|종목|\bstocks\b|\bwhich\b|\bwhat\s+stock|top\s*\d|가장|제일"
+                               r"|어제|yesterday|지난|last\s+(?:week|month|year)", _t_ud)):
+        _ud_stk = _all_stocks_in_query(transcript)
+        if not _ud_stk and history:
+            for _h_ud in reversed(history):
+                _ud_stk = _all_stocks_in_query(str(_h_ud.get("content") or _h_ud.get("text") or ""))
+                if _ud_stk:
+                    break
+        if _ud_stk:
+            try:
+                from services.naver_stock import realtime_quote as _rtq_ud
+                _q_ud = _rtq_ud(_ud_stk[0][0])
+            except Exception:
+                _q_ud = None
+            if _q_ud and _q_ud.get("price") is not None and _q_ud.get("change_pct") is not None:
+                _en_ud = not _re.search(r"[가-힣]", transcript)
+                _nm_ud = _ud_stk[0][1]
+                _px_ud, _pct_ud, _op_ud = float(_q_ud["price"]), float(_q_ud["change_pct"]), _q_ud.get("open")
+                if not _op_ud:              # after close the basic feed drops 시가 — candle has it
+                    try:
+                        from services import naver_stock as _ns_ud
+                        _h_ud2 = _ns_ud.daily_history(_ud_stk[0][0], days=2)
+                        if _h_ud2:
+                            _op_ud = _h_ud2[0].get("open")
+                    except Exception:
+                        pass
+                _open_now = _q_ud.get("market_status") == "OPEN"
+                _prev_ud = _px_ud / (1 + _pct_ud / 100) if _pct_ud != -100 else 0
+                _dw_ud = _px_ud - _prev_ud
+                _ico = "📈" if _pct_ud > 0 else "📉" if _pct_ud < 0 else "➖"
+                _verd = (("UP today" if _pct_ud > 0 else "DOWN today" if _pct_ud < 0 else "FLAT today")
+                         if _en_ud else
+                         ("오늘 올랐습니다" if _pct_ud > 0 else "오늘 내렸습니다" if _pct_ud < 0 else "오늘 보합입니다"))
+                _cur_lab = (("Current" if _open_now else "Close") if _en_ud
+                            else ("현재가" if _open_now else "종가"))
+                _sess = "" if _open_now else ((" (market closed — last session)" if _en_ud
+                                               else " (장 마감 — 마지막 세션 기준)"))
+                L_ud = [f"{_ico} **{_nm_ud} — {_verd} ({_pct_ud:+.2f}%)**"]
+                if _op_ud:
+                    L_ud.append((f"· Open ₩{float(_op_ud):,.0f} → {_cur_lab} ₩{_px_ud:,.0f}{_sess}"
+                                 if _en_ud else
+                                 f"· 시가 ₩{float(_op_ud):,.0f} → {_cur_lab} ₩{_px_ud:,.0f}{_sess}"))
+                else:
+                    L_ud.append(f"· {_cur_lab}: ₩{_px_ud:,.0f}{_sess}")
+                L_ud.append((f"· Total change vs yesterday's close: **{_dw_ud:+,.0f}원 ({_pct_ud:+.2f}%)**"
+                             if _en_ud else
+                             f"· 전일 종가 대비: **{_dw_ud:+,.0f}원 ({_pct_ud:+.2f}%)**"))
+                _other = "삼성전자" if _ud_stk[0][0] != "005930" else "SK하이닉스"
+                L_ud += ["", (f"💡 Want another stock too? e.g. \"how about {_other}?\""
+                              if _en_ud else
+                              f"💡 다른 종목도 확인해 드릴까요? 예: \"{_other}는 어때?\"")]
+                return {"intent": "stock_up_down", "language": lang,
+                        "reply": "\n".join(L_ud), "action": None, "speak": True,
+                        "transcript": transcript, "tool_used": "realtime_quote"}
 
     # === 📃 TRADING UNIVERSE (boss 2026-08-28: "teach all stock names to chatbot")
     # — "what stocks are we trading?" answers from the LIVE watch list + today's
