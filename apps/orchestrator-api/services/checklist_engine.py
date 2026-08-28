@@ -393,11 +393,20 @@ def _c_vol_surge(c):
 
 
 def _c_gap_open(c):
+    # ALIGNED TO THE GAP LAW (boss 2026-08-28: "if it is a high gap the score
+    # should be lower"): fails on gap-UP >= 1.5% - the same bar the entry
+    # guard uses, so the checklist and the trading law speak one language.
+    # Gap-DOWN passes (the dip doors' territory; a selection BONUS awaits its
+    # own measurement in the monthly weight court - boss's instinct on record).
     cl, op = c.get("closes") or [], c.get("opens") or []
     if len(cl) < 2 or not op:
         return None, "시가 데이터 부족"
     gap = (op[-1] - cl[-2]) / cl[-2] * 100
-    return abs(gap) < 4, f"갭 {gap:+.1f}%" + (" — 과대 갭 주의" if abs(gap) >= 4 else "")
+    if gap >= 1.5:
+        return False, f"갭상승 {gap:+.1f}% — 시가 아래 하락 전 매수금지 구간"
+    if gap <= -1.5:
+        return True, f"갭하락 {gap:+.1f}% — 하락 멈춤 확인 후 문이 사는 자리"
+    return True, f"갭 {gap:+.1f}% — 정상 출발"
 
 
 def _c_new_high_low(c):

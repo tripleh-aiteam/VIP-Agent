@@ -159,6 +159,26 @@ def live_pulse() -> dict:
     return dict(_live)
 
 
+_open9 = {"day": "", "px": {}}   # today's true opening print per code (cached)
+
+
+def _day_open(code: str):
+    """The day's first print for one stock, cached once per day - the gap
+    penalty's reference. Reads the in-memory tape's first bar."""
+    d = _day()
+    if _open9["day"] != d:
+        _open9["day"] = d
+        _open9["px"] = {}
+    if code not in _open9["px"]:
+        try:
+            import services.kiwoom_rules as kr2
+            cs = kr2._bars_for(code, 5, 60)
+            _open9["px"][code] = cs[0].get("open") if cs else None
+        except Exception:
+            _open9["px"][code] = None
+    return _open9["px"][code]
+
+
 _base = {"t": 0.0, "rows": [], "vol20": {}}   # morning scores + 20d volume baselines
 
 
@@ -220,6 +240,18 @@ def _fast_cycle() -> None:
                 if dp is not None:
                     dp9 = round(float(dp), 3)
                     adj += 2.0 if dp <= 0.20 else (-3.0 if dp >= 0.85 else 0.0)
+            except Exception:
+                pass
+            # GAP-PAUSE PENALTY (boss 2026-08-28: "if it is a high gap, the
+            # score should be lower"): while a stock stands in the gap law's
+            # no-buy state (opened >=1.5% up, price still at/above its own
+            # open) it cedes 2 points - seats prefer stocks the agent may
+            # actually buy; the penalty lifts the moment the fade comes.
+            try:
+                _op9 = _day_open(c)
+                if (_op9 and prev
+                        and (_op9 / prev - 1) * 100 >= 1.5 and px >= _op9):
+                    adj -= 2.0
             except Exception:
                 pass
         # NEWS IN THE SELECTION (boss 2026-08-25 13:5x: "news also must be
