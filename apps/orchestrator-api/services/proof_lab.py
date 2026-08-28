@@ -208,12 +208,12 @@ VARIANTS: list[dict] = [
      # condition. The measured bans stay on record for the real-money day:
      # red-exit surrender-2 +178.6M/yr, +117M/yr with the one-pardon variant.
      "surrender": None,
-     # COURT 2026-08-28 midday (the 삼성전기 whipsaw case, boss: "fix our
-     # weakness and start implement"): re-entry only BELOW the last cut -
-     # never re-buy the same fade at the same or higher price. Measured
-     # +75.3/+36.1/+113.4M per algo = +224.8M/yr desk, the largest single
-     # improvement on record.
-     "reenter_below_cut": True,
+     # reenter_below_cut REMOVED at the boss's explicit word, hours after
+     # arming (2026-08-28 ~12:0x, verbatim: "after the decrease the price
+     # does not care - it should stop decreasing and continue increasing and
+     # at the 3rd we buy, same price, high and low does not care"). The
+     # measured value stays on record per the standing law: +75.3/+36.1/
+     # +113.4M per algo = +224.8M/yr forgone - his book, his call.
      # COURT 2026-08-26 night, deployed for the 08-27 open:
      # spike-exhaustion guard (한전기술 +15% case; measured +13.3M/yr desk-wide):
      # a day already up 8% takes no NEW entries
@@ -301,12 +301,12 @@ VARIANTS: list[dict] = [
      # condition. The measured bans stay on record for the real-money day:
      # red-exit surrender-2 +178.6M/yr, +117M/yr with the one-pardon variant.
      "surrender": None,
-     # COURT 2026-08-28 midday (the 삼성전기 whipsaw case, boss: "fix our
-     # weakness and start implement"): re-entry only BELOW the last cut -
-     # never re-buy the same fade at the same or higher price. Measured
-     # +75.3/+36.1/+113.4M per algo = +224.8M/yr desk, the largest single
-     # improvement on record.
-     "reenter_below_cut": True,
+     # reenter_below_cut REMOVED at the boss's explicit word, hours after
+     # arming (2026-08-28 ~12:0x, verbatim: "after the decrease the price
+     # does not care - it should stop decreasing and continue increasing and
+     # at the 3rd we buy, same price, high and low does not care"). The
+     # measured value stays on record per the standing law: +75.3/+36.1/
+     # +113.4M per algo = +224.8M/yr forgone - his book, his call.
      # COURT 2026-08-26 night, deployed for the 08-27 open:
      # spike-exhaustion guard (한전기술 +15% case; measured +13.3M/yr desk-wide):
      # a day already up 8% takes no NEW entries
@@ -410,12 +410,12 @@ VARIANTS: list[dict] = [
      # condition. The measured bans stay on record for the real-money day:
      # red-exit surrender-2 +178.6M/yr, +117M/yr with the one-pardon variant.
      "surrender": None,
-     # COURT 2026-08-28 midday (the 삼성전기 whipsaw case, boss: "fix our
-     # weakness and start implement"): re-entry only BELOW the last cut -
-     # never re-buy the same fade at the same or higher price. Measured
-     # +75.3/+36.1/+113.4M per algo = +224.8M/yr desk, the largest single
-     # improvement on record.
-     "reenter_below_cut": True,
+     # reenter_below_cut REMOVED at the boss's explicit word, hours after
+     # arming (2026-08-28 ~12:0x, verbatim: "after the decrease the price
+     # does not care - it should stop decreasing and continue increasing and
+     # at the 3rd we buy, same price, high and low does not care"). The
+     # measured value stays on record per the standing law: +75.3/+36.1/
+     # +113.4M per algo = +224.8M/yr forgone - his book, his call.
      # COURT 2026-08-26 night, deployed for the 08-27 open:
      # spike-exhaustion guard (한전기술 +15% case; measured +13.3M/yr desk-wide):
      # a day already up 8% takes no NEW entries
