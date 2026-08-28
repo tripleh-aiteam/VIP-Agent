@@ -1500,6 +1500,37 @@ export default function LiveDeskPage() {
   // first bar - today's live bars are appended by the normal 3s pull
   const [hist9, setHist9] = useState<Bar[]>([]);
   const chartWanted9 = chartOpen9 || pick !== null;
+  // ALL ~40 STOCKS in the chart (boss 2026-08-28: "in the dropdown add all 40
+  // stocks; if I search by name it should show real-time price, max, min,
+  // volume and the full-screen chart like Kiwoom"). Watched stocks keep the
+  // live minute tape; the rest show a 5s live QUOTE card + the daily candles
+  // (no minute tape exists for them - stated on screen, never faked).
+  const watchSet9 = new Set((st?.stocks ?? []).map((x) => x.code));
+  const isWatch9 = watchSet9.has(code);
+  const [quote9, setQuote9] = useState<{ price?: number; open?: number;
+    high?: number; low?: number; change_pct?: number; name?: string } | null>(null);
+  const [dbars9, setDbars9] = useState<Bar[]>([]);
+  const [stockQ9, setStockQ9] = useState("");
+  useEffect(() => {
+    if (!chartWanted9 || !code || isWatch9) { setQuote9(null); setDbars9([]); return; }
+    let live = true;
+    const loadQ = () => api<typeof quote9>(`/paper-desk/quote?q=${code}`)
+      .then((d) => { if (live && d) setQuote9(d); }).catch(() => {});
+    api<RawDaily>(`/paper-desk/raw-daily?code=${code}&days=250`)
+      .then((d) => {
+        if (!live || !d?.rows) return;
+        setDbars9(d.rows.map((r, i) => {
+          const d8 = String(r.date).replace(/-/g, "");
+          return { time: i, hhmm: `${d8.slice(4, 6)}/${d8.slice(6)}`, d8,
+                   open: r.open, high: r.high, low: r.low, close: r.close,
+                   dir: r.close >= r.open ? 1 : -1, vol: r.volume, n: 0 };
+        }));
+      }).catch(() => {});
+    loadQ();
+    const h = setInterval(loadQ, 5000);
+    return () => { live = false; clearInterval(h); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chartWanted9, code, isWatch9]);
   useEffect(() => {
     if (!chartWanted9 || !code) { setHist9([]); return; }
     let live = true;
@@ -4600,7 +4631,25 @@ export default function LiveDeskPage() {
           {(tabStocks.length ? tabStocks : [{ code: "005930", name: "삼성전자", ticks: 0 }]).map((x) => (
             <option key={x.code} value={x.code}>{x.name}</option>
           ))}
+          {(dpick?.rows ?? []).filter((r) => !watchSet9.has(r.code)).map((r) => (
+            <option key={r.code} value={r.code}>{r.name} (일봉)</option>
+          ))}
         </select>
+        <input list="all-stocks-9" value={stockQ9} placeholder={t("종목 검색…", "search stock…")}
+          onChange={(e) => {
+            const v = e.target.value; setStockQ9(v);
+            const all9 = [...(st?.stocks ?? []), ...((dpick?.rows ?? []) as { code: string; name: string }[])];
+            const hit = all9.find((x) => x.name === v || x.code === v);
+            if (hit) { setCode(hit.code); codeRef.current = hit.code; pull();
+                       setChartOpen9(true); setStockQ9(""); }
+          }}
+          className="text-[11px] px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] w-[110px]"
+          style={{ borderColor: TEAL, color: "var(--text-primary)" }} />
+        <datalist id="all-stocks-9">
+          {[...(st?.stocks ?? []), ...((dpick?.rows ?? []) as { code: string; name: string }[])]
+            .filter((x, i, a) => a.findIndex((y) => y.code === x.code) === i)
+            .map((x) => <option key={x.code} value={x.name} />)}
+        </datalist>
         <span className="text-[10.5px] text-[var(--text-muted)] ml-1">{t("캔들", "candle")}</span>
         <select value={period ? `p${period}` : `t${tick}`}
           onChange={(e) => { const val = e.target.value;
@@ -4631,8 +4680,25 @@ export default function LiveDeskPage() {
           style={{ borderColor: "var(--border-default)" }} />
       </div>
 
-      {/* price header */}
-      {book?.ok && (
+      {/* price header — quote card for non-watch stocks (Kiwoom-style:
+          현재가/등락/시가/고가/저가, 5s live) */}
+      {!isWatch9 && quote9?.price && (
+        <div className="mt-3 flex items-baseline gap-3 flex-wrap tabular-nums">
+          <b className="text-[22px]" style={{ color: (quote9.change_pct ?? 0) > 0 ? RED : (quote9.change_pct ?? 0) < 0 ? BLUE : "var(--text-primary)" }}>
+            ₩{Math.round(quote9.price).toLocaleString()}
+          </b>
+          <span className="text-[13px] font-bold" style={{ color: (quote9.change_pct ?? 0) > 0 ? RED : BLUE }}>
+            {(quote9.change_pct ?? 0) > 0 ? "▲" : "▼"} {Math.abs(quote9.change_pct ?? 0).toFixed(2)}%
+          </span>
+          {quote9.open ? <span className="text-[11.5px] text-[var(--text-muted)]">{t("시가", "open")} ₩{Math.round(quote9.open).toLocaleString()}</span> : null}
+          {quote9.high ? <span className="text-[11.5px]" style={{ color: RED }}>{t("고가", "high")} ₩{Math.round(quote9.high).toLocaleString()}</span> : null}
+          {quote9.low ? <span className="text-[11.5px]" style={{ color: BLUE }}>{t("저가", "low")} ₩{Math.round(quote9.low).toLocaleString()}</span> : null}
+          {dbars9.length ? <span className="text-[11.5px] text-[var(--text-muted)]">{t("전일 거래량", "prev-day vol")} {Math.round(dbars9[dbars9.length - 1].vol).toLocaleString()}</span> : null}
+          <span className="text-[10px] text-[var(--text-muted)]">
+            {t("이 종목은 분봉 수집 대상이 아니라 일봉 차트 + 5초 실시간 시세로 보여드립니다", "not a tape-collected stock: daily candles + 5s live quote")}</span>
+        </div>
+      )}
+      {isWatch9 && book?.ok && (
         <div className="mt-3 flex items-baseline gap-3 flex-wrap tabular-nums">
           <b className="text-[22px]" style={{ color: (book.change_pct ?? 0) > 0 ? RED : (book.change_pct ?? 0) < 0 ? BLUE : "var(--text-primary)" }}>
             ₩{fmt(book.last)}
@@ -4712,12 +4778,14 @@ export default function LiveDeskPage() {
             </span>
           )}
         </div>
-        {bars.length || hist9.length ? <LiveChart key={`mkt-${code}-${tick}-${period}-h${hist9.length}-${fsMkt9 ? "fs" : "n"}`}
+        {(!isWatch9 && dbars9.length) || bars.length || hist9.length
+          ? <LiveChart key={`mkt-${code}-${tick}-${period}-h${hist9.length}-d${dbars9.length}-${fsMkt9 ? "fs" : "n"}`}
                                   off={0}
-                                  bars={[...hist9, ...bars.map((b) => ({ ...b,
+                                  bars={!isWatch9 && dbars9.length ? dbars9
+                                        : [...hist9, ...bars.map((b) => ({ ...b,
                                     d8: new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" })
                                       .format(new Date()).replace(/-/g, "") }))]}
-                                  focus={hist9.length && bars.length ? hist9.length : null}
+                                  focus={isWatch9 && hist9.length && bars.length ? hist9.length : null}
                                   h={fsMkt9 ? (typeof window !== "undefined" ? window.innerHeight - 130 : 600) : 320} /> : (
           <div className="px-4 py-8 text-center text-[12px] text-[var(--text-muted)]">
             {st?.market_open
