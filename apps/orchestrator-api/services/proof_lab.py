@@ -1647,7 +1647,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                       # consecutive rises) - at 09:05 or 11:00 alike.
                       (not gap_ok[si])
                       if v.get("gap_wait") == "turn3"
-                      else (c >= closes[0]
+                      # the RELEASE LINE is the TRUE OPEN, not the first
+                      # minute's close (caught live 2026-08-28 09:29: NAVER
+                      # opened 220,000, first-minute close 224,000 - prices
+                      # between the two read as "below open" and every board
+                      # bought the gap at 222,500; SKT was spared only by its
+                      # bar shape)
+                      else (c >= (s.get("open_px") or closes[0])
                             # gap_join (boss 2026-08-27 night: the runner that
                             # never decreases - "for example at 09:29 big news
                             # comes, then we can join with Algo 2"): the wait
