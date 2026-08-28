@@ -2117,6 +2117,50 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
             m_hi = max(r.get("high") or 0 for r in mr)
             m_av = sum(r.get("volume") or 0 for r in mr) / len(mr)
             mon_tbl.append(f"| {mk} | {_won_str(m_lo)} | {_won_str(m_hi)} | {_vol_str(m_av, _en)} | {_won_str(mr[-1]['close'])} |")
+        # ---- FIELD-SCOPED period answer (boss 2026-08-28: "last 2 month skhynix
+        # max price and volume" got the 43-row full report — asked 2 things, show 2
+        # things; same law as the daily lane's 2026-08-27 fix)
+        _flds_p = [f for f in _fields_asked(transcript) if f in
+                   ("high", "low", "close", "volume")]
+        if _flds_p:
+            if "high" in _flds_p:
+                S.append(f"· {'Period high' if _en else '기간 최고가'}: "
+                         f"**{_won_str(hi)}** ({hi_row.get('date')})")
+            if "low" in _flds_p:
+                S.append(f"· {'Period low' if _en else '기간 최저가'}: "
+                         f"**{_won_str(lo)}** ({lo_row.get('date')})")
+            if "close" in _flds_p:
+                S.append(f"· {'Close' if _en else '종가'}: {_won_str(first['close'])} → "
+                         f"**{_won_str(last['close'])}** ({chg:+.1f}%)")
+            if "volume" in _flds_p:
+                S.append(f"· {'Avg daily volume' if _en else '하루 평균 거래량'}: "
+                         f"**{_vol_str(avg_vol, _en)}** · "
+                         f"{'biggest day' if _en else '최대'}: "
+                         f"{_vol_str(mv_row.get('volume'), _en)} ({mv_row.get('date')})")
+            # monthly mini-table with ONLY the asked columns
+            _mc = [("high", "High", "최고가"), ("low", "Low", "최저가"),
+                   ("volume", "Avg volume", "평균 거래량"), ("close", "Month-end close", "월말 종가")]
+            _mc = [c for c in _mc if c[0] in _flds_p]
+            S += ["", "| " + ("Month" if _en else "월") + " | "
+                  + " | ".join((c[1] if _en else c[2]) for c in _mc) + " |",
+                  "|" + "---|" * (len(_mc) + 1)]
+            for mk in sorted(by_m):
+                mr = by_m[mk]
+                _cells = []
+                for c in _mc:
+                    if c[0] == "high":
+                        _cells.append(_won_str(max(r.get("high") or 0 for r in mr)))
+                    elif c[0] == "low":
+                        _cells.append(_won_str(min(r.get("low") or 10 ** 12 for r in mr)))
+                    elif c[0] == "volume":
+                        _cells.append(_vol_str(sum(r.get("volume") or 0 for r in mr) / len(mr), _en))
+                    else:
+                        _cells.append(_won_str(mr[-1]["close"]))
+                S.append(f"| {mk} | " + " | ".join(_cells) + " |")
+            S += ["", ("Want the full daily table? Just ask." if _en
+                       else "전체 일별 표가 필요하시면 말씀해 주세요.")]
+            sections.append("\n".join(S))
+            continue
         # ---- EVERY DAY's data FIRST (boss 2026-08-25: "it should directly start
         # answering from daily information, not summary — summary in the end")
         S += ["", ("| Date | Open | High | Low | Close | Volume |" if _en
@@ -2134,7 +2178,7 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
                     f"The latest close {_won_str(last['close'])} sits at the {pos:.0f}% point of that band ({zone_en}), "
                     f"and the period return is {chg:+.1f}%."]
             if v_ratio is not None:
-                expl.append(f"Recent trading is {'heavier' if v_ratio >= 1.15 else 'lighter' if v_ratio <= 0.85 else 'about the same as'} "
+                expl.append(f"Recent trading is {'heavier than' if v_ratio >= 1.15 else 'lighter than' if v_ratio <= 0.85 else 'about the same as'} "
                             f"the period norm — the last ~20 sessions averaged {v_ratio:.1f}× the period's daily volume.")
         else:
             expl = [f"**설명:** {label_ko} 동안 {nm}는 최저 {_won_str(lo)}({lo_row.get('date')}) ~ "
@@ -6912,6 +6956,77 @@ def _offline_answer(db, *, transcript: str, lang: str, agent_id: str,
     return out
 
 
+def _gap_report_text(en: bool) -> str:
+    """Today's 갭상승 list from OUR OWN data (boss 2026-08-28): every stock in
+    the checklist universe — true open (tape for the watched, Kiwoom quote for
+    the rest) vs yesterday's official 15:30 close — judged by the live gap
+    law's 1.5% bar. Zero LLM."""
+    import json as _j
+    from pathlib import Path as _P
+    import services.kiwoom_rules as _kr
+    import services.kiwoom_tape as _kt
+    rows = (_j.loads((_P(__file__).resolve().parent.parent / "data"
+                      / "today_picks.json").read_text(encoding="utf-8"))
+            .get("rows") or [])
+    watch = {c for c, _n in _kt.WATCH}
+    day9 = _kt._day()
+    gaps, norm, miss = [], [], []
+    import time as _t
+    _t0 = _t.time()          # quote budget: chat must answer in seconds, so
+    for r in rows:           # non-desk quotes stop after ~6s (rest = no-data)
+        c = r.get("code"); nm = r.get("name") or c
+        prev = None; op = None
+        try:
+            prev = _kr._daily20(c, day9)[0]
+        except Exception:
+            pass
+        if c in watch:
+            try:
+                cs = _kr._bars_for(c, 5, 60)
+                if cs:
+                    op = cs[0].get("open")
+            except Exception:
+                pass
+        if op is None and _t.time() - _t0 < 6.0:
+            try:
+                from services import kiwoom_rest as _kw
+                q = _kw.current_price(c) or {}
+                op = q.get("open") or q.get("price")
+            except Exception:
+                pass
+        if op and prev:
+            gp = (op / prev - 1) * 100
+            (gaps if gp >= 1.5 else norm).append((gp, nm, prev, op))
+        else:
+            miss.append(nm)
+    gaps.sort(key=lambda x: -x[0]); norm.sort(key=lambda x: -x[0])
+    if not gaps and not norm:
+        return ""
+    if en:
+        L = [f"**Today's 갭상승 (open ≥ +1.5% over yesterday's 15:30 close) — {len(gaps)} of {len(gaps)+len(norm)} stocks:**"]
+        for gp, nm, pv, op in gaps:
+            L.append(f"- ⛔ **{nm}** +{gp:.2f}% (₩{pv:,.0f} → ₩{op:,.0f}) — no buys until it trades below its open (or 호재 from 3 outlets in 30min)")
+        if not gaps:
+            L.append("- (none today)")
+        L.append("\n**Normal starts (the doors trade from 09:00):**")
+        L.append(", ".join(f"{nm} {gp:+.1f}%" for gp, nm, _p, _o in norm[:20]) or "-")
+        if miss:
+            L.append(f"\n(no data yet: {', '.join(miss[:10])}{'…' if len(miss) > 10 else ''})")
+        L.append("\n_Source: our own tape/quotes, the live gap law's bar. Not an LLM guess._")
+    else:
+        L = [f"**오늘 갭상승 (시가가 전일 15:30 종가보다 +1.5% 이상) — 전체 {len(gaps)+len(norm)}종목 중 {len(gaps)}종목:**"]
+        for gp, nm, pv, op in gaps:
+            L.append(f"- ⛔ **{nm}** +{gp:.2f}% (₩{pv:,.0f} → ₩{op:,.0f}) — 시가 아래로 내려올 때까지 매수 금지 (30분 내 3개 언론사 호재 시 예외)")
+        if not gaps:
+            L.append("- (오늘은 없습니다)")
+        L.append("\n**정상 출발 (09:00부터 정상 매매):**")
+        L.append(", ".join(f"{nm} {gp:+.1f}%" for gp, nm, _p, _o in norm[:20]) or "-")
+        if miss:
+            L.append(f"\n(아직 데이터 없음: {', '.join(miss[:10])}{'…' if len(miss) > 10 else ''})")
+        L.append("\n_출처: 우리 자체 시세 기록 — 갭 규칙과 같은 기준. LLM 추측이 아닙니다._")
+    return "\n".join(L)
+
+
 def _run_agent_impl(
     db: Session,
     transcript: str,
@@ -7556,6 +7671,27 @@ def _run_agent_impl(
                         "tool_used": None}
         except Exception as e:
             log.warning(f"casual fast-path failed: {str(e)[:120]}")
+
+    # === 🌅 갭상승 REPORT ("which stock started with 갭상승?" got a generic
+    # LLM essay while our own tape held the exact list — boss 2026-08-28
+    # 09:1x, the gap law's first live morning). Deterministic: every
+    # universe stock's true open vs prev close, judged by the law's own
+    # 1.5% bar. ===
+    _t_gap = (transcript or "").lower()
+    if (not confirmed_tool
+            and ("갭" in (transcript or "") or "gap" in _t_gap)
+            and any(k in _t_gap for k in ("어떤", "어느", "종목", "오늘", "시작",
+                                          "which", "stock", "today", "started",
+                                          "list", "analyze", "분석"))):
+        try:
+            _en_g = not _re.search(r"[가-힣]", transcript or "")
+            _rep_g = _gap_report_text(_en_g)
+            if _rep_g:
+                return {"intent": "gap_report", "language": lang, "reply": _rep_g,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "gap_report"}
+        except Exception as e:
+            log.warning(f"gap-report lane failed: {str(e)[:120]}")
 
     # === ⏰ MARKET SCHEDULE ("when market will open?" got 'in about 16 hours' from
     # the LLM while the bell was ONE hour away — 2026-08-27). Pure clock math. ===
