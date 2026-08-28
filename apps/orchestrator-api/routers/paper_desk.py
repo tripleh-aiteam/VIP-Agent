@@ -651,6 +651,29 @@ def live_tape(code: str = Query("005930"), period: int = Query(0),
             "bars": win}
 
 
+@router.get("/live/tape-hist")
+def live_tape_hist(code: str = Query(...), tick: int = Query(5),
+                   period: int = Query(0)):
+    """ALL stored days' bars, oldest→newest, for the ONE continuous
+    Kiwoom-style chart (boss 2026-08-28: "one type of chart like normal
+    Kiwoom, so I can scroll and move to the past"). Today is NOT included -
+    the live poll supplies it and the frontend appends; finished days come
+    from the per-day bars cache, so after the first build this is cheap."""
+    from services.kiwoom_rules import _bars_for, stored_days
+    from services.kiwoom_tape import _day as _kd
+    td = _kd()
+    out: list = []
+    days: list = []
+    for d in stored_days(code):
+        if d >= td:
+            continue
+        cs = _bars_for(code, tick, max(0, min(int(period or 0), 600)), d)
+        if cs:
+            days.append({"d8": d, "i": len(out), "n": len(cs)})
+            out.extend(cs)
+    return {"ok": True, "code": code, "days": days, "bars": out}
+
+
 @router.get("/live/rules")
 def live_rules(tick: int = Query(5), period: int = Query(0), day: str = Query(""),
                frm: str = Query(""), to: str = Query(""), gate: int = Query(1),
