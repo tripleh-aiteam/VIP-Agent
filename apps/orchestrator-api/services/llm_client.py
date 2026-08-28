@@ -829,15 +829,24 @@ def _call_gemini(model: str, system_prompt: str, messages: list[dict],
         _gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
     try:
         with httpx.Client(timeout=timeout) as client:
-            resp = client.post(
-                f"{GEMINI_BASE}/models/{model}:generateContent?key={gemini_key}",
-                headers={"Content-Type": "application/json"},
-                json={
-                    "system_instruction": {"parts": [{"text": system_prompt}]},
-                    "contents": contents,
-                    "generationConfig": _gen_cfg,
-                },
-            )
+            def _post(cfg):
+                return client.post(
+                    f"{GEMINI_BASE}/models/{model}:generateContent?key={gemini_key}",
+                    headers={"Content-Type": "application/json"},
+                    json={
+                        "system_instruction": {"parts": [{"text": system_prompt}]},
+                        "contents": contents,
+                        "generationConfig": cfg,
+                    },
+                )
+            resp = _post(_gen_cfg)
+            # Some Gemini families (3.5/3.6 flash-lite) REJECT thinkingConfig with
+            # HTTP 400 'invalid argument' — the dropdown's gemini-3.5-flash-lite
+            # failed every single call this way (2026-08-28). Retry once without it.
+            if (resp.status_code == 400 and "thinkingConfig" in _gen_cfg
+                    and "invalid" in resp.text.lower()):
+                _cfg2 = {k: v for k, v in _gen_cfg.items() if k != "thinkingConfig"}
+                resp = _post(_cfg2)
             if resp.status_code == 200:
                 data = resp.json()
                 cands = data.get("candidates") or []
@@ -981,13 +990,13 @@ def _chat_completion_sync_inner(
     # 2026-08-28 latency bench on the boss's key: 3.1-flash-lite 1.0s · 3-flash-preview
     # 1.5s · 3.6-flash 1.8s · 3.7-flash 6-11s — the lite model IS the chat speed.
     if (_env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")) and not _gemini_cooling():
-        ok, result = _call_gemini("gemini-3.1-flash-lite", system_prompt, messages,
+        ok, result = _call_gemini("gemini-3.5-flash-lite", system_prompt, messages,
                                   max_tokens, temperature)
         if ok:
-            _last_used.update({"provider": "gemini", "model": "gemini-3.1-flash-lite (free fallback)"})
+            _last_used.update({"provider": "gemini", "model": "gemini-3.5-flash-lite (free fallback)"})
             return result
         _note_gemini_failure(str(result))
-        attempt_log.append(f"gemini-3.1-flash-lite (free fallback): {str(result)[:200]}")
+        attempt_log.append(f"gemini-3.5-flash-lite (free fallback): {str(result)[:200]}")
 
     # Free tier #2 — LOCAL Ollama star (unlimited, private; 6.8s warm on the 5090)
     _local_star = _env("OLLAMA_FALLBACK_MODEL") or "qwen3-vl:30b-a3b-instruct-q4_K_M"
