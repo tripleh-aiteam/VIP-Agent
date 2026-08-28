@@ -1371,17 +1371,36 @@ def _fam_compute(family: str, tick: int, period: int, day: str,
                          "parts": tr.get("parts")})
     # newest first (boss 2026-08-11) - the top of the table is what just happened
     rows.sort(key=lambda r: (r.get("d8") or "", r.get("buy_t") or ""), reverse=True)
-    # ROUND-TRIP WIN % (boss 2026-08-28 16:0x, replacing the slice tally that
-    # let one good ride count 8 wins while a stop counted 1 loss - the board
-    # read 100% on a losing day): one finished trip = one count. All the money
-    # that came back vs all the money that went in, fee included - positive
-    # after-fee net is a W, negative is an L. Open positions don't count until
-    # they finish. The slice detail stays in each row; the header counts trips.
-    w = sum(1 for r in rows
-            if not r.get("partial") and (r.get("net_pct") or 0) > 0)
-    l = sum(1 for r in rows
-            if not r.get("partial") and (r.get("net_pct") or 0) < 0)
-    ew, el = w, l
+    # PIECE-COUNT WIN % (boss 2026-08-28 17:1x, his explicit word after hearing
+    # the trip-ruler case: "each one +% must count as one winning - all positive
+    # winning cases divided by overall trading cases"): every ▼ sell line is one
+    # count, judged against its own at-the-moment base. ON RECORD: this ruler
+    # can read green on a red-money day (deployed reading 63% beside -1.01M on
+    # d2/m1) - the trip ruler stays in ep_wins/ep_losses and the money column
+    # tells the rest. Rows without piece records count their whole trip once.
+    w = l = 0
+    for r in rows:
+        sells = (r.get("parts") or {}).get("sells") or []
+        counted = False
+        if sells and len(sells[0]) >= 7:
+            for sr in sells:
+                _b0 = (sr[6] if len(sr) > 6 and sr[6] else r.get("entry"))
+                if _b0:
+                    counted = True
+                    if sr[0] > _b0:
+                        w += 1
+                    elif sr[0] < _b0:
+                        l += 1
+        if not counted and not r.get("partial"):
+            _n9 = r.get("net_pct") or 0
+            if _n9 > 0:
+                w += 1
+            elif _n9 < 0:
+                l += 1
+    ew = sum(1 for r in rows
+             if not r.get("partial") and (r.get("net_pct") or 0) > 0)
+    el = sum(1 for r in rows
+             if not r.get("partial") and (r.get("net_pct") or 0) < 0)
     _res = {"ok": True, "family": family, "rows": rows,
             "trips": len(rows), "wins": w, "losses": l,
             "ep_wins": ew, "ep_losses": el,

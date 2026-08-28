@@ -3164,30 +3164,55 @@ export default function LiveDeskPage() {
                       const rowsF = !filt ? fam.rows : fam.rows.filter((r) =>
                         (!fCode || r.code === fCode) && (!fRes || r.result === fRes)
                         && (!(fFrom || fTo) || inWin(r.buy_t) || inWin(r.sell_t)));
-                      // ROUND-TRIP LAW (boss 2026-08-28 16:0x): one finished
-                      // trip = one count - all sell money vs all buy money,
-                      // fee included. Positive net = W. The old slice tally
-                      // let one ride count 8 wins while a stop counted one
-                      // loss and printed 100% on a losing day.
-                      let ew = 0, el = 0;
+                      // PIECE-COUNT LAW (boss 2026-08-28 17:1x, his explicit
+                      // choice over the trip ruler): every ▼ sell line is one
+                      // count, judged against its own at-the-moment base. The
+                      // trip ruler rides along small - the money column keeps
+                      // everyone honest.
+                      let sw = 0, sl2 = 0, ew = 0, el = 0;
                       for (const r of rowsF) {
-                        if (r.partial) continue;
-                        const n2 = r.net_pct ?? 0;
-                        if (n2 > 0) ew++;
-                        else if (n2 < 0) el++;
+                        if (!r.partial) {
+                          const n2 = r.net_pct ?? 0;
+                          if (n2 > 0) ew++;
+                          else if (n2 < 0) el++;
+                        }
+                        const sells = (r.parts?.sells || []) as unknown as (number | string | null)[][];
+                        let counted = false;
+                        if (sells.length && sells[0].length >= 7) {
+                          for (const sr of sells) {
+                            if (fFrom || fTo) { const tt = (sr[2] as string) || ""; if (!inWin(tt)) continue; }
+                            const b2 = (sr[6] ?? r.entry) as number | null;
+                            const p2 = sr[0] as number;
+                            if (!b2) continue;
+                            counted = true;
+                            if (p2 > b2) sw++;
+                            else if (p2 < b2) sl2++;
+                          }
+                        }
+                        if (!counted && !r.partial) {
+                          const n2 = r.net_pct ?? 0;
+                          if (n2 > 0) sw++;
+                          else if (n2 < 0) sl2++;
+                        }
                       }
                       const wp = (ew + el) ? Math.round(ew / (ew + el) * 100) : 0;
+                      const sp = (sw + sl2) ? Math.round(sw / (sw + sl2) * 100) : 0;
                       const useSrv = !filt && fam.win_pct != null;
-                      const mainPct = useSrv ? fam.win_pct : wp;
-                      const mainW = useSrv ? fam.wins : ew;
-                      const mainL = useSrv ? fam.losses : el;
+                      const mainPct = useSrv ? fam.win_pct : sp;
+                      const mainW = useSrv ? fam.wins : sw;
+                      const mainL = useSrv ? fam.losses : sl2;
+                      const epPct = useSrv ? (fam.win_pct_ep ?? wp) : wp;
                       return (<>
                         <span style={{ color: mainPct >= 50 ? "#b02a2a" : "#1565c0" }}
-                          title={t("한 판(매수 전부→매도 전부)의 실수익(수수료 포함)이 플러스면 승 - 판 수로 세는 승률",
-                                   "one finished round trip = one count; positive after-fee net is a W")}>
+                          title={t("매도 한 조각 = 한 건 - 그 순간의 기준가 대비 +면 승 (사장님 룰 2026-08-28)",
+                                   "each sell piece = one count; positive vs its at-the-moment base is a W (boss's rule)")}>
                           {t(`승률 ${mainPct}%`, `win ${mainPct}%`)}
                         </span>
                         {" "}({mainW}{t("승", "W")} {mainL}{t("패", "L")})
+                        <span className="ml-1 text-[10px] text-[var(--text-muted)]"
+                          title={t("판 단위(매수 전부→매도 전부, 수수료 포함 실수익) 승률 - 돈과 항상 일치하는 자", "by whole round trips, after fee - the ruler that always matches the money")}>
+                          {t(`· 판당 ${epPct}%`, `· trips ${epPct}%`)}
+                        </span>
                         {filt && (
                           <span className="ml-1 text-[10px] font-bold px-1 py-0.5 rounded"
                             style={{ background: "rgba(230,81,0,0.14)", color: "#e65100" }}>
