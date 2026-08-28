@@ -380,6 +380,11 @@ _MOVERS_KW = (
 
 def _is_movers_question(transcript: Optional[str]) -> bool:
     t = (transcript or "").lower()
+    # LIVE lane is for RIGHT NOW — an "어제/yesterday" ask belongs to the daily
+    # top_movers lane, which honors the date (2026-08-28: "어제 많이 내린 종목 5개"
+    # got the live 🔥 list with today's numbers)
+    if "어제" in t or "yesterday" in t:
+        return False
     return any(k in t for k in _MOVERS_KW)
 
 
@@ -2687,7 +2692,10 @@ def _is_movers_q(transcript: Optional[str]) -> bool:
                                  "rose", "fell", "jumped", "dropped", "gained", "climbed",
                                  "surged", "plunged", "went up", "went down"))
     _pick = any(w in tl for w in ("which", "what stock", "어떤", "무슨", "가장", "제일",
-                                  "most", "top", "상위"))
+                                  "most", "top", "상위",
+                                  # imperative list-asks count too ("give me increased
+                                  # stocks after opening market", 2026-08-28)
+                                  "give me", "list", "show", "보여", "알려"))
     _stok = "종목" in tl or bool(_re.search(r"\bstocks?\b|\bstokcs?\b", tl)) \
         or "급등" in tl or "급락" in tl
     return _dir and _pick and _stok
@@ -2700,7 +2708,10 @@ def _movers_reply(db, transcript: Optional[str], lang: str) -> Optional[str]:
     tl = (transcript or "").lower()
     en = str(lang or "").lower().startswith("en") or (
         not _re.search(r"[가-힣]", transcript or "") and _re.search(r"[a-zA-Z]", transcript or ""))
-    want_today = any(w in tl for w in ("오늘", "today", "지금", "now")) \
+    # "after opening market / since open / 개장 후" means TODAY's session
+    # (2026-08-28: it defaulted to yesterday)
+    want_today = any(w in tl for w in ("오늘", "today", "지금", "now", "after open",
+                                       "since open", "opening", "개장", "장 시작")) \
         and not any(w in tl for w in ("어제", "yesterday"))
     from services import naver_stock as ns
     from services.checklist_reco import _ranking
@@ -2740,20 +2751,47 @@ def _movers_reply(db, transcript: Optional[str], lang: str) -> Optional[str]:
     if not moves:
         return None
     moves.sort(key=lambda x: -x[2])
-    ups = [m for m in moves if m[2] > 0][:4]
-    downs = sorted([m for m in moves if m[2] < 0], key=lambda x: x[2])[:4]
+    # HONOR THE ASK (boss 2026-08-28: "list me top 10" got 4+4, gainers AND losers
+    # he never asked about): parse the count, and one-direction asks get ONLY that
+    # direction. Default stays 4+4 for a plain "top movers?".
+    _mn = _re.search(r"(?:top|상위)\s*(\d{1,2})|(\d{1,2})\s*개", tl)
+    n_ask = max(1, min(15, int(_mn.group(1) or _mn.group(2)))) if _mn else 4
+    _up_w = ("increas", "gainer", "오른", "상승", "급등", "rose", "jumped", "gained",
+             "climbed", "surged", "went up")
+    _dn_w = ("decreas", "loser", "내린", "하락", "급락", "fell", "dropped", "plunged",
+             "went down")
+    want_up = any(w in tl for w in _up_w)
+    want_dn = any(w in tl for w in _dn_w)
+    if not (want_up or want_dn):
+        want_up = want_dn = True
+    ups = [m for m in moves if m[2] > 0][:n_ask] if want_up else []
+    downs = (sorted([m for m in moves if m[2] < 0], key=lambda x: x[2])[:n_ask]
+             if want_dn else [])
     day_lab = (("today" if want_today else "yesterday") + f" ({ref_date})") if en else \
               (("오늘" if want_today else "어제") + f" ({ref_date})")
     L = [f"**{'📊 Top movers' if en else '📊 등락 상위'} — {day_lab} · "
          + (f"{len(moves)} tracked candidates**" if en else f"추적 {len(moves)}종목 기준**"), ""]
-    L.append("**📈 " + ("Biggest gainers" if en else "상승 상위") + "**")
-    L += [f"{i}. [{n}](chart:{c}) — **{g:+.1f}%** ({_won_str(px)})"
-          for i, (n, c, g, px) in enumerate(ups, 1)] or ["-"]
-    L += ["", "**📉 " + ("Biggest losers" if en else "하락 상위") + "**"]
-    L += [f"{i}. [{n}](chart:{c}) — **{g:+.1f}%** ({_won_str(px)})"
-          for i, (n, c, g, px) in enumerate(downs, 1)] or ["-"]
-    L += ["", ("Universe = our 40 scored candidates, not the whole market. Click a name for its chart."
-               if en else "범위는 전체 시장이 아니라 우리가 채점하는 40종목입니다. 이름 클릭 = 차트.")]
+    if want_up:
+        L.append("**📈 " + ("Biggest gainers" if en else "상승 상위") + "**")
+        L += [f"{i}. [{n}](chart:{c}) — **{g:+.1f}%** ({_won_str(px)})"
+              for i, (n, c, g, px) in enumerate(ups, 1)] or ["-"]
+        if len(ups) < n_ask and _mn:
+            _d_lab = ("today" if want_today else "yesterday")
+            L.append(("(only %d stocks rose %s)" % (len(ups), _d_lab)) if en
+                     else ("(오른 종목이 %d개뿐입니다)" % len(ups)))
+    if want_dn:
+        if want_up:
+            L.append("")
+        L.append("**📉 " + ("Biggest losers" if en else "하락 상위") + "**")
+        L += [f"{i}. [{n}](chart:{c}) — **{g:+.1f}%** ({_won_str(px)})"
+              for i, (n, c, g, px) in enumerate(downs, 1)] or ["-"]
+        if len(downs) < n_ask and _mn:
+            _d_lab = ("today" if want_today else "yesterday")
+            L.append(("(only %d stocks fell %s)" % (len(downs), _d_lab)) if en
+                     else ("(내린 종목이 %d개뿐입니다)" % len(downs)))
+    L += ["", (f"Universe = our {len(rows)} scored candidates, not the whole market. "
+               f"Click a name for its chart." if en else
+               f"범위는 전체 시장이 아니라 우리가 채점하는 {len(rows)}종목입니다. 이름 클릭 = 차트.")]
     ah = _afterhours_note(en)
     if ah:
         L.insert(1, ah)
@@ -7772,6 +7810,12 @@ def _run_agent_impl(
                  or _re.search(r"(^|\s)장(이|은|을)?(\s|\?|$)", _t_mkt))
             and any(k in _t_mkt for k in ("when", "언제", "몇 시", "몇시", "open", "close",
                                           "열려", "열어", "열리", "닫"))
+            # "give me increased stocks after opening market" is a MOVERS ask, not a
+            # clock question (boss 2026-08-28: it got the market-hours answer)
+            and not any(k in _t_mkt for k in ("increas", "decreas", "gainer", "loser",
+                                              "오른", "상승", "하락", "급등", "급락",
+                                              "rose", "fell", "jumped", "list me",
+                                              "give me", "top 1", "top 5"))
             and not _all_stocks_in_query(transcript)):
         try:
             from services.chat_trade import _next_open_kst
