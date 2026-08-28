@@ -3310,7 +3310,6 @@ export default function LiveDeskPage() {
                     <thead><tr className="text-[10px] text-[var(--text-muted)]"
                       style={{ background: "rgba(106,27,154,0.06)" }}>
                       <th className="text-left px-2 py-1" style={CELL}>{t("종목", "stock")}</th>
-                      <th className="text-left px-2" style={CELL}>{t("매수 시각", "buy time")}</th>
                       <th className="text-left px-2" style={CELL}>{t("매수 내역 (가격 × 수량)", "buys (price × qty)")}</th>
                       <th className="text-left px-2" style={CELL}>{t("매도 내역 (시각 · 가격 × 수량 · 잔여) — 줄을 누르면 차트 증거", "sells (time · price × qty · left) — click a line for chart proof")}</th>
                       {/* the money column exists only after 💰 (boss 2026-08-19:
@@ -3322,7 +3321,7 @@ export default function LiveDeskPage() {
                           RIGHT NOW comes first - open positions - then what is already
                           finished. Each half is labelled so the seam is visible. */}
                       {(((fam as unknown as { holding?: unknown[] }).holding?.length ?? 0) > 0) && (
-                        <tr><td colSpan={money ? 5 : 4} className="px-3 py-1 text-[10px] font-bold"
+                        <tr><td colSpan={money ? 4 : 3} className="px-3 py-1 text-[10px] font-bold"
                           style={{ background: "rgba(230,81,0,0.10)", color: "#e65100" }}>
                           ● {t("지금 보유 중 — 아직 매매가 진행 중입니다", "holding now - the trade is still running")}
                         </td></tr>
@@ -3359,17 +3358,6 @@ export default function LiveDeskPage() {
                                              setTimeout(() => document.getElementById("trade-replay9")
                                                ?.scrollIntoView({ behavior: "smooth", block: "center" }), 300); }}>
                             🎞 {h.name || h.code}</td>
-                          <td className="px-2 cursor-pointer underline decoration-dotted"
-                            style={{ ...CELL, color: RED }}
-                            title={t("클릭: 이 매수를 차트에서 확인 (열린 포지션은 매수부터 지금까지 표시)",
-                                     "click: see this buy on the chart (an open position is drawn from its buy to now)")}
-                            onClick={() => { setFocusSide("b");
-                                             setChartOpen(true); chartOpenRef.current = true; setChartOpen9(true);
-                                             setSel(h.rule); autoOpenRef.current = h.rule;
-                                             openRule(h.rule, null, h.code);
-                                             setTimeout(() => chartRef.current?.scrollIntoView(
-                                               { behavior: "smooth", block: "center" }), 150); }}>
-                            ▲ {h.buy_t?.slice(0, 8)}</td>
                           <td className="px-2" style={CELL}>
                             {(() => {
                               const hb = (h as unknown as { parts?: {
@@ -3457,7 +3445,7 @@ export default function LiveDeskPage() {
                             sig: (h as unknown as { sig?: { drop: number; sx: number | null;
                                   rng: number; t?: string } | null }).sig });
                           return (
-                            <tr><td colSpan={money ? 5 : 4} className="px-4 py-2 text-[10.5px] leading-relaxed"
+                            <tr><td colSpan={money ? 4 : 3} className="px-4 py-2 text-[10.5px] leading-relaxed"
                               style={{ background: "rgba(230,81,0,0.06)", color: "var(--text-secondary)" }}>
                               <div><b style={{ color: RED }}>{t("왜 샀나 — ", "why it bought — ")}</b>{lang === "ko" ? ex.buyKo : ex.buyEn}</div>
                               {(h as unknown as { chop?: boolean }).chop && (
@@ -3480,7 +3468,7 @@ export default function LiveDeskPage() {
                         </React.Fragment>
                       ))}
                       {fam.rows.length > 0 && (
-                        <tr><td colSpan={money ? 5 : 4} className="px-3 py-1 text-[10px] font-bold"
+                        <tr><td colSpan={money ? 4 : 3} className="px-3 py-1 text-[10px] font-bold"
                           style={{ background: "rgba(15,81,50,0.08)", color: "#0f5132" }}>
                           ✓ {t("매매 완료 — 이미 팔린 거래", "completed - already sold")}
                         </td></tr>
@@ -3535,13 +3523,6 @@ export default function LiveDeskPage() {
                               title={t("보유 중인 포지션의 계단 매도 조각 — 나머지는 아직 보유 중",
                                        "a ladder slice of a still-open position - the rest is still held")}>
                               {t("조각", "slice")}</span>}</td>
-                          <td className="px-2 cursor-pointer underline decoration-dotted"
-                            style={{ ...CELL, color: RED }}
-                            title={t("클릭: 차트에서 이 매수 확인", "click: see this buy on the chart")
-                                   + (r.wall ? t(` · 호가벽 앞 매수 (${r.wall.qty.toLocaleString()}주 벽 ₩${r.wall.price.toLocaleString()})`,
-                                                 ` · bought in front of a ${r.wall.qty.toLocaleString()}-share wall at ₩${r.wall.price.toLocaleString()}`) : "")}
-                            onClick={() => openFamTrade(r, "b")}>
-                            ▲ {r.buy_t?.slice(0, 8)}</td>
                           <td className="px-2" style={CELL}>
                             {/* SAME EPISODE'S SLICES SHARE ONE BUY LIST (boss
                                 2026-08-21: "same buying showing 4 times makes
@@ -3608,7 +3589,7 @@ export default function LiveDeskPage() {
                         {famExp === `${r.rule}-${r.idx}` && (() => {
                           const ex = explainTrade(r);
                           return (
-                            <tr><td colSpan={money ? 5 : 4} className="px-4 py-2 text-[10.5px] leading-relaxed border-t"
+                            <tr><td colSpan={money ? 4 : 3} className="px-4 py-2 text-[10.5px] leading-relaxed border-t"
                               style={{ background: "rgba(106,27,154,0.05)", color: "var(--text-secondary)" }}>
                               <div><b style={{ color: "#6a1b9a" }}>{lang === "ko" ? r.rule_ko : r.rule_en}</b></div>
                               <div className="mt-1"><b style={{ color: RED }}>{t("왜 샀나 — ", "why it bought — ")}</b>{lang === "ko" ? ex.buyKo : ex.buyEn}</div>
