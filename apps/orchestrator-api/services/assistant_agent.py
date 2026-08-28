@@ -2292,6 +2292,21 @@ def _fundamentals_reply(transcript: Optional[str], lang: str, db=None) -> Option
         if rows:
             L += ["", ("| 항목 | 값 |" if not _en else "| Item | Value |"), "|---|---|"]
             L += [f"| {k} | {v} |" for k, v in rows]
+        # "52주 최고가랑 지금 가격 비교해줘" (audit 2026-08-28) — a compare-ask got the
+        # 52-week band with NO current price; give the comparison it asked for
+        if w_52 and any(k in t for k in ("지금", "현재", "비교", "now", "current", "compare",
+                                         "compared", "vs")):
+            try:
+                from services.paper_desk import _live_price as _lp52
+                _px52, _n52 = _lp52(code)
+                _h52 = float(str(g("highPriceOf52Weeks") or "0").replace(",", "") or 0)
+                if _px52 and _h52:
+                    _gap52 = (float(_px52) / _h52 - 1) * 100
+                    L += ["", (f"📍 현재가 **₩{float(_px52):,.0f}** — 52주 최고 대비 **{_gap52:+.1f}%**"
+                               if not _en else
+                               f"📍 Current **₩{float(_px52):,.0f}** — **{_gap52:+.1f}%** vs the 52-week high")]
+            except Exception:
+                pass
         if w_target or broad:
             tm, rm = f.get("target_mean"), f.get("recomm_mean")
             if tm:
@@ -7339,11 +7354,19 @@ def _run_agent_impl(
     # conversation itself, not another data dump or a picks scan.
     # Skipped when the message wants fresh data or an actual decision (지금/살까/추천…).
     _is_ctx_math = bool(history and transcript and _CHAT_MATH_RE.search(transcript))
+    # '그럼 어제는?' switches the TIME WINDOW — that's a data question inheriting the
+    # stock from context, not a confirmation (2026-08-28: it got a '죄송하지만…'
+    # apology from this lane instead of yesterday's close)
+    _time_switch = bool(_re.match(
+        r"^(?:그럼|그러면|그렇다면|and|then|so|how about|what about)?\s*"
+        r"(?:어제|그제|오늘|지난\s*주|지난\s*달|작년|yesterday|today|last\s+(?:week|month|year))"
+        r"\s*(?:는|은)?\s*\??$", (transcript or "").strip(), _re.IGNORECASE))
     if (history and transcript and len(transcript) <= (120 if _is_ctx_math else 90)
             and not attachment_ids and not confirmed_tool
             and (_CONFIRM_RE.search(transcript) or _is_ctx_math)
             and not any(k in transcript.lower() for k in _CONFIRM_SKIP)
             and not _is_adviceish(transcript)
+            and not _time_switch
             and not _confirm_wants_fresh_data(transcript)
             and not _confirm_is_topic_switch(transcript)):
         _cf = (_ctx_percent_math(transcript, lang, history) if _is_ctx_math else None) \
@@ -7626,6 +7649,71 @@ def _run_agent_impl(
         return {"intent": "identity", "language": lang, "reply": _rep_id,
                 "action": None, "speak": True, "transcript": transcript,
                 "tool_used": "identity"}
+
+    # === 🧭 DESK NAVIGATION shortcut (audit 2026-08-28: "체크리스트 추천 데스크
+    # 열어줘" showed checklist CONTENT instead of opening Menu 2) ===
+    _t_nav = (transcript or "").lower()
+    if (not confirmed_tool and transcript and len(_t_nav) <= 50
+            and any(v in _t_nav for v in ("열어", "열기", "이동", "가자", "open", "go to",
+                                          "take me", "띄워"))):
+        _nav_to = None
+        if any(k in _t_nav for k in ("추천 데스크", "추천데스크", "메뉴2", "메뉴 2", "reco desk",
+                                     "checklist desk", "체크리스트 데스크", "체크리스트 추천")):
+            _nav_to, _nav_nm = "/testing/reco", ("체크리스트 추천 데스크" if _re.search(r"[가-힣]", transcript) else "Checklist Reco Desk")
+        elif any(k in _t_nav for k in ("라이브 데스크", "메뉴1", "메뉴 1", "live desk",
+                                       "live kiwoom", "키움 데스크", "라이브 키움")):
+            _nav_to, _nav_nm = "/testing/live", ("Live Kiwoom Desk" if not _re.search(r"[가-힣]", transcript) else "라이브 키움 데스크")
+        if _nav_to:
+            return {"intent": "navigate", "language": lang,
+                    "reply": (f"📡 {_nav_nm} 페이지를 엽니다." if _re.search(r"[가-힣]", transcript)
+                              else f"📡 Opening the {_nav_nm}."),
+                    "action": {"type": "navigate", "to": _nav_to}, "speak": True,
+                    "transcript": transcript, "tool_used": "navigate"}
+
+    # === 📊 CURRENT VOLUME (audit 2026-08-28: "삼성전자 오늘 거래량 얼마나 돼?" took
+    # the 13s analyst path and quoted a 'day-end final volume' mid-session) ===
+    _t_vol = (transcript or "").lower()
+    if (not confirmed_tool and not attachment_ids and transcript
+            and ("거래량" in _t_vol or "volume" in _t_vol)
+            and not _re.search(r"어제|그제|지난|최근|개월|주일|작년|yesterday|last\s|\bdays?\b"
+                               r"|\bweeks?\b|\bmonths?\b|\byears?\b|\d{1,2}[월/.-]\s*\d{1,2}", _t_vol)):
+        _vstk = _all_stocks_in_query(transcript)
+        if not _vstk and history:            # bare "volume?" follow-up
+            for _hv in reversed(history):
+                _vstk = _all_stocks_in_query(str(_hv.get("content") or _hv.get("text") or ""))
+                if _vstk:
+                    break
+        if _vstk:
+            try:
+                from services.naver_stock import realtime_quote as _rtq
+                _qv = _rtq(_vstk[0][0])
+            except Exception:
+                _qv = None
+            if not (_qv and _qv.get("volume")):
+                # Naver's basic endpoint stopped carrying the volume field
+                # (2026-08-28) — today's daily candle has the running total
+                try:
+                    from services import naver_stock as _ns_v
+                    _h_v = _ns_v.daily_history(_vstk[0][0], days=2)
+                    if _h_v and _h_v[0].get("volume"):
+                        _qv = dict(_qv or {})
+                        _qv["volume"] = _h_v[0]["volume"]
+                        _qv.setdefault("as_of", "")
+                except Exception:
+                    pass
+            if _qv and _qv.get("volume"):
+                _en_v = not _re.search(r"[가-힣]", transcript)
+                _nm_v = _vstk[0][1]
+                _asof = _qv.get("as_of") or ""
+                _live_tag = ("today so far" if _qv.get("market_status") == "OPEN" else "final")
+                _live_ko = ("오늘 지금까지" if _qv.get("market_status") == "OPEN" else "당일 최종")
+                _rep_v = (f"📊 **{_nm_v}** volume ({_live_tag}, as of {_asof}): "
+                          f"**{int(_qv['volume']):,} shares**" if _en_v else
+                          f"📊 **{_nm_v}** 거래량 ({_live_ko} · {_asof} 기준): "
+                          f"**{int(_qv['volume']):,}주**")
+                return {"intent": "stock_volume", "language": lang, "reply": _rep_v,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "realtime_quote"}
 
     # === 📃 TRADING UNIVERSE (boss 2026-08-28: "teach all stock names to chatbot")
     # — "what stocks are we trading?" answers from the LIVE watch list + today's

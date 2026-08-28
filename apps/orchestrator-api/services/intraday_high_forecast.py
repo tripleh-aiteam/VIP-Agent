@@ -149,4 +149,13 @@ _HIGH = ("최고가", "고가", "highest", "high price", "day high", "peak", "�
 
 def is_high_forecast_question(text_in: str) -> bool:
     t = (text_in or "").lower()
+    # PAST asks are history, not a forecast ("셀트리온 최근 1년 최저가 언제였어?" got
+    # today's high forecast, 2026-08-28 — '언제' sat in BOTH keyword lists, so a
+    # time word alone satisfied the whole gate)
+    import re as _re
+    if _re.search(r"였어|였나|했어|지난|최근\s*\d|작년|어제|last\s+(?:year|month|week)"
+                  r"|yesterday|\bwas\b|\bwere\b|\bdid\b", t):
+        return False
+    if ("최저가" in t or "lowest" in t or "low price" in t) and "최고가" not in t:
+        return False                     # a LOW ask is never this lane's job
     return any(k in t for k in _PRED) and any(k in t for k in _HIGH)
