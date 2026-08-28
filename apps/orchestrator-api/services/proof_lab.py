@@ -208,6 +208,12 @@ VARIANTS: list[dict] = [
      # condition. The measured bans stay on record for the real-money day:
      # red-exit surrender-2 +178.6M/yr, +117M/yr with the one-pardon variant.
      "surrender": None,
+     # COURT 2026-08-28 midday (the 삼성전기 whipsaw case, boss: "fix our
+     # weakness and start implement"): re-entry only BELOW the last cut -
+     # never re-buy the same fade at the same or higher price. Measured
+     # +75.3/+36.1/+113.4M per algo = +224.8M/yr desk, the largest single
+     # improvement on record.
+     "reenter_below_cut": True,
      # COURT 2026-08-26 night, deployed for the 08-27 open:
      # spike-exhaustion guard (한전기술 +15% case; measured +13.3M/yr desk-wide):
      # a day already up 8% takes no NEW entries
@@ -263,7 +269,7 @@ VARIANTS: list[dict] = [
      # rung takes 50% of the position, and the retreat/down-side sales take
      # 50% too - two rungs and the hand is empty. 알고리즘2 keeps the 10%
      # drip. Same doors, same sizes, same resets - only the harvest differs.
-     "drip": {"step": 1.0, "up_frac": 0.50, "dn_frac": 0.50, "stop_reset": 1.0,
+     "drip": {"step": 1.0, "up_frac": 0.50, "stop_vol": {"win": 30, "mult": 0.5, "min": 1.0, "max": 2.0}, "dn_frac": 0.50, "stop_reset": 1.0,
               # 14:00 closing hour (boss package 2026-08-20: +39.2M/yr, win 69%)
               "sell_after": "15:19",
               "slice_total": True, "rebuy": True, "reboard": True,
@@ -295,6 +301,12 @@ VARIANTS: list[dict] = [
      # condition. The measured bans stay on record for the real-money day:
      # red-exit surrender-2 +178.6M/yr, +117M/yr with the one-pardon variant.
      "surrender": None,
+     # COURT 2026-08-28 midday (the 삼성전기 whipsaw case, boss: "fix our
+     # weakness and start implement"): re-entry only BELOW the last cut -
+     # never re-buy the same fade at the same or higher price. Measured
+     # +75.3/+36.1/+113.4M per algo = +224.8M/yr desk, the largest single
+     # improvement on record.
+     "reenter_below_cut": True,
      # COURT 2026-08-26 night, deployed for the 08-27 open:
      # spike-exhaustion guard (한전기술 +15% case; measured +13.3M/yr desk-wide):
      # a day already up 8% takes no NEW entries
@@ -345,7 +357,7 @@ VARIANTS: list[dict] = [
      # -1% below the top (same ladder as 알고리즘1); what remains distinct is the
      # RELOAD - a fresh sharp-decrease turn buys back what was sold. The duel now
      # isolates exactly one question: does the reload law earn its keep?
-     "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.0,
+     "drip": {"step": 1.0, "up_frac": 0.10, "stop_vol": {"win": 30, "mult": 0.5, "min": 1.0, "max": 2.0}, "dn_frac": 0.10, "stop_reset": 1.0,
               # PING-PONG (boss's law, measured +38M/yr and chosen 2026-08-20
               # after the SK텔레콤 98,100-top reload: a sold rung re-buys only
               # a full step CHEAPER and sells again at the same rung - round
@@ -398,6 +410,12 @@ VARIANTS: list[dict] = [
      # condition. The measured bans stay on record for the real-money day:
      # red-exit surrender-2 +178.6M/yr, +117M/yr with the one-pardon variant.
      "surrender": None,
+     # COURT 2026-08-28 midday (the 삼성전기 whipsaw case, boss: "fix our
+     # weakness and start implement"): re-entry only BELOW the last cut -
+     # never re-buy the same fade at the same or higher price. Measured
+     # +75.3/+36.1/+113.4M per algo = +224.8M/yr desk, the largest single
+     # improvement on record.
+     "reenter_below_cut": True,
      # COURT 2026-08-26 night, deployed for the 08-27 open:
      # spike-exhaustion guard (한전기술 +15% case; measured +13.3M/yr desk-wide):
      # a day already up 8% takes no NEW entries
@@ -433,7 +451,7 @@ VARIANTS: list[dict] = [
      "morning": {"until": "09:20", "vol_x": 1.5, "min_run": 0.3,
                  "alt_run": 1.0},
      "burst": {"rise": 0.7, "win_min": 10},
-     "drip": {"step": 999.0, "up_frac": 1.0, "dn_frac": 0.0, "stop_reset": 1.0,
+     "drip": {"step": 999.0, "up_frac": 1.0, "stop_vol": {"win": 30, "mult": 0.5, "min": 1.0, "max": 2.0}, "dn_frac": 0.0, "stop_reset": 1.0,
               # 14:00 closing hour + TRAIL exit (boss package 2026-08-20,
               # +66.5M/yr combined): armed at +0.85% as before, but the ride
               # ends at -0.5% off the peak - a fixed give-back instead of two
@@ -2035,7 +2053,24 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # audit 08-12: resetting a scout would buy 100% of a stock that
                 # is falling and never confirmed its turn - the scout law upside
                 # down). A new dip signal re-enters normally.
-                _stpl9 = pos["base"] * (1 - dp.get("stop_reset", 1.5) / 100)
+                # VOLATILITY-SCALED STOP (boss 2026-08-28 ~11:2x, the 삼성전기
+                # case: seat #1, +3.4% day, and the fixed -1% stop was clipped
+                # FOUR times by its ±2% waves - "fix our weakness and start
+                # implement"): with stop_vol set, the stop width follows the
+                # stock's own recent swing - range% of the last `win` bars ×
+                # mult, clamped [min,max]. Calm stocks keep the tight stop;
+                # 전기-type amplitude earns room. Default OFF.
+                _sr9 = dp.get("stop_reset", 1.5)
+                _sv9 = dp.get("stop_vol")
+                if _sv9 and c:
+                    _w9 = int(_sv9.get("win", 30))
+                    _h9v = max((s.get("highs") or closes)[max(0, i - _w9):i + 1])
+                    _l9v = min((s.get("lows") or closes)[max(0, i - _w9):i + 1])
+                    _rng9 = (_h9v - _l9v) / c * 100
+                    _sr9 = min(float(_sv9.get("max", 2.0)),
+                               max(float(_sv9.get("min", 1.0)),
+                                   _rng9 * float(_sv9.get("mult", 0.6))))
+                _stpl9 = pos["base"] * (1 - _sr9 / 100)
                 # SAME-BAR ADD → NO LOW-TRIGGER (boss 2026-08-27, the 한전기술
                 # 15:01 +0.04% artifact: the confirm added at the bar's top and
                 # the stop then fired off the same bar's LOW - a price that
