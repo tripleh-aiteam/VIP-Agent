@@ -7684,7 +7684,12 @@ def _run_agent_impl(
                                           "which", "stock", "today", "started",
                                           "list", "analyze", "분석"))):
         try:
-            _en_g = not _re.search(r"[가-힣]", transcript or "")
+            # QUESTION LANGUAGE = ANSWER LANGUAGE (boss 2026-08-28: an English
+            # question containing the single Korean word 갭상승 was answered in
+            # Korean) - judge by the MAJORITY script, not by any one term
+            _ko_n = len(_re.findall(r"[가-힣]", transcript or ""))
+            _en_n = len(_re.findall(r"[A-Za-z]", transcript or ""))
+            _en_g = _en_n > _ko_n * 2
             _rep_g = _gap_report_text(_en_g)
             if _rep_g:
                 return {"intent": "gap_report", "language": lang, "reply": _rep_g,
