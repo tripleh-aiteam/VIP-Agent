@@ -113,6 +113,14 @@ TESTS = [
      lambda i, r: ("Shakespeare" in r or "셰익스피어" in r, "verifiable fact")),
     ("offtopic", "'감사합니다'를 영어로 번역해줘", None,
      lambda i, r: ("thank" in r.lower(), "translation")),
+    # --- M. movers obey the ask (2026-08-28 boss battery) ---
+    ("movers", "No I need top 10 that increased after market opeining", None,
+     # no word "stock" in the sentence — must still be the movers lane, today,
+     # gainers only (it fell to the volume-spikes tool and apologized)
+     lambda i, r: (i == "top_movers" and "gainers" in r.lower()
+                   and "losers" not in r.lower() and "today" in r.lower(), i)),
+    ("movers", "어제 가장 많이 내린 종목 5개", None,
+     lambda i, r: (i == "top_movers" and "하락" in r and "상승 상위" not in r, i)),
     # --- I. identity (2026-08-27: "who are yiu?" answered "I'm Qwen ... Alibaba") ---
     ("identity", "who are yiu?", None,
      lambda i, r: (i == "identity" and "VIP" in r

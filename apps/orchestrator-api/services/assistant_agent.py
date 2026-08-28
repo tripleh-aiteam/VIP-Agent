@@ -2697,7 +2697,10 @@ def _is_movers_q(transcript: Optional[str]) -> bool:
                                   # stocks after opening market", 2026-08-28)
                                   "give me", "list", "show", "보여", "알려"))
     _stok = "종목" in tl or bool(_re.search(r"\bstocks?\b|\bstokcs?\b", tl)) \
-        or "급등" in tl or "급락" in tl
+        or "급등" in tl or "급락" in tl \
+        or bool(_re.search(r"compan(?:y|ys|ies)", tl)) \
+        or bool(_re.search(r"(?:top|상위)\s*\d", tl)) \
+        or "market open" in tl or "market opening" in tl or "개장" in tl
     return _dir and _pick and _stok
 
 
@@ -2710,8 +2713,11 @@ def _movers_reply(db, transcript: Optional[str], lang: str) -> Optional[str]:
         not _re.search(r"[가-힣]", transcript or "") and _re.search(r"[a-zA-Z]", transcript or ""))
     # "after opening market / since open / 개장 후" means TODAY's session
     # (2026-08-28: it defaulted to yesterday)
-    want_today = any(w in tl for w in ("오늘", "today", "지금", "now", "after open",
-                                       "since open", "opening", "개장", "장 시작")) \
+    want_today = (any(w in tl for w in ("오늘", "today", "지금", "now", "after open",
+                                        "since open", "opening", "개장", "장 시작"))
+                  # 'after market opeining' — the typo missed the cue (2026-08-28);
+                  # 'market ope…' catches open/opening/opeining alike
+                  or bool(_re.search(r"market\s+ope|after\s+market", tl))) \
         and not any(w in tl for w in ("어제", "yesterday"))
     from services import naver_stock as ns
     from services.checklist_reco import _ranking
