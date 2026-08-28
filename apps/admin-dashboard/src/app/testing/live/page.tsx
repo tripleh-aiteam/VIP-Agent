@@ -617,6 +617,7 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
   const [sel9, setSel9] = useState("");
   const [watchList9, setWatchList9] = useState<{ code: string; name: string }[]>([]);
   const [holds9, setHolds9] = useState<Hold[]>([]);
+  const [chat9, setChat9] = useState<Hold[]>([]);
   const [waitsAll9, setWaitsAll9] = useState<{ code: string; name?: string; side: string;
     qty?: number; px: number; wall?: number | null; chat: boolean }[]>([]);
   const [evts9, setEvts9] = useState<{ code: string; txt: string }[]>([]);
@@ -678,6 +679,10 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
         if (!live || !r || r.computing) return;
         const hh = (r.holding || []).filter((h) => h.rule !== "chatbot");
         setHolds9(hh);
+        // 💬 the boss's own chat lots ride the room too (boss 2026-08-28:
+        // "I wanna use the chatbot - buy 10 shares, then watch it in real
+        // time") - shown beside the algo position in the one-stock view
+        setChat9((r.holding || []).filter((h) => h.rule === "chatbot"));
         const ev: [string, string, string][] = [];
         for (const x of (r.rows || [])) {
           if (x.rule === "chatbot") continue;
@@ -778,6 +783,7 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
     return () => { live = false; clearInterval(h); };
   }, [open9, sel9]);
   const selHold9 = holds9.find((h) => h.code === sel9) || null;
+  const selChat9 = chat9.find((h) => h.code === sel9) || null;
   const selWaits9 = waitsAll9.filter((w) => w.code === sel9);
   const cv9 = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
@@ -950,6 +956,14 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
             ) : (
               <span className="text-[12px] text-[var(--text-muted)]">
                 {t("포지션 없음 — 규칙의 문이 조건을 기다리는 중", "no position - the rule's doors are watching for their condition")}</span>
+            )}
+            {selChat9 && (
+              <span className="text-[13px] font-bold" style={{ color: "#6a1b9a" }}>
+                💬 {t("내 주문", "MY order")} {selChat9.qty_left ?? "?"}{t("주", "sh")} @ ₩{Math.round(Number(selChat9.entry || selChat9.base || 0)).toLocaleString()}{" "}
+                <span style={{ color: (selChat9.unreal_pct ?? 0) >= 0 ? "#d32f2f" : "#1565c0" }}>
+                  {(selChat9.unreal_pct ?? 0) >= 0 ? "+" : ""}{selChat9.unreal_pct}%</span>
+                {" · "}{t("알고2가 자동 관리 중 (+1% 계단 10% 매도 · -1% 가드 · 15:19 종)", "auto-managed by Algo2 (+1% rungs · -1% guard · 15:19 bell)")}
+              </span>
             )}
             <span className="ml-auto flex gap-1">
               {([["1m", t("1분", "1min")], ["day", t("일봉 (연간+구간선)", "daily (year+zones)")]] as const).map(([pp, lab]) => (
