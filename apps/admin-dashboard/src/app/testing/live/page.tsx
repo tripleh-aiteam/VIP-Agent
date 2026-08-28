@@ -405,6 +405,21 @@ class SafeBox extends React.Component<{ children?: React.ReactNode; label?: stri
 // play recording; the buy TIME keeps the arrow jump"). Plays the recorded
 // bars of that episode with the real fills appearing at their true minutes.
 // Playback of the record - prices are never invented.
+// 같은 분·같은 가격의 매수 조각은 한 줄로 (boss 2026-08-28: "24sh와 1sh가
+// 같은 시각 같은 가격 - 사람을 혼란스럽게 한다"): 군대+보강이 한 바에 앉으면
+// 수량을 합쳐 보여주되, 몇 개의 법이 샀는지는 꼬리표로 남긴다
+function mergeBuys9(buys: [number, number, (string | null)?][]) {
+  const out: [number, number, string | null, number][] = [];
+  for (const b of buys) {
+    const key = `${Math.round(b[0])}-${String(b[2] || "").slice(0, 5)}`;
+    const last = out.length ? out[out.length - 1] : null;
+    if (last && `${Math.round(last[0])}-${String(last[2] || "").slice(0, 5)}` === key) {
+      last[1] += b[1]; last[3] += 1;
+    } else out.push([b[0], b[1], (b[2] ?? null), 1]);
+  }
+  return out;
+}
+
 function TradeReplay({ ep, t, onClose }: {
   ep: { code: string; name: string; entry?: number; base?: number;
         buy_t?: string; sell_t?: string; live?: boolean; exit?: number;
@@ -3356,7 +3371,7 @@ export default function LiveDeskPage() {
                               // every buy line is CLICKABLE PROOF (boss 2026-08-20):
                               // the chart opens on this stock with every ▲ marked at
                               // its own bar, and the caption restates this exact fill
-                              return hb && hb.length ? hb.map(([p2, q2, t3], k2) => (
+                              return hb && hb.length ? mergeBuys9(hb).map(([p2, q2, t3, nlaws], k2) => (
                                 <div key={k2} className="cursor-pointer underline decoration-dotted"
                                   title={t("클릭: 이 매수를 차트에서 증명", "click: prove this buy on the chart")}
                                   onClick={() => { setSelSlice({ rule: h.rule, name: h.name || h.code,
@@ -3377,7 +3392,7 @@ export default function LiveDeskPage() {
                                     ? <span className="text-[9.5px] font-bold text-[var(--text-muted)]">🕐 {t3 ? String(t3).slice(0, 5) + " " : ""}{t("줄서는 가격 ", "queued at ")}</span>
                                     : (t3 ? <span className="text-[9.5px] font-bold" style={{ color: RED }}>▲ {String(t3).slice(0, 5)} </span> : null)}
                                   ₩{Math.round(p2).toLocaleString()}
-                                  <span className="text-[9.5px] text-[var(--text-muted)]"> × {q2}{t("주", "sh")}{(h as unknown as { waiting?: boolean }).waiting ? t(" (미체결)", " (not filled)") : ""}</span></div>
+                                  <span className="text-[9.5px] text-[var(--text-muted)]"> × {q2}{t("주", "sh")}{Number(nlaws) > 1 ? t(` (${nlaws}개 법 합산)`, ` (${nlaws} laws merged)`) : ""}{(h as unknown as { waiting?: boolean }).waiting ? t(" (미체결)", " (not filled)") : ""}</span></div>
                               )) : <div>₩{Math.round(h.entry).toLocaleString()}</div>;
                             })()}</td>
                           <td className="px-2" style={{ ...CELL, color: "#e65100" }}>
@@ -3532,8 +3547,8 @@ export default function LiveDeskPage() {
                               && arrF[i - 1].code === r.code) ? (
                               <div className="text-[10px] text-[var(--text-muted)]">
                                 〃 {t("위와 같은 매수", "same buys as above")}</div>
-                            ) : r.parts?.buys && r.parts.buys.length ? (r.parts.buys as unknown as
-                              [number, number, (string | null)?][]).map(([p2, q2, t3], k2) => (
+                            ) : r.parts?.buys && r.parts.buys.length ? mergeBuys9(r.parts.buys as unknown as
+                              [number, number, (string | null)?][]).map(([p2, q2, t3, nlaws], k2) => (
                               <div key={k2} className="cursor-pointer underline decoration-dotted"
                                 title={t("클릭: 이 매수를 차트에서 증명", "click: prove this buy on the chart")}
                                 onClick={() => { setSelSlice({ rule: r.rule, name: r.name || r.code,
