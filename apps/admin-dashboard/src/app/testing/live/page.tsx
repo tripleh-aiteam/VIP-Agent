@@ -3582,8 +3582,12 @@ export default function LiveDeskPage() {
                                   const g2 = b2 ? (p2 / b2 - 1) * 100 : null;
                                   // the fee line (boss 2026-08-21: a green %
                                   // under +0.23% is a loss in disguise) -
-                                  // amber warns the eye
-                                  const feeLine = g2 != null && g2 > 0 && g2 < 0.23;
+                                  // amber warns the eye. The 15:19 bell is
+                                  // exempt (boss 2026-08-28): it MUST sell
+                                  // whatever the price - no shame badge on a
+                                  // sell that had no choice
+                                  const feeLine = g2 != null && g2 > 0 && g2 < 0.23
+                                    && !String(why2 || "").includes("마감");
                                   return g2 != null ? (
                                     <b className="ml-1 text-[10px]"
                                       title={feeLine ? t("이익이 수수료(0.23%)보다 작음 - 실제로는 손실", "gain smaller than the 0.23% fee - actually a loss") : undefined}

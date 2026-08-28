@@ -2218,6 +2218,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            pos["ref_up"]
                            * (1 - (pos["k_dn"] + 1) * dp.get("step", 1.0) / 100))):
                         _guard += 1
+                        # same fee law as the retreat (boss 2026-08-28 17:3x,
+                        # the 한미반도체 09:59 고점-1% +0.114% piece): a de-risk
+                        # slice whose fill sits inside the fee line is a paper
+                        # win and a money loss - hold instead; the -1% stop
+                        # still guards below
+                        if c <= pos.get("base", 0) * (1 + FEE_PCT / 100):
+                            break
                         _yd2 = (pos.get("qty_tot") or pos["qty0"]) \
                             if dp.get("slice_total") else pos["qty0"]
                         _qs = max(1, int(_yd2 * dp.get("dn_frac", 0.10)))
@@ -2317,8 +2324,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _trail9 = _pr.get("trail")
                     _trail_hit = bool(_trail9) and pos.get("pr_pk", 0) > 0 \
                         and c <= pos.get("pr_pk", 0) * (1 - _trail9 / 100)
+                    # the FILL must clear the fee, not just the peak (boss
+                    # 2026-08-28 17:3x, the 삼성SDI 14:13 +0.021% case: the peak
+                    # armed at +0.7% but price fell back to base before the 2nd
+                    # blue - selling there just donates the 0.23% fee. "Yesterday
+                    # I told you do not make this kind of mistake.")
                     if ((not pos.get("pr_sold")) and not _chop_now
-                            and c > pos.get("base", 0)
+                            and c > pos.get("base", 0) * (1 + FEE_PCT / 100)
                             and pos.get("pr_pk", 0) >= pos.get("base", 0)
                             * (1 + _pr.get("arm", 0.0) / 100)
                             and pos.get("pr_pk", 0) > pos.get("base", 0)
