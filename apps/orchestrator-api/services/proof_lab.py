@@ -1993,6 +1993,15 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         return
                     pos["sold_won"] += px * q
                     pos["qty"] -= q
+                    # AVERAGE-COST ACCOUNTING (boss 2026-08-28, the HD현대
+                    # 09:05 case: the sold scout's cost stayed in pos["cost"],
+                    # so the confirm-add recomputed base = 25 shares of money
+                    # / 24 shares = a phantom ₩498,312 base whose stop line
+                    # sat ABOVE the market - instant fake -3.98% dump): a
+                    # sold slice takes its share of the cost with it.
+                    if "cost" in pos:
+                        pos["cost"] = max(0.0, pos["cost"]
+                                          - (pos.get("base") or pos.get("entry") or px) * q)
                     # the slice remembers what REMAINED after it (boss 2026-08-13:
                     # "if it sold 200 and bought 1000 it must show 800")
                     pos["slices"].append([px, q, why, i, pos["qty"],
