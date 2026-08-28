@@ -4633,12 +4633,20 @@ export default function LiveDeskPage() {
           order book how effecting to the chart"). This one is always here, always the
           live tape, and refreshes on the same 2-3s pull as the book below it. */}
       {!chartOn9 ? (
-        <button onClick={() => setChartOpen9(true)}
-          className="mt-3 w-full text-left rounded-xl border px-4 py-2.5 text-[11.5px]"
+        <div className="mt-3 w-full rounded-xl border px-4 py-2.5 text-[11.5px] flex items-center gap-2 flex-wrap"
           style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)", color: "var(--text-muted)" }}>
-          📈 {t("실시간 차트 접혀 있음 — 매매 내역·보유의 시간을 클릭하거나 여기를 눌러 열기 (닫아두면 앱이 가볍습니다)",
-                "live chart folded - click a time in the trading history / holdings, or press here to open (folded = lighter app)")}
-        </button>
+          <span className="cursor-pointer" onClick={() => setChartOpen9(true)}>
+            📈 {t("실시간 차트 접혀 있음 — 눌러서 열기", "live chart folded - press to open")}</span>
+          <button onClick={() => { setChartOpen9(true); setFsMkt9(true); }}
+            className="text-[10.5px] font-bold px-2 py-0.5 rounded border"
+            style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
+            ⛶ {t("전체화면으로 열기", "open FULL SCREEN")}</button>
+          <button onClick={() => { setChartOpen9(true); setTwoDay9(true);
+                                   setChartBars(100000); chartBarsRef.current = 100000; pull(); }}
+            className="text-[10.5px] font-bold px-2 py-0.5 rounded border"
+            style={{ borderColor: "#b71c1c", color: "#b71c1c" }}>
+            {t("어제+오늘 갭 보기로 열기", "open with yesterday+today gap view")}</button>
+        </div>
       ) : (
       <div className={fsMkt9 ? "fixed inset-0 z-[200] p-3 overflow-auto"
                              : "mt-3 rounded-xl border p-2"}
