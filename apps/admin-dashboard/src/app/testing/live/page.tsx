@@ -3329,10 +3329,12 @@ export default function LiveDeskPage() {
                       {((fam as unknown as { holding?: { rule: string; code: string; name?: string;
                           buy_t?: string; entry: number; last: number; unreal_pct: number }[] }).holding || [])
                         .filter((h) => !fCode || h.code === fCode)
-                        .map((h, k) => (
+                        .map((h, k, arrH) => (
                         <React.Fragment key={`h-${h.rule}-${k}`}>
                         <tr className="border-t border-[var(--border-default)]/30"
-                          style={{ background: "rgba(230,81,0,0.05)" }}>
+                          style={{ background: "rgba(230,81,0,0.05)",
+                                   ...(k > 0 && arrH[k - 1].code !== h.code
+                                      ? { borderTop: "2px solid rgba(106,27,154,0.5)" } : {}) }}>
                           <td className="px-2 py-0.5 font-bold cursor-pointer underline decoration-dotted"
                             title={t("누르면 왜 샀고 왜 아직 들고 있는지 설명이 열립니다", "click: why it bought and why it is still holding")}
                             onClick={() => { const kk = `h-${h.rule}-${k}`;
@@ -3489,7 +3491,9 @@ export default function LiveDeskPage() {
                         })
                         .map((r, i, arrF) => (
                         <React.Fragment key={`${r.rule}-${r.idx}-${i}`}>
-                        <tr className="border-t border-[var(--border-default)]/30">
+                        <tr className="border-t border-[var(--border-default)]/30"
+                          style={i > 0 && arrF[i - 1].code !== r.code
+                            ? { borderTop: "2px solid rgba(106,27,154,0.5)" } : undefined}>
                           <td className="px-2 py-0.5 font-bold cursor-pointer underline decoration-dotted"
                             title={t("누르면 설명과 함께 차트에 매수·매도 지점이 증거로 표시됩니다",
                                      "click: the story opens AND the chart marks the buy and sell as proof")}
