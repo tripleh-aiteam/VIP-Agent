@@ -4753,6 +4753,33 @@ export default function LiveDeskPage() {
             style={{ borderColor: "#6a1b9a", color: fsMkt9 ? "#fff" : "#6a1b9a",
                      background: fsMkt9 ? "#6a1b9a" : "transparent" }}>
             {fsMkt9 ? t("⛶ 전체화면 닫기", "⛶ exit full screen") : t("⛶ 전체화면", "⛶ full screen")}</button>
+          {/* IN-FULLSCREEN stock switch (boss 2026-08-28: "in full screen we
+              have no chance to change the stock - add a dropdown and search
+              bar so whatever stock we wanna watch we could see") */}
+          {fsMkt9 && (<>
+            <select value={code}
+              onChange={(e) => { const c2 = e.target.value;
+                                 setCode(c2); codeRef.current = c2; pull();
+                                 if (sel) openRule(sel, null, c2); }}
+              className="text-[12px] font-extrabold px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)]"
+              style={{ borderColor: TEAL, color: TEAL }}>
+              {(tabStocks.length ? tabStocks : [{ code: "005930", name: "삼성전자", ticks: 0 }]).map((x) => (
+                <option key={x.code} value={x.code}>{x.name}</option>
+              ))}
+              {(dpick?.rows ?? []).filter((r) => !watchSet9.has(r.code)).map((r) => (
+                <option key={r.code} value={r.code}>{r.name} (일봉)</option>
+              ))}
+            </select>
+            <input list="all-stocks-9" value={stockQ9} placeholder={t("종목 검색…", "search stock…")}
+              onChange={(e) => {
+                const v = e.target.value; setStockQ9(v);
+                const all9 = [...(st?.stocks ?? []), ...((dpick?.rows ?? []) as { code: string; name: string }[])];
+                const hit = all9.find((x) => x.name === v || x.code === v);
+                if (hit) { setCode(hit.code); codeRef.current = hit.code; pull(); setStockQ9(""); }
+              }}
+              className="text-[11px] px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] w-[120px]"
+              style={{ borderColor: TEAL, color: "var(--text-primary)" }} />
+          </>)}
           <button onClick={() => { setChartOpen9(false); setPick(null); }}
             className="text-[10px] font-bold px-1.5 py-0.5 rounded border"
             style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
