@@ -1371,6 +1371,47 @@ def _fam_compute(family: str, tick: int, period: int, day: str,
                          "parts": tr.get("parts")})
     # newest first (boss 2026-08-11) - the top of the table is what just happened
     rows.sort(key=lambda r: (r.get("d8") or "", r.get("buy_t") or ""), reverse=True)
+    # THE GUARD (boss 2026-08-28 night: "every day we have a mistake... every
+    # trading result will check in any cases - calculation, time, price, all
+    # rules matching - if any mistake write with red small ? sign and inform
+    # me"): every row is re-audited against the laws it claims to follow; any
+    # discrepancy rides on the row as guard[] and the board wears a red ?.
+    for r in rows:
+        _gd = []
+        p9 = r.get("parts") or {}
+        b9 = p9.get("buys") or []
+        s9 = p9.get("sells") or []
+        if not r.get("partial") and b9 and s9:
+            _sp = sum((x[0] or 0) * (x[1] or 0) for x in b9)
+            _so = sum((x[0] or 0) * (x[1] or 0) for x in s9)
+            if _sp > 0:
+                _tn = (_so / _sp - 1) * 100 - 0.23
+                if abs(_tn - (r.get("net_pct") or 0)) > 0.05:
+                    _gd.append(f"계산 불일치: 체결 재계산 {_tn:.2f}% ≠ 표시 "
+                               f"{r.get('net_pct')}%")
+            _qb = sum(x[1] or 0 for x in b9)
+            _qs = sum(x[1] or 0 for x in s9)
+            if _qb != _qs:
+                _gd.append(f"수량 불일치: 매수 {_qb}주 ≠ 매도 {_qs}주")
+        for x in s9:
+            if len(x) > 6 and x[6]:
+                _g9 = (x[0] / x[6] - 1) * 100
+                _w9 = str(x[5] if len(x) > 5 else "")
+                if _g9 < -2.7:   # vol-stop ceiling 2.0% + slippage room
+                    _gd.append(f"손절선 크게 이탈: {str(x[2])[:5]} {_g9:.2f}% ({_w9})")
+                if 0 < _g9 < 0.23 and "마감" not in _w9:
+                    _gd.append(f"수수료선 안 매도: {str(x[2])[:5]} +{_g9:.2f}% ({_w9})")
+        _dp = (r.get("judge") or {}).get("dp")
+        if _dp is not None and _dp >= 0.85:
+            _gd.append(f"최고가권 매수 (연중 위치 {_dp:.2f})")
+        if _dp is not None and _dp <= 0.20:
+            for x in s9:
+                _w9 = str((x[5] if len(x) > 5 else "") or "")
+                if ("음봉" in _w9 or "고점" in _w9) and "마감" not in _w9:
+                    _gd.append(f"매수존 매도: {str(x[2])[:5]} ({_w9})")
+                    break
+        if _gd:
+            r["guard"] = _gd
     # PIECE-COUNT WIN % (boss 2026-08-28 17:1x, his explicit word after hearing
     # the trip-ruler case: "each one +% must count as one winning - all positive
     # winning cases divided by overall trading cases"): every ▼ sell line is one

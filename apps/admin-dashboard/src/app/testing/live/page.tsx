@@ -1921,7 +1921,7 @@ export default function LiveDeskPage() {
                   wall?: { price: number; qty: number } | null;
                   parts?: { buys?: [number, number][] | null;
                             sells?: [number, number][] | null } | null;
-                  partial?: boolean };
+                  partial?: boolean; guard?: string[] };
   type FamTrades = { ok: boolean; rows: FamRow[]; trips: number; wins: number;
                      losses: number; win_pct: number; net_won: number;
                      ep_wins?: number; ep_losses?: number; win_pct_ep?: number };
@@ -3536,7 +3536,13 @@ export default function LiveDeskPage() {
                               style={{ background: "rgba(230,81,0,0.14)", color: "#e65100" }}
                               title={t("보유 중인 포지션의 계단 매도 조각 — 나머지는 아직 보유 중",
                                        "a ladder slice of a still-open position - the rest is still held")}>
-                              {t("조각", "slice")}</span>}</td>
+                              {t("조각", "slice")}</span>}
+                            {/* THE GUARD (boss 2026-08-28): a row that broke a
+                                law wears a small red ? - hover for the charges */}
+                            {!!r.guard?.length && <span className="ml-1 text-[10px] font-bold"
+                              style={{ color: "#c62828", cursor: "help" }}
+                              onClick={(e) => e.stopPropagation()}
+                              title={r.guard.join("\n")}>?</span>}</td>
                           <td className="px-2" style={CELL}>
                             {/* SAME EPISODE'S SLICES SHARE ONE BUY LIST (boss
                                 2026-08-21: "same buying showing 4 times makes

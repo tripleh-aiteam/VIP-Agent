@@ -1711,7 +1711,15 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             elif (s.get("rank_win") is not None and _now
                   and not (str(_now) < (s.get("rank_t0") or "00:00:00")
                            or any(f_ <= str(_now) <= t_
-                                  for f_, t_ in s["rank_win"]))):
+                                  for f_, t_ in s["rank_win"]))
+                  # RE-ENTRY KEEPS ITS SEAT (boss 2026-08-28 night, the HD현대
+                  # 10:31/15:06 case: stopped at 09:16, two clean recoveries,
+                  # and the seat gate refused both because the stock had
+                  # slipped off the intraday top-N): a stock this desk already
+                  # traded today re-enters through the 3-red law even without
+                  # a current seat - the bench law governs NEW boarding only.
+                  and not (v.get("drip", {}).get("reboard") and reb_pk[si]
+                           and up[si] >= int(v.get("reboard_ups", 3)))):
                 pass       # THE LIVING TOP-3 (boss 2026-08-25 12:3x, menu 2:
                            # "check every few seconds and buy using the
                            # checklist - not only one time"): on the reco desk
