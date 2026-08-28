@@ -1000,8 +1000,9 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                 "sig": g.get("sig"), "wall": g.get("wall"), "scout": g.get("scout"),
                 "judge": g.get("judge"),
                 "parts": g.get("parts"),
-                "result": ("win" if g["gross_pct"] > 0 else
-                           "loss" if g["gross_pct"] < 0 else "flat"),
+                # after-fee ruler (boss 2026-08-28 16:0x - same law as the header)
+                "result": ("win" if g["net_pct"] > 0 else
+                           "loss" if g["net_pct"] < 0 else "flat"),
                 "bars_held": g["sell_i"] - g["buy_i"],
                 "tick_size": sk["tick"],
                 # a drip episode carries its REAL share count (every sizing law

@@ -3147,8 +3147,8 @@ export default function LiveDeskPage() {
                         with the other would decorate, showing both is honest) */}
                     {fam.rows.filter((r) => !r.partial).length}{t("판", " ep")}
                     <span className="font-normal text-[var(--text-muted)]">
-                      {t(` (조각매도 ${fam.wins + fam.losses}회)`,
-                         ` (${fam.wins + fam.losses} slice-sells)`)}
+                      {t(` (조각매도 ${fam.rows.reduce((a, r) => a + (r.parts?.sells?.length || 0), 0)}회)`,
+                         ` (${fam.rows.reduce((a, r) => a + (r.parts?.sells?.length || 0), 0)} slice-sells)`)}
                     </span>
                     {" · "}
                     {(() => {
@@ -3164,45 +3164,30 @@ export default function LiveDeskPage() {
                       const rowsF = !filt ? fam.rows : fam.rows.filter((r) =>
                         (!fCode || r.code === fCode) && (!fRes || r.result === fRes)
                         && (!(fFrom || fTo) || inWin(r.buy_t) || inWin(r.sell_t)));
-                      let ew = 0, el = 0, sw = 0, sl2 = 0;
+                      // ROUND-TRIP LAW (boss 2026-08-28 16:0x): one finished
+                      // trip = one count - all sell money vs all buy money,
+                      // fee included. Positive net = W. The old slice tally
+                      // let one ride count 8 wins while a stop counted one
+                      // loss and printed 100% on a losing day.
+                      let ew = 0, el = 0;
                       for (const r of rowsF) {
-                        if (!r.partial) {
-                          if (r.result === "win") ew++;
-                          else if (r.result === "loss") el++;
-                        }
-                        const sells = (r.parts?.sells || []) as unknown as (number | string | null)[][];
-                        if (!r.partial && sells.length && sells[0].length >= 7) {
-                          for (const sr of sells) {
-                            if (fFrom || fTo) { const tt = (sr[2] as string) || ""; if (!inWin(tt)) continue; }
-                            const b2 = sr[6] as number | null;
-                            const p2 = sr[0] as number;
-                            if (b2 && p2 > b2) sw++;
-                            else if (b2 && p2 < b2) sl2++;
-                          }
-                        } else if (r.partial) {
-                          if (r.result === "win") sw++;
-                          else if (r.result === "loss") sl2++;
-                        }
+                        if (r.partial) continue;
+                        const n2 = r.net_pct ?? 0;
+                        if (n2 > 0) ew++;
+                        else if (n2 < 0) el++;
                       }
                       const wp = (ew + el) ? Math.round(ew / (ew + el) * 100) : 0;
-                      const sp = (sw + sl2) ? Math.round(sw / (sw + sl2) * 100) : 0;
-                      const useSrv = !filt && fam.win_pct_ep != null;
-                      // the HEADLINE is the boss's counting (2026-08-13): every
-                      // sell judged at its own moment - positives over total
-                      const mainPct = useSrv ? fam.win_pct : sp;
-                      const mainW = useSrv ? fam.wins : sw;
-                      const mainL = useSrv ? fam.losses : sl2;
-                      const epPct = useSrv ? (fam.win_pct_ep ?? 0) : wp;
+                      const useSrv = !filt && fam.win_pct != null;
+                      const mainPct = useSrv ? fam.win_pct : wp;
+                      const mainW = useSrv ? fam.wins : ew;
+                      const mainL = useSrv ? fam.losses : el;
                       return (<>
                         <span style={{ color: mainPct >= 50 ? "#b02a2a" : "#1565c0" }}
-                          title={t("모든 매도(조각 포함)를 그 순간의 기준가로 승·패 판정한 승률", "every sell judged against its at-the-moment base - positives over total")}>
+                          title={t("한 판(매수 전부→매도 전부)의 실수익(수수료 포함)이 플러스면 승 - 판 수로 세는 승률",
+                                   "one finished round trip = one count; positive after-fee net is a W")}>
                           {t(`승률 ${mainPct}%`, `win ${mainPct}%`)}
                         </span>
                         {" "}({mainW}{t("승", "W")} {mainL}{t("패", "L")})
-                        <span className="ml-1 text-[10px] text-[var(--text-muted)]"
-                          title={t("에피소드(매수부터 전량 매도까지) 단위 승률", "win rate by whole episodes")}>
-                          {t(`· 에피소드 ${epPct}%`, `· episodes ${epPct}%`)}
-                        </span>
                         {filt && (
                           <span className="ml-1 text-[10px] font-bold px-1 py-0.5 rounded"
                             style={{ background: "rgba(230,81,0,0.14)", color: "#e65100" }}>

@@ -1508,7 +1508,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                          _p2.get("base") or _p2.get("entry")])
                     _p2["qty"] = 0
                 _q0d = _p2.get("qty0", 1) or 1
-                _p2["entry"] = _p2["cost"] / _q0d
+                _p2["entry"] = (_p2.get("spent") or _p2["cost"]) / _q0d
                 _px = _p2["sold_won"] / _q0d
                 _p2["qty"] = _q0d
                 _p2["sells"] = [[p_, q_,
@@ -1953,6 +1953,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 highs = s.get("highs") or closes
                 if "cost" not in pos:
                     pos["cost"] = pos["entry"] * pos.get("qty", 1)
+                    # TWO BUCKETS (boss 2026-08-28 15:5x): "cost" drains as slices
+                    # sell (it feeds base/stop math - the HD현대 phantom-base fix);
+                    # "spent" is every won that ever went in and NEVER drains -
+                    # the row's entry/% and the win count divide by THIS. One
+                    # bucket doing both jobs made every finished stop read
+                    # "flat 0%" and the board printed 100% wins on a losing day.
+                    pos["spent"] = pos["cost"]
                     pos["base"] = pos["entry"]
                     pos["qty0"] = pos.get("qty", 1) + pos.get("qty_add", 0)
                     # the SLICE YARDSTICK (boss 2026-08-19): every share bought
@@ -1976,6 +1983,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _qa = pos["qty_add"]
                     pos["buys"].append([c, _qa, (s.get("times") or [None] * (i + 1))[i]])
                     pos["cost"] += c * _qa
+                    pos["spent"] = pos.get("spent", 0.0) + c * _qa
                     pos["qty"] = pos.get("qty", 1) + _qa
                     pos["qty_add"] = 0
                     pos["added"] = True
@@ -2014,9 +2022,12 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     # ₩233,000 NAVER share (boss caught it 2026-08-24 09:2x)
                     _q0 = (sum(b9[1] for b9 in (pos.get("buys") or []))
                            or pos.get("qty_tot") or pos.get("qty0", 1) or 1)
-                    _ein = pos["cost"] / _q0
+                    # divide by SPENT, never the drained cost - a full exit
+                    # drains cost to 0 and the row would read entry 0 / 0% flat
+                    _spent9 = pos.get("spent") or pos["cost"]
+                    _ein = _spent9 / _q0
                     _eout = pos["sold_won"] / _q0
-                    _g = (pos["sold_won"] / pos["cost"] - 1) * 100 if pos["cost"] else 0.0
+                    _g = (pos["sold_won"] / _spent9 - 1) * 100 if _spent9 else 0.0
                     _t = {"si": si, "buy_i": pos["i"], "sell_i": i, "qty": _q0,
                           "entry": _ein, "exit": _eout,
                           "gross_pct": round(_g, 3), "net_pct": round(_g - FEE_PCT, 3),
@@ -2047,8 +2058,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # gain sells everything at once; losers wait for the bell.
                 if (_now and str(_now) >= dp.get("sell_after", "15:00")
                         and pos["qty"] > 0 and pos.get("qty_add", 0) <= 0
-                        and pos.get("cost")):
-                    _tot2 = (pos["sold_won"] + c * pos["qty"]) / pos["cost"]
+                        and (pos.get("spent") or pos.get("cost"))):
+                    _tot2 = ((pos["sold_won"] + c * pos["qty"])
+                             / (pos.get("spent") or pos["cost"]))
                     if _tot2 > 1.0:
                         _hh9 = dp.get("sell_after", "15:00")[:2]
                         _dsell(pos["qty"], c, f"{_hh9}시 이후 이익 정리")
@@ -2188,6 +2200,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                   pos["qty0"] - pos["qty"])
                         pos["buys"].append([c, _qs, (s.get("times") or [None] * (i + 1))[i]])
                         pos["cost"] += c * _qs
+                        pos["spent"] = pos.get("spent", 0.0) + c * _qs
                         pos["qty"] += _qs
                         pos["qty_tot"] = pos.get("qty_tot", pos["qty0"]) + _qs
                         pos["k_up"] -= 1
@@ -2344,6 +2357,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _miss = pos["qty0"] - pos["qty"]
                     pos["buys"].append([c, _miss, (s.get("times") or [None] * (i + 1))[i]])
                     pos["cost"] += c * _miss
+                    pos["spent"] = pos.get("spent", 0.0) + c * _miss
                     pos["qty"] += _miss
                     pos["qty_tot"] = pos.get("qty_tot", pos["qty0"]) + _miss
                 # REINFORCEMENT (boss 2026-08-13, from the SK하이닉스 09:46 case
@@ -2367,11 +2381,16 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _qa4 = pos["qty_add"]
                     pos["buys"].append([c, _qa4, (s.get("times") or [None] * (i + 1))[i]])
                     pos["cost"] += c * _qa4
+                    pos["spent"] = pos.get("spent", 0.0) + c * _qa4
                     pos["qty"] += _qa4
                     pos["qty_add"] = 0
                     pos["added"] = True
                     pos["add_px"] = c
-                    pos["base"] = pos["cost"] / max(1, sum(q_ for _, q_, *_x in pos["buys"]))
+                    # cost is DRAINED (sold slices took their share) so divide
+                    # by the shares still held, not every share ever bought -
+                    # /all-buys made base 75,347 on a 86,000 두산 and the ladder
+                    # "sold" 9 rungs at prices the market never traded
+                    pos["base"] = pos["cost"] / max(1, pos["qty"])
                     pos["entry"] = pos["base"]
                 # the FIRST reinforcement may be the SAME dip cutting deeper below
                 # our cost (his exact SK하이닉스 case shared its 30-min high with
@@ -2389,10 +2408,12 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _qr = max(1, int(pos["qty0"] * _rf.get("frac", 0.5)))
                     pos["buys"].append([c, _qr, (s.get("times") or [None] * (i + 1))[i]])
                     pos["cost"] += c * _qr
+                    pos["spent"] = pos.get("spent", 0.0) + c * _qr
                     pos["qty"] += _qr
                     pos["qty0"] += _qr
                     pos["qty_tot"] = pos.get("qty_tot", pos["qty0"] - _qr) + _qr
-                    pos["base"] = pos["cost"] / max(1, sum(q_ for _, q_, *_x in pos["buys"]))
+                    # same law as the confirm-add: drained cost / shares held
+                    pos["base"] = pos["cost"] / max(1, pos["qty"])
                     pos["entry"] = pos["base"]
                     pos["k_up"] = 0
                     pos["k_dn"] = 0
@@ -2402,7 +2423,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 if pos["qty"] <= 0 and pos.get("qty_add", 0) <= 0:
                     _drow(f"전량 매도 완료 · 조각 {len(pos['slices'])}회")
                     if (dp.get("reboard") and pos.get("pr_pk")
-                            and pos["sold_won"] > pos["cost"]):
+                            and pos["sold_won"] > (pos.get("spent") or pos["cost"])):
                         # remember where this ride peaked - if the price beats
                         # it, the climb never ended and we re-board
                         reb_pk[si] = pos["pr_pk"]
@@ -3060,11 +3081,11 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
             "sell_t": s_c["hhmm"], "sell_d": s_c.get("end_d"), "exit": g["exit"],
             "gross_pct": g["gross_pct"], "net_pct": g["net_pct"],
             "exit_why": g.get("exit_why", ""),
-            # three states, not two. A trade can land EXACTLY on 0 — the price rose
-            # but the spread took all of it — and a boolean would file that under
-            # "loss", which is neither what happened nor what the win% counts.
-            "result": ("win" if g["gross_pct"] > 0 else
-                       "loss" if g["gross_pct"] < 0 else "flat"),
+            # judged AFTER FEE (boss 2026-08-28 16:0x: "the broker takes 0.23%
+            # whether we like it or not" - a +0.1% gross trip lost real money
+            # and must file as a loss, same ruler the header counts by)
+            "result": ("win" if g["net_pct"] > 0 else
+                       "loss" if g["net_pct"] < 0 else "flat"),
             "bars_held": g["sell_i"] - g["buy_i"],
             # how many shares the model asked for (1 for every plain rule)
             "qty": g.get("qty", 1),
