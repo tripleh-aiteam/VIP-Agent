@@ -6563,8 +6563,12 @@ def run_agent(
         # chat_trade previews/fills are deterministic order text — an LLM translation
         # pass mangled one ('매수' → '구매', reworded quantities; 2026-08-26). Money
         # text never rides through a translator.
+        # trading_universe is a deterministic NAME LIST — the translator pass dropped
+        # 8 of 10 stock names from it (2026-08-28); lists of proper nouns never ride
+        # through an LLM.
         if isinstance(result, dict) and result.get("reply") \
-                and result.get("intent") not in ("llm_task", "chat_trade", "chat_trade_confirm"):
+                and result.get("intent") not in ("llm_task", "chat_trade",
+                                                 "chat_trade_confirm", "trading_universe"):
             fixed = _enforce_reply_language(str(result["reply"]), language, transcript)
             if fixed:
                 result["reply"] = fixed
@@ -7578,6 +7582,67 @@ def _run_agent_impl(
         return {"intent": "identity", "language": lang, "reply": _rep_id,
                 "action": None, "speak": True, "transcript": transcript,
                 "tool_used": "identity"}
+
+    # === 📃 TRADING UNIVERSE (boss 2026-08-28: "teach all stock names to chatbot")
+    # — "what stocks are we trading?" answers from the LIVE watch list + today's
+    # scored scan, deterministic. Runs before the watchlist lane ("what stock"
+    # would steal it into the picks table). ===
+    _t_uni = (transcript or "").lower()
+    if (not confirmed_tool and not attachment_ids and transcript
+            and (any(k in _t_uni for k in ("all stocks", "list of stocks", "stock list",
+                                           "trading universe", "which stocks", "전체 종목",
+                                           "종목 리스트", "종목 목록", "거래하는 종목", "거래 종목",
+                                           "무슨 종목", "어떤 종목", "몇 개 종목", "종목 몇"))
+                 or _re.search(r"stocks? (?:are we|do we|we are|we're) (?:using|trading|watching)",
+                               _t_uni))):
+        try:
+            from services import kiwoom_tape as _kt_u
+            _live_u = [(s.get("code"), s.get("name"))
+                       for s in (_kt_u.status().get("stocks") or [])]
+        except Exception:
+            _live_u = []
+        _scan_u = []
+        try:
+            import json as _json_u
+            from pathlib import Path as _P_u
+            _tp_u = _json_u.loads((_P_u(__file__).resolve().parent.parent / "data"
+                                   / "today_picks.json").read_text(encoding="utf-8"))
+            _scan_u = _tp_u.get("rows") or []
+        except Exception:
+            pass
+        if _live_u or _scan_u:
+            _en_u = not _re.search(r"[가-힣]", transcript)
+            if _en_u:
+                try:
+                    from services.stock_resolver import display_name_en as _dn_en
+                    _live_u = [(c, _dn_en(c) or n) for c, n in _live_u]
+                    _scan_u = [{**r, "name": _dn_en(str(r.get("code"))) or r.get("name")}
+                               for r in _scan_u]
+                except Exception:
+                    pass
+            _six_u = {"000660", "005930", "035420", "017670", "042660", "034020"}
+            _pin = [n for c, n in _live_u if c in _six_u]
+            _add = [n for c, n in _live_u if c not in _six_u]
+            L_u = [(f"📃 **오늘 거래 중인 종목: {len(_live_u)}개** (고정 6 + 점수 선발 {len(_add)})"
+                    if not _en_u else
+                    f"📃 **Trading today: {len(_live_u)} stocks** (6 pinned + {len(_add)} by score)")]
+            if _pin:
+                L_u.append(("🔒 고정 6: " if not _en_u else "🔒 Pinned 6: ") + " · ".join(_pin))
+            if _add:
+                L_u.append(("📊 점수 선발: " if not _en_u else "📊 By score: ") + " · ".join(_add))
+            if _scan_u:
+                _rest = [r.get("name") for r in _scan_u
+                         if str(r.get("code")) not in {c for c, _n in _live_u}]
+                L_u.append("")
+                L_u.append((f"🔍 스캔 유니버스 나머지 {len(_rest)}개 (매일 아침 채점, 오늘은 미거래): "
+                            if not _en_u else
+                            f"🔍 Rest of the scanned universe, {len(_rest)} (scored daily, not trading today): ")
+                           + " · ".join(_rest))
+                L_u.append((f"합계: 스캔 {len(_scan_u)}개 → 거래 {len(_live_u)}개" if not _en_u
+                            else f"Total: {len(_scan_u)} scanned → {len(_live_u)} trading"))
+            return {"intent": "trading_universe", "language": lang,
+                    "reply": "\n".join(L_u), "action": None, "speak": True,
+                    "transcript": transcript, "tool_used": "trading_universe"}
 
     # === 📋 DAILY BRIEFING (Step 3, 2026-08-27) — "오늘 브리핑"/"brief me" composes
     # the desk six + holdings + chat orders + checklist Top 3, all deterministic. ===

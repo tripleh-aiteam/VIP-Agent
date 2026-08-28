@@ -77,6 +77,34 @@ _SLANG: dict[str, str] = {
     "lg": "066570", "lg stock": "066570", "엘지": "066570",
     "크래프톤": "259960", "krafton": "259960",
     "kt": "030200",
+    # ===== full-universe coverage (boss 2026-08-28: "teach all stock names with
+    # typo names to chatbot, whenever we ask it should know") — every stock in the
+    # 38-stock scan universe answers to its short/EN/romanized/typo names. Resolution
+    # stays deterministic: alias table + fuzzy = grounded, nothing invented. =====
+    "doosan": "034020", "enerbility": "034020", "dusan": "034020", "두산에너": "034020",
+    "hanmi": "042700", "hanmi semiconductor": "042700", "한미": "042700",
+    "biologics": "207940", "바이오로직스": "207940", "삼성바이오로직스": "207940",
+    "samsung sdi": "006400", "sdi": "006400", "삼성sdi": "006400", "삼성에스디아이": "006400",
+    "samsung electro": "009150", "electro-mechanics": "009150", "electromechanics": "009150",
+    "sksquare": "402340", "에스케이스퀘어": "402340",
+    "lg energy": "373220", "energy solution": "373220", "엘지에너지솔루션": "373220",
+    "lig": "079550", "lignex1": "079550", "리그넥스원": "079550",
+    "kepco e&c": "052690", "kepco enc": "052690",
+    "hyundai heavy": "329180", "현중": "329180",
+    "korea shipbuilding": "009540",
+    "samsung heavy": "010140",
+    "한화에어": "012450", "aerospace hanwha": "012450",
+    "rotem": "064350", "로템": "064350",
+    "kb": "105560", "kb financial": "105560", "케이비금융": "105560",
+    "meritz": "138040", "메리츠금융": "138040",
+    "jinair": "272450", "jin air": "272450",
+    "hanatour": "039130", "hana tour": "039130",
+    "samsung sds": "018260", "sds": "018260",
+    "sk innovation": "096770", "sk이노베이숀": "096770",
+    "posco holdings": "005490", "포스코홀딩스": "005490",
+    "shinhan financial": "055550", "신한금융": "055550",
+    "celtrion": "068270", "샐트리온": "068270",
+    "kospi대장주": "005930",
 }
 
 
