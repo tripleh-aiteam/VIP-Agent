@@ -65,7 +65,13 @@ def _universe() -> list[tuple[str, str]]:
         pass
     return STOCKS
 OLLAMA = "http://localhost:11434/api/chat"
-MODEL = "qwen3:32b"
+# ONE local model for the whole desk (2026-08-28, boss: "20 sec ... all LLM must
+# answer faster"): the dense qwen3:32b judge and the chatbot's qwen3-vl 30b star
+# could not share the 5090's 32GB — every 60s judging cycle evicted the chat
+# model and every chat answer evicted the judge back, so BOTH paid a ~20s VRAM
+# reload all market day. The star is also the better judge per our own bench
+# (llm_client: 6.8s warm vs 28.9s for dense 32b, near-32B quality).
+MODEL = "qwen3-vl:30b-a3b-instruct-q4_K_M"
 OUT_DIR = Path(__file__).resolve().parent.parent / "data" / "news_intern"
 SEEN_PATH = OUT_DIR / "seen.json"
 POLL_SEC = 60
@@ -124,6 +130,7 @@ def dart_feed() -> list[dict]:
 
 def stamp(name: str, title: str) -> tuple[dict, float]:
     body = {"model": MODEL, "stream": False, "think": False,
+            "keep_alive": "24h",       # same model as the chat star — never unload
             "options": {"temperature": 0, "num_predict": 120},
             "messages": [{"role": "system", "content": SYSTEM},
                          {"role": "user",

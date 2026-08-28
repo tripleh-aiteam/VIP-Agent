@@ -977,15 +977,17 @@ def _chat_completion_sync_inner(
     # Gemini free → LOCAL Ollama (his RTX 5090, unlimited) → Groq free (in case the
     # local box is down) → paid OpenAI only as the very last resort.
 
-    # Free tier #1 — Gemini Flash (free quota; skipped entirely while cooling down)
+    # Free tier #1 — Gemini flash-LITE (free quota; skipped while cooling down).
+    # 2026-08-28 latency bench on the boss's key: 3.1-flash-lite 1.0s · 3-flash-preview
+    # 1.5s · 3.6-flash 1.8s · 3.7-flash 6-11s — the lite model IS the chat speed.
     if (_env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")) and not _gemini_cooling():
-        ok, result = _call_gemini("gemini-3.5-flash", system_prompt, messages,
+        ok, result = _call_gemini("gemini-3.1-flash-lite", system_prompt, messages,
                                   max_tokens, temperature)
         if ok:
-            _last_used.update({"provider": "gemini", "model": "gemini-3.5-flash (free fallback)"})
+            _last_used.update({"provider": "gemini", "model": "gemini-3.1-flash-lite (free fallback)"})
             return result
         _note_gemini_failure(str(result))
-        attempt_log.append(f"gemini-3.5-flash (free fallback): {str(result)[:200]}")
+        attempt_log.append(f"gemini-3.1-flash-lite (free fallback): {str(result)[:200]}")
 
     # Free tier #2 — LOCAL Ollama star (unlimited, private; 6.8s warm on the 5090)
     _local_star = _env("OLLAMA_FALLBACK_MODEL") or "qwen3-vl:30b-a3b-instruct-q4_K_M"
