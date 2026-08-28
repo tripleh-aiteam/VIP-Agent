@@ -489,7 +489,11 @@ function TradeReplay({ ep, t, onClose }: {
       g.beginPath(); g.moveTo(x, y(b.high)); g.lineTo(x, y(b.low)); g.stroke();
       g.fillRect(x - Math.max(1, bw * 0.3), y(Math.max(b.open, b.close)),
                  Math.max(2, bw * 0.6), Math.max(1, Math.abs(y(b.open) - y(b.close))));
-      if (i % 20 === 0) { g.fillStyle = "#888"; g.fillText(String(b.hhmm).slice(0, 5), x - 12, H - 6); }
+      // TIME EVERY FEW BARS (boss 2026-08-28: "the x axis is not showing
+      // fully to prove it - every 20 minutes; add minute-based"): as dense
+      // as fits without overlap - every minute when zoomed in
+      const step9 = Math.max(1, Math.ceil(36 / bw));
+      if (i % step9 === 0) { g.fillStyle = "#888"; g.fillText(String(b.hhmm).slice(0, 5), x - 12, H - 6); }
     });
     const line = (v: number, col: string, lab: string) => {
       if (!v) return;
@@ -846,7 +850,8 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
       g.beginPath(); g.moveTo(x, y(b.high)); g.lineTo(x, y(b.low)); g.stroke();
       g.fillRect(x - Math.max(1, bw * 0.3), y(Math.max(b.open, b.close)),
                  Math.max(2, bw * 0.6), Math.max(1, Math.abs(y(b.open) - y(b.close))));
-      if (i % 30 === 0) { g.fillStyle = "#888"; g.fillText(String(b.hhmm).slice(0, 5), x - 14, H - 8); }
+      const stp9 = Math.max(1, Math.ceil(38 / bw));
+      if (i % stp9 === 0) { g.fillStyle = "#888"; g.fillText(String(b.hhmm).slice(0, 5), x - 14, H - 8); }
     });
     g.fillStyle = "#888";
     for (let i = 0; i <= 4; i++) {
