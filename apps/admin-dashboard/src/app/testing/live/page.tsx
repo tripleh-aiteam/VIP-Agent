@@ -405,16 +405,22 @@ class SafeBox extends React.Component<{ children?: React.ReactNode; label?: stri
 // play recording; the buy TIME keeps the arrow jump"). Plays the recorded
 // bars of that episode with the real fills appearing at their true minutes.
 // Playback of the record - prices are never invented.
-// 같은 분·같은 가격의 매수 조각은 한 줄로 (boss 2026-08-28: "24sh와 1sh가
-// 같은 시각 같은 가격 - 사람을 혼란스럽게 한다"): 군대+보강이 한 바에 앉으면
-// 수량을 합쳐 보여주되, 몇 개의 법이 샀는지는 꼬리표로 남긴다
+// SAME MINUTE = ONE LINE (boss 2026-08-28 final: "we buy 3% first and after
+// +0.5% the other 97% - if the increase happened WITHIN THIS MINUTE do not
+// show 2 split buyings, just merge; if in another time then show another
+// time; keep reinforcement also"): buys landing in one minute merge into a
+// single line at their weighted-average price, with the laws-count tag.
+// A fill in a different minute always gets its own provable line.
 function mergeBuys9(buys: [number, number, (string | null)?][]) {
   const out: [number, number, string | null, number][] = [];
   for (const b of buys) {
-    const key = `${Math.round(b[0])}-${String(b[2] || "").slice(0, 5)}`;
+    const key = String(b[2] || "").slice(0, 5);
     const last = out.length ? out[out.length - 1] : null;
-    if (last && `${Math.round(last[0])}-${String(last[2] || "").slice(0, 5)}` === key) {
-      last[1] += b[1]; last[3] += 1;
+    if (last && String(last[2] || "").slice(0, 5) === key && key) {
+      const cost = last[0] * last[1] + b[0] * b[1];
+      last[1] += b[1];
+      last[0] = last[1] ? cost / last[1] : b[0];   // weighted-average price
+      last[3] += 1;
     } else out.push([b[0], b[1], (b[2] ?? null), 1]);
   }
   return out;
