@@ -193,6 +193,12 @@ VARIANTS: list[dict] = [
      "stop_pct": 1.5, "wait_bars": 2, "family": "d1", "wall_price": True,
      "bell": "15:19",
      "ignore_gate": True,
+     # BOTTOM-HOLD DOOR on every algo (boss 2026-08-28 evening, deployed for
+     # Monday 08-31): 3 bars above the trough = the fall ended, buy - never
+     # >1.5% above the bottom. zone_free: in the buying zone (bottom fifth)
+     # the sharp/chop prerequisites are waived ("again decreasing probability
+     # is very low" - his words); the fall size (drop) is still required.
+     "bot_hold": {"bars": 3, "max_above": 1.5, "zone_free": 0.20},
      # volume law (boss: "volume up -> price up"): at a dip rebound volume is
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
@@ -286,6 +292,8 @@ VARIANTS: list[dict] = [
      "stop_pct": 1.5, "wait_bars": 2, "family": "d2", "wall_price": True,
      "bell": "15:19",
      "ignore_gate": True,
+     # bottom-hold door + buying-zone free pass (boss 2026-08-28, see D1)
+     "bot_hold": {"bars": 3, "max_above": 1.5, "zone_free": 0.20},
      # volume law (boss: "volume up -> price up"): at a dip rebound volume is
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
@@ -385,6 +393,8 @@ VARIANTS: list[dict] = [
      "stop_pct": 1.5, "wait_bars": 2, "family": "d3", "wall_price": True,
      "bell": "15:19",
      "ignore_gate": True,
+     # bottom-hold door + buying-zone free pass (boss 2026-08-28, see D1)
+     "bot_hold": {"bars": 3, "max_above": 1.5, "zone_free": 0.20},
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
      # THE DAILY-CHART CIRCLE, D3 first (boss 2026-08-21 night: "near the
      # lowest part we have to buy, not sell - and be patient with the rise;
@@ -1093,7 +1103,14 @@ def _bot_hold_entry(s: dict, v: dict, i: int, closes: list) -> bool:
     st = _dip_state(s, d.get("win_sec", 600))
     if st.get("by_time") and st["span"][i] < 60:
         return False
-    if st["rng"][i] < d.get("chop", 0.40):
+    # THE BUYING-ZONE FREE PASS (boss 2026-08-28 evening: "in the buying zone
+    # we should buy if decreasing stopped - again-decreasing probability is
+    # very low"): in the bottom fifth of the year the chop fence and the
+    # sharpness test stand aside; the fall itself (drop) is still required.
+    _dp0 = s.get("daily_pos")
+    _in_bot9 = (bh.get("zone_free") is not None and _dp0 is not None
+                and _dp0 <= bh["zone_free"])
+    if st["rng"][i] < d.get("chop", 0.40) and not _in_bot9:
         return False
     n = int(bh.get("bars", 3))
     j = i - n
@@ -1110,7 +1127,7 @@ def _bot_hold_entry(s: dict, v: dict, i: int, closes: list) -> bool:
     dropped = (hi - bot) / hi * 100 if hi else 0.0
     if dropped < d.get("drop", 0.8):
         return False
-    if typ and (hi - bot) < d.get("sharp", 3.0) * typ:
+    if typ and (hi - bot) < d.get("sharp", 3.0) * typ and not _in_bot9:
         return False
     # N bars after the trough: no new low, every close above the bottom
     for k in range(j + 1, i + 1):
@@ -1756,7 +1773,21 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             # same floor the dip rules already used: if the last 20 bars ranged less
             # than 0.40%, the market is going nowhere and no rule may buy into it.
             # No loss and no gain, by instruction. Exits are untouched.
-            elif _dip_state(s, (v.get("dip") or {}).get("win_sec", 600))["rng"][i]                     < (v.get("dip") or {}).get("chop", 0.40):
+            elif (_dip_state(s, (v.get("dip") or {}).get("win_sec", 600))["rng"][i]
+                  < (v.get("dip") or {}).get("chop", 0.40)
+                  # the 3-RED RE-ENTRY OUTRANKS THE CHOP FENCE (boss 2026-08-28
+                  # evening, the SK하이닉스 12:48 case: stop at 12:36, six
+                  # straight rises from 12:46, and the fence ate every bar -
+                  # a stock recovering from its own -1% stop ALWAYS has a
+                  # tight range, so the re-entry law was dead on arrival).
+                  # His standing law "at the 3rd we buy, price does not care"
+                  # now carries through quiet recoveries too.
+                  and not (v.get("drip", {}).get("reboard") and reb_pk[si]
+                           and up[si] >= int(v.get("reboard_ups", 3)))
+                  # the buying-zone bottom-hold door also passes the fence
+                  # (its own zone_free logic decides)
+                  and not (v.get("bot_hold")
+                           and _bot_hold_entry(s, v, i, closes))):
                 pass
             elif v.get("run") and not _run_entry(s, v, i, up[si], closes):
                 pass
