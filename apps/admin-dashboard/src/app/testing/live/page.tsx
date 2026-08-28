@@ -211,11 +211,11 @@ function ruleName(id: string): string {
   return id;
 }
 
-function LiveChart({ bars, marks, focus, off = 0 }:
+function LiveChart({ bars, marks, focus, off = 0, h = 320 }:
                    { bars: Bar[]; marks?: { b: number; s: number; g: number;
                                             open?: boolean; part?: boolean;
                                             xb?: boolean; label?: string }[];
-                     focus?: number | null; off?: number }) {
+                     focus?: number | null; off?: number; h?: number }) {
   const ref = useRef<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cs = useRef<{ chart: any; series: any } | null>(null);
@@ -355,7 +355,11 @@ function LiveChart({ bars, marks, focus, off = 0 }:
     }
   }, [ready, bars, marks, focus, off]);
 
-  return <div ref={ref} style={{ width: "100%", height: 320 }} />;
+  // height follows the prop (⛶ fullscreen mode passes the window height)
+  useEffect(() => {
+    try { cs.current?.chart?.applyOptions({ height: h }); } catch { /* no-op */ }
+  }, [h, ready]);
+  return <div ref={ref} style={{ width: "100%", height: h }} />;
 }
 
 // 🛡 SAFE BOX (boss 2026-08-25: "Application error: a client-side exception
@@ -1475,6 +1479,28 @@ export default function LiveDeskPage() {
     live?: boolean; rule?: string; net_pct?: number;
     wall?: { price?: number; qty?: number } | null;
     parts?: { buys?: unknown[][]; sells?: unknown[][] } } | null>(null);
+  // ⛶ FULL-SCREEN market chart + 어제+오늘 two-day view (boss 2026-08-28: "I
+  // need full screen of the Kiwoom chart... I wanna see and check 갭상승 so I
+  // need the previous day's chart also") — yesterday's whole day prepended to
+  // today's, the overnight gap visible at the seam.
+  const [fsMkt9, setFsMkt9] = useState(false);
+  const [twoDay9, setTwoDay9] = useState(false);
+  const [ybars9, setYbars9] = useState<Bar[]>([]);
+  const yday9 = (() => {
+    const td = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" })
+      .format(new Date()).replace(/-/g, "");
+    const ds = (rank?.days ?? []).filter((d) => d < td);
+    return ds.length ? ds[ds.length - 1] : "";
+  })();
+  useEffect(() => {
+    if (!twoDay9 || !yday9 || !code) { setYbars9([]); return; }
+    let live = true;
+    const q = period ? `period=${period}` : `tick=${tick}`;
+    api<{ bars?: Bar[] }>(`/paper-desk/live/tape?code=${code}&${q}&bars=100000&day=${yday9}`)
+      .then((d) => { if (live && d?.bars) setYbars9(d.bars); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [twoDay9, yday9, code, tick, period]);
   // ONE truth for "is any chart wanted right now" — the strip was pressed OR a
   // trade row is picked. NOT `sel`: an open drill-down's trades TABLE stays on
   // screen with the chart folded, and folding must never clear `sel` — clearing
@@ -4614,9 +4640,24 @@ export default function LiveDeskPage() {
                 "live chart folded - click a time in the trading history / holdings, or press here to open (folded = lighter app)")}
         </button>
       ) : (
-      <div className="mt-3 rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+      <div className={fsMkt9 ? "fixed inset-0 z-[200] p-3 overflow-auto"
+                             : "mt-3 rounded-xl border p-2"}
+        style={fsMkt9 ? { background: "var(--bg-primary)" }
+                      : { borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
         <div className="px-2 pt-1 pb-2 text-[11.5px] flex items-center gap-2 flex-wrap" style={{ color: "#6a1b9a" }}>
           <b>📈 {tape?.name ?? ""} — {tape?.clock ?? ""} {t("실시간 차트", "live chart")}</b>
+          <button onClick={() => setFsMkt9((v) => !v)}
+            className="text-[10.5px] font-bold px-2 py-0.5 rounded border"
+            style={{ borderColor: "#6a1b9a", color: fsMkt9 ? "#fff" : "#6a1b9a",
+                     background: fsMkt9 ? "#6a1b9a" : "transparent" }}>
+            {fsMkt9 ? t("⛶ 전체화면 닫기", "⛶ exit full screen") : t("⛶ 전체화면", "⛶ full screen")}</button>
+          <button onClick={() => { const on = !twoDay9; setTwoDay9(on);
+                                   if (on) { setChartBars(100000); chartBarsRef.current = 100000; pull(); } }}
+            className="text-[10.5px] font-bold px-2 py-0.5 rounded border"
+            style={{ borderColor: "#b71c1c", color: twoDay9 ? "#fff" : "#b71c1c",
+                     background: twoDay9 ? "#b71c1c" : "transparent" }}
+            title={t("어제 하루 전체 + 오늘을 이어 붙여 갭상승을 눈으로 확인", "yesterday's whole day + today joined - see the gap with your eyes")}>
+            {t("어제+오늘 (갭 보기)", "yesterday+today (see the gap)")}</button>
           <button onClick={() => { setChartOpen9(false); setPick(null); }}
             className="text-[10px] font-bold px-1.5 py-0.5 rounded border"
             style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
@@ -4628,7 +4669,7 @@ export default function LiveDeskPage() {
                   `showing ${bars[0]?.hhmm?.slice(0, 5)}~${bars[bars.length - 1]?.hhmm?.slice(0, 5)} · ${bars.length} of ${(tape?.total_bars ?? bars.length).toLocaleString()} bars today`)
               : t("아직 봉이 없습니다", "no bars yet")}
           </span>
-          {([[600, t("최근 600봉", "last 600")], [3000, t("3,000봉", "3,000")],
+          {!twoDay9 && ([[600, t("최근 600봉", "last 600")], [3000, t("3,000봉", "3,000")],
              [100000, t("하루 전체", "whole day")]] as [number, string][]).map(([n, lab]) => (
             <button key={n} onClick={() => { setChartBars(n); chartBarsRef.current = n; pull(); }}
               className="text-[10px] font-bold px-1.5 py-0.5 rounded border"
@@ -4637,6 +4678,14 @@ export default function LiveDeskPage() {
               {lab}
             </button>
           ))}
+          {twoDay9 && ybars9.length > 0 && bars.length > 0 && (() => {
+            const pc9 = ybars9[ybars9.length - 1].close;
+            const op9 = bars[0].open;
+            const g9 = (op9 / pc9 - 1) * 100;
+            return <b className="text-[11px] tabular-nums" style={{ color: g9 >= 1.5 ? "#b71c1c" : "var(--text-secondary)" }}>
+              {t(`어제 종가 ₩${Math.round(pc9).toLocaleString()} → 오늘 시가 ₩${Math.round(op9).toLocaleString()} = 갭 ${g9 >= 0 ? "+" : ""}${g9.toFixed(2)}%${g9 >= 1.5 ? " ⛔ 갭상승" : g9 <= -1.5 ? " 갭하락" : ""}`,
+                    `prev close ₩${Math.round(pc9).toLocaleString()} → open ₩${Math.round(op9).toLocaleString()} = gap ${g9 >= 0 ? "+" : ""}${g9.toFixed(2)}%${g9 >= 1.5 ? " ⛔" : ""}`)}</b>;
+          })()}
           {book && (
             <span className="ml-auto text-[10.5px] tabular-nums">
               <span style={{ color: RED }}>{t("매도호가", "ask")} ₩{fmt(book.best_ask)}</span>
@@ -4645,8 +4694,11 @@ export default function LiveDeskPage() {
             </span>
           )}
         </div>
-        {bars.length ? <LiveChart key={`mkt-${code}-${tick}-${period}`}
-                                  off={tape?.off ?? 0} bars={bars} /> : (
+        {bars.length ? <LiveChart key={`mkt-${code}-${tick}-${period}-${twoDay9 && ybars9.length ? "2d" : "1d"}-${fsMkt9 ? "fs" : "n"}`}
+                                  off={twoDay9 && ybars9.length ? 0 : (tape?.off ?? 0)}
+                                  bars={twoDay9 && ybars9.length ? [...ybars9, ...bars] : bars}
+                                  focus={twoDay9 && ybars9.length ? ybars9.length : null}
+                                  h={fsMkt9 ? (typeof window !== "undefined" ? window.innerHeight - 130 : 600) : 320} /> : (
           <div className="px-4 py-8 text-center text-[12px] text-[var(--text-muted)]">
             {st?.market_open
               ? t("수집 중입니다 — 잠시 뒤 봉이 그려집니다.", "collecting - bars appear shortly.")
