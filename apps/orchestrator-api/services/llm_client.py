@@ -44,6 +44,8 @@ MODEL_CATALOG = {
     "gemini-3.1-pro":            ("gemini", "gemini-3.1-pro-preview"),     # most capable: complex reasoning/coding (Preview)
     "gemini-3.1-flash-lite":     ("gemini", "gemini-3.1-flash-lite"),      # high-volume, max speed, very low cost
     "gemini-3.1-flash-image":    ("gemini", "gemini-3.1-flash-image"),     # native fast multimodal / image understanding
+    # --- Z.ai / Zhipu GLM (free tier: 5 req/min · 500 req/day · 1M tok/day) ---
+    "glm-5.3-flash": ("glm", "glm-5.3-flash"),
     # --- Groq (LPU-based, 200-500ms latency, OpenAI-compatible API) ---
     # Free tier on console.groq.com. Fastest option for latency-sensitive
     # Kakao chatbot. Set GROQ_API_KEY env var to enable.
@@ -92,6 +94,23 @@ def _note_gemini_failure(err: str) -> None:
 
 def _gemini_cooling() -> bool:
     return time.time() < _gemini_state["cooldown_until"]
+
+
+# GLM free-tier cooldown — same pattern as Gemini's: after a quota/rate failure
+# (5 req/min · 500 req/day on the free tier), skip GLM for a while instead of
+# paying a failing attempt on every message.
+_glm_state = {"cooldown_until": 0.0, "reason": ""}
+
+
+def _note_glm_failure(err: str) -> None:
+    e = str(err).lower()
+    quota = "429" in e or "quota" in e or "rate" in e or "limit" in e
+    _glm_state["cooldown_until"] = time.time() + (300.0 if quota else 30.0)
+    _glm_state["reason"] = str(err)[:120]
+
+
+def _glm_cooling() -> bool:
+    return time.time() < _glm_state["cooldown_until"]
 
 
 def get_last_provider() -> str:
@@ -404,6 +423,7 @@ def list_available_models() -> list[dict]:
     has_anthropic = bool(_env("ANTHROPIC_API_KEY"))
     has_gemini    = bool(_env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY"))
     has_groq      = bool(_env("GROQ_API_KEY"))
+    has_glm       = bool(_env("GLM_API_KEY") or _env("ZHIPU_API_KEY"))
     catalog = []
     for friendly, (provider, real) in MODEL_CATALOG.items():
         available = (
@@ -411,6 +431,7 @@ def list_available_models() -> list[dict]:
             (provider == "anthropic" and has_anthropic) or
             (provider == "gemini" and has_gemini) or
             (provider == "groq" and has_groq) or
+            (provider == "glm" and has_glm) or
             provider == "ollama"
         )
         catalog.append({
@@ -970,6 +991,20 @@ def _chat_completion_sync_inner(
                                                      full_messages_with_sys, max_tokens, temperature, 15.0)
             else:
                 ok, result = False, "GROQ_API_KEY not set"
+        elif provider == "glm":
+            # Z.ai / Zhipu GLM (boss 2026-08-31: "can we implement it") — free tier,
+            # OpenAI-compatible. Activates the moment GLM_API_KEY lands in .env.
+            _glm_key = _env("GLM_API_KEY") or _env("ZHIPU_API_KEY")
+            if _glm_key and not _glm_cooling():
+                ok, result = _call_openai_compatible(
+                    _env("GLM_BASE_URL") or "https://open.bigmodel.cn/api/paas/v4",
+                    _glm_key, real_model, full_messages_with_sys,
+                    max_tokens, temperature, 30.0)
+                if not ok:
+                    _note_glm_failure(str(result))
+            else:
+                ok, result = False, ("GLM_API_KEY not set" if not _glm_key
+                                     else f"glm cooling down ({_glm_state['reason'][:60]})")
         elif provider == "ollama":
             ok, result = _call_openai_compatible(f"{ollama_url}/v1", "", real_model,
                                                  full_messages_with_sys, max_tokens, temperature, 60.0)
@@ -997,6 +1032,21 @@ def _chat_completion_sync_inner(
             return result
         _note_gemini_failure(str(result))
         attempt_log.append(f"gemini-3.5-flash-lite (free fallback): {str(result)[:200]}")
+
+    # Free tier #1.5 — GLM-5.3-Flash (boss 2026-08-31; free 500 req/day, only
+    # tried when a GLM_API_KEY exists — absorbs the day after Gemini's quota ends,
+    # the unlimited local star still catches everything below)
+    _glm_key2 = _env("GLM_API_KEY") or _env("ZHIPU_API_KEY")
+    if _glm_key2 and not _glm_cooling():
+        ok, result = _call_openai_compatible(
+            _env("GLM_BASE_URL") or "https://open.bigmodel.cn/api/paas/v4",
+            _glm_key2, "glm-5.3-flash", full_messages_with_sys,
+            max_tokens, temperature, 30.0)
+        if ok:
+            _last_used.update({"provider": "glm", "model": "glm-5.3-flash (free fallback)"})
+            return result
+        _note_glm_failure(str(result))
+        attempt_log.append(f"glm-5.3-flash (free fallback): {str(result)[:200]}")
 
     # Free tier #2 — LOCAL Ollama star (unlimited, private; 6.8s warm on the 5090)
     _local_star = _env("OLLAMA_FALLBACK_MODEL") or "qwen3-vl:30b-a3b-instruct-q4_K_M"
