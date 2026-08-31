@@ -82,6 +82,43 @@ const BLUE = "#1565c0";
 const TEAL = "#00838f";
 const GOLD = "#e65100";
 
+// STOCK SEARCH THAT UNDERSTANDS THE BOSS (2026-08-31: he typed "sktelecom"
+// and the chart "showed another stock" - the old matcher demanded the EXACT
+// Korean name, so free-typed English matched nothing and the chart simply
+// stayed put). English aliases + partial Korean + codes; a switch happens
+// only on a UNIQUE confident match - ambiguity never jumps to a wrong stock.
+const ALIAS9: Record<string, string[]> = {
+  "017670": ["sktelecom", "skt", "telecom", "텔레콤"],
+  "000660": ["skhynix", "hynix", "하이닉스"],
+  "402340": ["sksquare", "square", "스퀘어"],
+  "005930": ["samsung", "samsungelectronics", "samsungchonja", "삼전"],
+  "009150": ["samsungelectro", "samsungjeongi", "전기"],
+  "006400": ["samsungsdi", "sdi"],
+  "207940": ["samsungbio", "biologics", "바이오"],
+  "035420": ["naver", "네이버"],
+  "034020": ["doosan", "doosanenerbility", "두산"],
+  "042660": ["hanwhaocean", "ocean", "오션"],
+  "012450": ["hanwhaaerospace", "aerospace", "에어로"],
+  "042700": ["hanmi", "hanmisemiconductor", "한미"],
+  "079550": ["lig", "lignex1", "디펜스"],
+  "373220": ["lgenergy", "lges", "energysolution", "엔솔"],
+  "329180": ["hdhyundai", "hyundaiheavy", "현대중"],
+  "052690": ["kepcoenc", "kepco", "한전"],
+  "010950": ["soil", "s-oil", "에쓰오일"],
+};
+function matchStock9(v: string, list: { code: string; name: string }[]) {
+  const q = v.toLowerCase().replace(/[\s\-·.]/g, "");
+  if (!q) return null;
+  const norm = (s: string) => s.toLowerCase().replace(/[\s\-·.]/g, "");
+  const exact = list.find((x) => x.code === q || norm(x.name) === q
+    || (ALIAS9[x.code] || []).some((a) => norm(a) === q));
+  if (exact) return exact;
+  if (q.length < 2) return null;
+  const part = list.filter((x) => norm(x.name).includes(q)
+    || (ALIAS9[x.code] || []).some((a) => norm(a).startsWith(q)));
+  return part.length === 1 ? part[0] : null;
+}
+
 type Bar = { time: number; hhmm: string; open: number; high: number; low: number;
              close: number; dir: number; vol: number; n: number; d8?: string };
 type Tape = { ok: boolean; code: string; name?: string; clock: string; ticks: number;
@@ -4684,7 +4721,7 @@ export default function LiveDeskPage() {
           onChange={(e) => {
             const v = e.target.value; setStockQ9(v);
             const all9 = [...(st?.stocks ?? []), ...((dpick?.rows ?? []) as { code: string; name: string }[])];
-            const hit = all9.find((x) => x.name === v || x.code === v);
+            const hit = matchStock9(v, all9);
             if (hit) { setCode(hit.code); codeRef.current = hit.code; pull();
                        setChartOpen9(true); setStockQ9(""); }
           }}
@@ -4814,7 +4851,7 @@ export default function LiveDeskPage() {
               onChange={(e) => {
                 const v = e.target.value; setStockQ9(v);
                 const all9 = [...(st?.stocks ?? []), ...((dpick?.rows ?? []) as { code: string; name: string }[])];
-                const hit = all9.find((x) => x.name === v || x.code === v);
+                const hit = matchStock9(v, all9);
                 if (hit) { setCode(hit.code); codeRef.current = hit.code; pull(); setStockQ9(""); }
               }}
               className="text-[11px] px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] w-[120px]"
