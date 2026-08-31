@@ -673,7 +673,7 @@ _D4.update({"id": "D4", "family": "d4",
             # neither +1% nor 2 blue. We must have rules"): after a retreat
             # piece sells, the next one only arms after 3 rises (his 3-red
             # language; flats count via soft_up). 알고4 bench first.
-            "rearm_ups": 3})
+            "rearm_ups": 3, "blues_strict": True})
 # ARM OFF on the bench (boss 2026-08-31 11:4x, the 한화에어로 09:14/09:37 and
 # 하이닉스 09:19 missed 2-blue sells - peaks of +0.14~0.69% never armed the
 # 0.7% retreat): on 알고4 the 2-blues sell fires on ANY peak; the fee-line
@@ -2490,6 +2490,12 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         pos["pr_pk"] = c
                         pos["pr_blues"] = 0
                         pos["pr_sold"] = False
+                    elif v.get("blues_strict") and c > prev:
+                        # 2 blues means 2 IN A ROW (boss 2026-08-31 14:0x, the
+                        # LIG 09:09 piece: the streak ran 청-적-청 and the old
+                        # counter kept the morning's blues forever - a rise
+                        # breaks the streak. 09:15's 청청 stays lawful.)
+                        pos["pr_blues"] = 0
                     elif c < prev:
                         pos["pr_blues"] = pos.get("pr_blues", 0) + 1
                     _big = bool(prev) and (prev - c) / prev * 100 >= _pr.get("big", 0.9)
