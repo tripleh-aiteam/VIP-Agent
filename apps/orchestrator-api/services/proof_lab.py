@@ -199,6 +199,17 @@ VARIANTS: list[dict] = [
      # the sharp/chop prerequisites are waived ("again decreasing probability
      # is very low" - his words); the fall size (drop) is still required.
      "bot_hold": {"bars": 3, "max_above": 1.5, "zone_free": 0.20},
+     # THE GRADUATION (boss 2026-08-31 12:4x, explicit: "implement to all menu,
+     # all algo 1,2,3 - today during market... I do not wanna this kind of
+     # silly mistakes - make sure and build and deploy"): the bench laws leave
+     # 알고4 and rule everywhere. ON RECORD: year court still owed; live diff
+     # at deploy was 알고4 ahead ₩141K (m1) / ₩1.08M (m2). door_market = fill
+     # AT the door bar; reb_fade = profit exits wait for a real decrease;
+     # derisk_free = descent sells pieces, below-cost loss-cuts allowed, local
+     # re-arm, no chop freeze on sells; soft_up = flat closes count in the
+     # 3-red re-entry.
+     "door_market": True, "reb_fade": True, "derisk_free": True,
+     "soft_up": True,
      # volume law (boss: "volume up -> price up"): at a dip rebound volume is
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
@@ -286,7 +297,10 @@ VARIANTS: list[dict] = [
               # around 1% - why 0.02%?" - the near-zero ⚠ fee slices): the
               # 2-blues watch begins only once the peak stands >=1.0% above
               # base. COURT 2026-08-27: +26.9M/yr on this book (arm0.7 +21.8M).
-              "retreat": {"big": 0.9, "arm": 1.0},
+              # arm 1.0 -> 0.0 (boss 2026-08-31 12:4x graduation, on record:
+              # year court still owed; fee-gate + fake-win-zone ban guard the
+              # near-zero slices the arm was built against)
+              "retreat": {"big": 0.9, "arm": 0.0},
               "reinforce": {"frac": 0.5, "max": 2}}},
     {"id": "D2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 1.5, "wait_bars": 2, "family": "d2", "wall_price": True,
@@ -294,6 +308,17 @@ VARIANTS: list[dict] = [
      "ignore_gate": True,
      # bottom-hold door + buying-zone free pass (boss 2026-08-28, see D1)
      "bot_hold": {"bars": 3, "max_above": 1.5, "zone_free": 0.20},
+     # THE GRADUATION (boss 2026-08-31 12:4x, explicit: "implement to all menu,
+     # all algo 1,2,3 - today during market... I do not wanna this kind of
+     # silly mistakes - make sure and build and deploy"): the bench laws leave
+     # 알고4 and rule everywhere. ON RECORD: year court still owed; live diff
+     # at deploy was 알고4 ahead ₩141K (m1) / ₩1.08M (m2). door_market = fill
+     # AT the door bar; reb_fade = profit exits wait for a real decrease;
+     # derisk_free = descent sells pieces, below-cost loss-cuts allowed, local
+     # re-arm, no chop freeze on sells; soft_up = flat closes count in the
+     # 3-red re-entry.
+     "door_market": True, "reb_fade": True, "derisk_free": True,
+     "soft_up": True,
      # volume law (boss: "volume up -> price up"): at a dip rebound volume is
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
@@ -379,7 +404,8 @@ VARIANTS: list[dict] = [
               # noise) - deployed for the boss's law, kills the ⚠ fee slices.
               # 알고4 inherits (deepcopy of this dict).
               "slice_total": True, "rebuy": True,
-              "retreat": {"big": 0.9, "arm": 0.7},
+              # arm 0.7 -> 0.0 (boss 2026-08-31 graduation, see D1 note)
+              "retreat": {"big": 0.9, "arm": 0.0},
               "reinforce": {"frac": 0.5, "max": 2}}},
     # 알고리즘 3 (boss 2026-08-20 09:0x): "if the price is continuously
     # increasing DO NOT sell - wait for the peak, and at the 2nd blue (when it
@@ -395,6 +421,17 @@ VARIANTS: list[dict] = [
      "ignore_gate": True,
      # bottom-hold door + buying-zone free pass (boss 2026-08-28, see D1)
      "bot_hold": {"bars": 3, "max_above": 1.5, "zone_free": 0.20},
+     # THE GRADUATION (boss 2026-08-31 12:4x, explicit: "implement to all menu,
+     # all algo 1,2,3 - today during market... I do not wanna this kind of
+     # silly mistakes - make sure and build and deploy"): the bench laws leave
+     # 알고4 and rule everywhere. ON RECORD: year court still owed; live diff
+     # at deploy was 알고4 ahead ₩141K (m1) / ₩1.08M (m2). door_market = fill
+     # AT the door bar; reb_fade = profit exits wait for a real decrease;
+     # derisk_free = descent sells pieces, below-cost loss-cuts allowed, local
+     # re-arm, no chop freeze on sells; soft_up = flat closes count in the
+     # 3-red re-entry.
+     "door_market": True, "reb_fade": True, "derisk_free": True,
+     "soft_up": True,
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
      # THE DAILY-CHART CIRCLE, D3 first (boss 2026-08-21 night: "near the
      # lowest part we have to buy, not sell - and be patient with the rise;
@@ -473,7 +510,8 @@ VARIANTS: list[dict] = [
               # 2 blues, sell at the 3rd blue.' The trail steps aside; his
               # candle law rules the exit (arm 0.85 keeps the wait, big 0.9
               # keeps the huge-blue instant sale).
-              "retreat": {"big": 0.9, "arm": 0.85, "blues": 3,
+              # arm 0.85 -> 0.0 (boss 2026-08-31 graduation, see D1 note)
+              "retreat": {"big": 0.9, "arm": 0.0, "blues": 3,
                           "decay": True},
               "reinforce": {"frac": 0.5, "max": 2}}},
     # Sharp (ladder) leaves the live board 2026-08-13: the boss replaced it with
@@ -605,6 +643,17 @@ _D4.update({"id": "D4", "family": "d4",
             # 알고2 keeps the plain consecutive-rise book; the two boards now
             # diff exactly this door until the year court speaks.
             "bot_hold": {"bars": 3, "max_above": 1.5, "zone_free": 0.20},
+     # THE GRADUATION (boss 2026-08-31 12:4x, explicit: "implement to all menu,
+     # all algo 1,2,3 - today during market... I do not wanna this kind of
+     # silly mistakes - make sure and build and deploy"): the bench laws leave
+     # 알고4 and rule everywhere. ON RECORD: year court still owed; live diff
+     # at deploy was 알고4 ahead ₩141K (m1) / ₩1.08M (m2). door_market = fill
+     # AT the door bar; reb_fade = profit exits wait for a real decrease;
+     # derisk_free = descent sells pieces, below-cost loss-cuts allowed, local
+     # re-arm, no chop freeze on sells; soft_up = flat closes count in the
+     # 3-red re-entry.
+     "door_market": True, "reb_fade": True, "derisk_free": True,
+     "soft_up": True,
             # THE BOSS'S 08-31 BENCH TRIALS (his three morning cases):
             # door_market - entries fill AT the door bar (no limit-offer
             # abandonment chasing a V-rebound; the 오션 09:22 / 두산 09:13
@@ -617,7 +666,7 @@ _D4.update({"id": "D4", "family": "d4",
             # de-risk sells ignore the chop freeze, re-arm on local bounces,
             # and may sell BELOW cost - only the 0~+0.23% fake-win zone is
             # banned. The descent sells pieces instead of riding to the stop.
-            "derisk_free": True})
+            "derisk_free": True, "soft_up": True})
 # ARM OFF on the bench (boss 2026-08-31 11:4x, the 한화에어로 09:14/09:37 and
 # 하이닉스 09:19 missed 2-blue sells - peaks of +0.14~0.69% never armed the
 # 0.7% retreat): on 알고4 the 2-blues sell fires on ANY peak; the fee-line
@@ -1517,6 +1566,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     # stays shut until a real decrease shows itself (2 consecutive falling
     # closes). A -1% stop is itself the decrease - no lock. 알고4 bench.
     fade_lock = [False] * n
+    # SOFT RISE COUNT (boss 2026-08-31 12:3x, the LIG 11:07 case - closes went
+    # ▲ = ▲ = ▲ and the hard count reached 3 only at 11:09, two bars and
+    # 3,000원 late. His law, stated twice today: "some of them equal is fine -
+    # no need each one higher consecutively": a flat close CONTINUES and
+    # COUNTS in a live run; only a falling close breaks it. v["soft_up"]
+    # variants (알고4 bench) use this for the 3-red re-entry count.
+    up_soft = [0] * n
     reb_pk = [None] * n        # re-board anchor (boss 2026-08-21: "after the 2nd
                                # blue sell, THEN AGAIN BUY" - a ride's old peak;
                                # price back above it = the climb resumed)
@@ -1651,8 +1707,12 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
         # a FLAT close is a PAUSE, not a break (boss 2026-08-06) - the run stands
         if c > prev:
             up[si], dn[si] = up[si] + 1, 0
+            up_soft[si] += 1
         elif c < prev:
             up[si], dn[si] = 0, dn[si] + 1
+            up_soft[si] = 0
+        elif up_soft[si] > 0:
+            up_soft[si] += 1   # a flat close continues AND counts (boss's law)
         # the fade-first lock opens once a real decrease showed itself
         if reb_wait[si] is not None and dn[si] >= 2:
             reb_pk[si], reb_wait[si] = reb_wait[si], None
@@ -1870,11 +1930,15 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            and stop_low[si] is not None and c < stop_low[si]
                            and up[si] >= 3)
                   and not (v.get("drip", {}).get("reboard")
-                           and reb_pk[si] and up[si] >= int(v.get("reboard_ups", 3)))):
+                           and reb_pk[si]
+                           and (up_soft[si] if v.get("soft_up") else up[si])
+                           >= int(v.get("reboard_ups", 3)))):
                 pass
             elif (v.get("dip")
                   and not (v.get("drip", {}).get("reboard")
-                           and reb_pk[si] and up[si] >= int(v.get("reboard_ups", 3)))
+                           and reb_pk[si]
+                           and (up_soft[si] if v.get("soft_up") else up[si])
+                           >= int(v.get("reboard_ups", 3)))
                   and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]
                   <= last_exit[si]):
                 # the 3rd-red re-board is EXEMPT from one-per-dip (boss
