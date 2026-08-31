@@ -699,20 +699,20 @@ _D4["drip"] = _copy9.deepcopy(_D4["drip"])
 _D4["drip"]["retreat"] = dict(_D4["drip"].get("retreat") or {}, arm=0.0)
 VARIANTS.append(_D4)
 
-# 알고리즘 5 (boss 2026-08-31 evening, verbatim design: "buying exactly same -
-# sharp decrease, stop, 3rd red buy - and wait until the peak; if we gain 1%
-# DO NOT sell, just wait; when it stops increasing and starts decreasing, at
-# the 3rd blue sell ALL; then wait for the decrease to stop and buy again at
-# the 3rd. Maybe 3-4 big chances a day, 2-5%."). Built on 알고3's ride chassis
-# (no rungs, retreat carries 100%) plus today's full discipline stack: 3rd-rise
-# entries (dip ups 3), market fills, fade lock, soft rise count, STRICT
-# back-to-back blues, zone laws (no buy in the selling zone / no sell in the
-# buying zone), -1% stop with 3-red re-entry, 100-checklist seats on menu 2.
-_D5 = _copy9.deepcopy(next(v for v in VARIANTS if v["id"] == "D3"))
-_D5.update({"id": "D5", "family": "d5",
-            "blues_strict": True, "rearm_ups": 3})
-_D5["dip"] = dict(_D5.get("dip") or {}, ups=3)
-VARIANTS.append(_D5)
+# 알고리즘 3 REBORN as the boss's big-wave design (2026-08-31 evening, his
+# verbatim spec: "buying exactly same - sharp decrease, stop, 3rd red buy -
+# and wait until the peak; if we gain 1% DO NOT sell, just wait; when it
+# stops increasing and starts decreasing, at the 3rd blue sell ALL; then buy
+# again at the 3rd red. Maybe 3-4 big chances a day, 2-5%." Then: "we have
+# many unused algos - delete Algo 3 and replace with Algo 5; Algo 5 must be
+# Algo 3 with the recent idea"). 알고3's ride chassis already carried most of
+# it; the rebirth adds the three afternoon refinements: 3rd-rise entries,
+# strict back-to-back blues, 3-rise re-arm. One-day exhibit on record
+# (08-31 m2, checklist seats): as-is -0.24%; +0.45% with door-close 13:30 +
+# the three knife bans - those dials stay OFF pending the year court.
+_D3r = next(v for v in VARIANTS if v["id"] == "D3")
+_D3r.update({"blues_strict": True, "rearm_ups": 3})
+_D3r["dip"] = dict(_D3r.get("dip") or {}, ups=3)
 
 
 def label(v: dict, ko: bool = True) -> str:

@@ -687,7 +687,7 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
     { code: "000660", name: "SK하이닉스" }, { code: "005930", name: "삼성전자" },
     { code: "035420", name: "NAVER" }, { code: "017670", name: "SK텔레콤" },
     { code: "042660", name: "한화오션" }, { code: "034020", name: "두산에너빌리티" }];
-  const [fam9, setFam9] = useState<"d1" | "d2" | "d3" | "d4" | "d5">("d2");
+  const [fam9, setFam9] = useState<"d1" | "d2" | "d3" | "d4">("d2");
   const [open9, setOpen9] = useState(false);
   const [sel9, setSel9] = useState("");
   const [watchList9, setWatchList9] = useState<{ code: string; name: string }[]>([]);
@@ -984,7 +984,7 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
           </div>
         ))}
         <div className="flex gap-1 flex-wrap items-center">
-          {(["d1", "d2", "d3", "d4", "d5"] as const).map((f) => (
+          {(["d1", "d2", "d3", "d4"] as const).map((f) => (
             <button key={f} onClick={() => setFam9(f)}
               className="px-2 py-0.5 rounded border text-[10.5px]"
               style={fam9 === f ? { background: "#37474f", color: "#fff", borderColor: "#37474f", fontWeight: 700 }
@@ -1707,7 +1707,7 @@ export default function LiveDeskPage() {
   // and new way also - by default it should show new way, and if I click old way it
   // should show our old way". Both families trade on every tape at once; this only
   // chooses which set of rows is on screen.
-  const [way, setWay] = useState<"d1" | "d2" | "d3" | "d4" | "d5" | "old" | "new" | "both">("d2");
+  const [way, setWay] = useState<"d1" | "d2" | "d3" | "d4" | "old" | "new" | "both">("d2");
   // the screener's ranking - loaded once, shown on demand (boss 2026-08-10)
   // the static year-based screener panel was superseded by the daily picker above;
   // /paper-desk/screener still serves its data for reference.
@@ -2240,8 +2240,7 @@ export default function LiveDeskPage() {
     // stock click opens the CURRENT BOARD'S algorithm - falling back to the
     // rank list's top rule could silently chart a different algorithm
     const famRule = way === "d1" ? "D1" : way === "d2" ? "D2"
-                  : way === "d3" ? "D3" : way === "d4" ? "D4"
-                  : way === "d5" ? "D5" : null;
+                  : way === "d3" ? "D3" : way === "d4" ? "D4" : null;
     const id = sel || famRule || shownRules[0]?.id;
     if (id) { setSel(id); openRule(id, null, c2); }
     setTimeout(() => document.getElementById("rule-detail")?.scrollIntoView(
@@ -3044,15 +3043,12 @@ export default function LiveDeskPage() {
            ["d2", t("② 알고리즘 2 — 10% 계단", "② Algorithm 2 — 10% drip"),
             t("같은 다섯 문·같은 레이어 판정 → +1%마다 10%씩 매도, 한 계단 내려오면 그 조각 되사기(핑퐁) · 바닥 20% +2% 밸브 · -1% 전량 후 3양봉, 2회면 종목 종료 · 15:19 전량 — 연간 성적 1위",
               "same five doors & judges -> sells 10% per +1% rung, buys the slice back one step lower (ping-pong) · bottom-fifth +2% valve · -1% stop + 3-red, 2 stops = done · 15:19 all out - the year's best earner")],
-           ["d3", t("③ 알고리즘 3 — 정점 전량", "③ Algorithm 3 — ride to the peak"),
-            t("같은 다섯 문 + 바닥 20%는 1.5배 매수(사장님의 일봉 서클) → 오르는 동안 보유, +0.85% 무장 후 3번째 음봉에 전량(최고가권은 2번째) · 큰 음봉 0.9% 즉시 · 미상승 3음봉 조기 정리 · 바닥은 +2% 밸브까지 인내 · -1% 전량+3양봉, 2회면 종료 · 15:19 전량",
-              "same five doors + bottom fifth buys 1.5x (the boss's daily-chart circle) -> holds the whole climb, armed at +0.85% sells ALL on the 3rd blue (2nd near the record) · a 0.9% blue sells instantly · never-rose 3 blues = early cut · bottom-zone patience to the +2% valve · -1% stop + 3-red, 2 stops = done · 15:19 all out")],
+           ["d3", t("③ 알고리즘 3 — 큰 파도 전량 (08-31 재탄생)", "③ Algorithm 3 — big-wave rides (reborn 08-31)"),
+            t("사장님 설계: 급락 → 하락 멈춤 → 3번째 양봉에 매수 → +1%여도 팔지 않고 정점까지 보유 → 상승이 끝나고 연속 3번째 음봉(순수 청청청)에 전량 매도 → 하락 멈춤 후 3번째 양봉에 재매수 · -1% 전량 스톱 · 매수존 매도금지·매도존 매수금지 · 하루 2-5% 큰 파도 3-4번을 노린다",
+              "the boss's design: sharp fall -> stop -> buy at the 3rd red -> hold past +1%, ride to the peak -> sell ALL at the 3rd consecutive blue -> re-buy at the 3rd red · -1% full stop · zone laws · hunts the day's 3-4 big 2-5% waves")],
            ["d4", t("④ 알고리즘 4 — 알고2+갭상승 룰", "④ Algorithm 4 — Algo2 + gap rule"),
             t("알고리즘 2와 완전히 같은 책 + 갭상승 규칙 하나: 시가가 전일 종가보다 +2% 이상 높게 출발한 종목은 가격이 자기 시가 아래로 내려올 때까지 신규 매수 금지 (하락을 기다렸다 진짜 바닥을 산다) · 연간 측정 +18.2M — 오늘의 하이닉스 +5.2% 갭 아침이 증거",
-              "exactly Algo 2's book + ONE gap rule: a stock that opened >=2% above yesterday's close takes no NEW buys until its price falls below its own open (wait the decrease, buy the real bottom) · measured +18.2M/yr - today's +5.2% 하이닉스 gap morning is the exhibit")],
-           ["d5", t("⑤ 알고리즘 5 — 큰 파도 전량", "⑤ Algorithm 5 — big-wave rides"),
-            t("사장님 설계 (08-31): 급락 → 하락 멈춤 → 3번째 양봉에 매수 → +1%여도 팔지 않고 정점까지 보유 → 상승이 끝나고 연속 3번째 음봉에 전량 매도 → 하락 멈춤 후 3번째 양봉에 재매수 · -1% 전량 스톱 · 매수존 매도금지·매도존 매수금지 · 하루 2-5% 큰 파도 3-4번을 노린다",
-              "the boss's design (08-31): sharp fall -> stop -> buy at the 3rd red -> hold past +1%, ride to the peak -> sell ALL at the 3rd consecutive blue -> re-buy at the 3rd red · -1% full stop · zone laws · hunts the day's 3-4 big 2-5% waves")]] as const)
+              "exactly Algo 2's book + ONE gap rule: a stock that opened >=2% above yesterday's close takes no NEW buys until its price falls below its own open (wait the decrease, buy the real bottom) · measured +18.2M/yr - today's +5.2% 하이닉스 gap morning is the exhibit")]] as const)
           .map(([k, lab, tip]) => (
           <button key={k} title={tip}
             onClick={() => { if (way === k) return;
