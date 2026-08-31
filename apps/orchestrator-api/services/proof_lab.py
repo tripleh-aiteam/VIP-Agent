@@ -1496,6 +1496,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     # consecutive falling closes). A -1% stop IS the decrease - stop
     # re-entries stay immediate. 알고4 bench first, at the boss's order.
     reb_wait = [None] * n
+    # THE FULL FADE LOCK (boss 2026-08-31 10:5x, second iteration - the first
+    # reb_fade only locked the re-board door and the bottom-hold door slipped
+    # through on micro-dips INSIDE the climb, buying 09:23 and 09:33 mid-rise:
+    # "there is no decrease - it should buy 10:03, 10:06 like our agent
+    # bought"): after a PROFITABLE full exit, EVERY entry door on this stock
+    # stays shut until a real decrease shows itself (2 consecutive falling
+    # closes). A -1% stop is itself the decrease - no lock. 알고4 bench.
+    fade_lock = [False] * n
     reb_pk = [None] * n        # re-board anchor (boss 2026-08-21: "after the 2nd
                                # blue sell, THEN AGAIN BUY" - a ride's old peak;
                                # price back above it = the climb resumed)
@@ -1635,6 +1643,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
         # the fade-first lock opens once a real decrease showed itself
         if reb_wait[si] is not None and dn[si] >= 2:
             reb_pk[si], reb_wait[si] = reb_wait[si], None
+        if fade_lock[si] and dn[si] >= 2:
+            fade_lock[si] = False
         # the gap pause's adaptive release (boss 2026-08-27: the fade must have
         # happened AND ended - not a clock): below the open marks the fade; the
         # 3rd consecutive rise afterwards lifts the pause for good
@@ -1728,6 +1738,12 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 pass       # court 2026-08-25 (알고3's 두산/하이닉스 churn):
                            # after a red cut, re-entry only BELOW the cut price
                            # - never re-buy the same fade higher or flat
+            elif v.get("reb_fade") and fade_lock[si]:
+                pass       # THE FULL FADE LOCK (boss 2026-08-31): a profitable
+                           # full exit shuts EVERY door on this stock until a
+                           # real decrease (2 falling closes) - no buying the
+                           # same climb twice. Stops don't lock (the stop IS
+                           # the decrease). 알고4 bench.
             elif (s.get("rank_win") is not None and _now
                   and not (str(_now) < (s.get("rank_t0") or "00:00:00")
                            or any(f_ <= str(_now) <= t_
@@ -1974,6 +1990,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _w2 = _vv2[max(0, i - 20):i]
                     if _w2 and _vv2[i] < v["vol_size"].get("x", 1.2)                             * (sum(_w2) / len(_w2)):
                         _q = max(1, int(_q * v["vol_size"].get("frac", 0.5)))
+                # MINIMUM 10 SHARES (boss 2026-08-31 11:2x, the 하이닉스 1-share
+                # episodes: "in the good condition we do not have stock because
+                # we are buying only small quantity - instead of 1 buy 10, all
+                # menus and algos"): the ladder needs pieces to sell; a 1-share
+                # hand can't harvest 10% rungs. Floor stands AFTER every
+                # halving layer, so cautions still shape the size above 10.
+                _q = max(10, _q)
                 # was the bounce SHARP or slow? his two cases part here, and the answer
                 # is fixed at the signal - not re-judged later when we already know more
                 _sharp = False
@@ -2189,6 +2212,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         _dsell(pos["qty"], c, f"{_hh9}시 이후 이익 정리")
                         _drow(f"{_hh9}시 이후 이익 전량 정리 · 조각 "
                               f"{len(pos['slices'])}회")
+                        if v.get("reb_fade"):
+                            fade_lock[si] = True
                         poss[si] = None
                         continue
                 # -1.5% law: sell ALL, re-buy immediately at the lower price.
@@ -2431,6 +2456,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         if dp.get("reboard"):
                             if v.get("reb_fade"):
                                 reb_wait[si] = c
+                                fade_lock[si] = True
                             else:
                                 reb_pk[si] = c
                         poss[si] = None
@@ -2479,6 +2505,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                             if dp.get("reboard"):
                                 if v.get("reb_fade"):
                                     reb_wait[si] = c
+                                    fade_lock[si] = True
                                 else:
                                     reb_pk[si] = c
                             poss[si] = None
@@ -2564,6 +2591,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     pos["rf_i"] = i
                 if pos["qty"] <= 0 and pos.get("qty_add", 0) <= 0:
                     _drow(f"전량 매도 완료 · 조각 {len(pos['slices'])}회")
+                    if v.get("reb_fade"):
+                        fade_lock[si] = True   # profit exit: no door until a real decrease
                     if (dp.get("reboard") and pos.get("pr_pk")
                             and pos["sold_won"] > (pos.get("spent") or pos["cost"])):
                         # remember where this ride peaked - if the price beats
