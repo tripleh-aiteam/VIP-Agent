@@ -666,7 +666,14 @@ _D4.update({"id": "D4", "family": "d4",
             # de-risk sells ignore the chop freeze, re-arm on local bounces,
             # and may sell BELOW cost - only the 0~+0.23% fake-win zone is
             # banned. The descent sells pieces instead of riding to the stop.
-            "derisk_free": True, "soft_up": True})
+            "derisk_free": True, "soft_up": True,
+            # REARM NEEDS A REAL RISE (boss 2026-08-31 13:4x, the 삼성전자
+            # 11:56/12:26 churn: a 2-bar wiggle re-armed the retreat and sold
+            # pieces with no real peak behind them - "there was not 2 blue...
+            # neither +1% nor 2 blue. We must have rules"): after a retreat
+            # piece sells, the next one only arms after 3 rises (his 3-red
+            # language; flats count via soft_up). 알고4 bench first.
+            "rearm_ups": 3})
 # ARM OFF on the bench (boss 2026-08-31 11:4x, the 한화에어로 09:14/09:37 and
 # 하이닉스 09:19 missed 2-blue sells - peaks of +0.14~0.69% never armed the
 # 0.7% retreat): on 알고4 the 2-blues sell fires on ANY peak; the fee-line
@@ -2471,7 +2478,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         pos["pr_blues"] = 0
                         pos["pr_sold"] = False
                     elif (v.get("derisk_free") and pos.get("pr_sold")
-                          and up[si] >= 2):
+                          and (up_soft[si] if v.get("soft_up") else up[si])
+                          >= int(v.get("rearm_ups", 2))):
                         # LOCAL RE-ARM (boss 2026-08-31 12:0x, the LIG descent:
                         # after the 737,000 peak the retreat slept for ever -
                         # it re-armed only on a NEW ABSOLUTE high, so the
