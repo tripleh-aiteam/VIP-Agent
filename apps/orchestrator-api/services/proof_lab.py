@@ -679,9 +679,10 @@ _D4.update({"id": "D4", "family": "d4",
             # liquidates everything (trail_all).
             "reload_ups": 3,
             "trail_all": {"arm": 1.0, "drop": 1.0},
-            # SK텔레콤 + LIG디펜스 off the bench (boss 14:4x/15:0x: "very bad
-            # today - delete"; LIG was the day's biggest destroyer, -6.5M)
-            "ban_codes": ["017670", "079550"]})
+            # SK텔레콤 + LIG디펜스 + 한화에어로 off the bench (boss 14:4x/15:0x/
+            # 15:2x: "very bad today - delete"; LIG -6.5M, SKT -2.5M, 에어로
+            # -1.6M were the day's three destroyers)
+            "ban_codes": ["017670", "079550", "012450"]})
 # the dip door itself waits for the 3rd rise on the bench (boss: "should not
 # buy at 09:04/09:08 - still decreasing... buy at 09:10")
 _D4["dip"] = dict(_D4.get("dip") or {}, ups=3)
