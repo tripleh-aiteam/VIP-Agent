@@ -682,7 +682,10 @@ _D4.update({"id": "D4", "family": "d4",
             # SK텔레콤 + LIG디펜스 + 한화에어로 off the bench (boss 14:4x/15:0x/
             # 15:2x: "very bad today - delete"; LIG -6.5M, SKT -2.5M, 에어로
             # -1.6M were the day's three destroyers)
-            "ban_codes": ["017670", "079550", "012450"]})
+            "ban_codes": ["017670", "079550", "012450"],
+            # no NEW episodes after 13:30 (boss 15:3x, the five afternoon
+            # exhibits; existing rides keep all their laws)
+            "door_close": "13:30"})
 # the dip door itself waits for the 3rd rise on the bench (boss: "should not
 # buy at 09:04/09:08 - still decreasing... buy at 09:10")
 _D4["dip"] = dict(_D4.get("dip") or {}, ups=3)
@@ -1830,6 +1833,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 pass       # court 2026-08-25 (알고3's 두산/하이닉스 churn):
                            # after a red cut, re-entry only BELOW the cut price
                            # - never re-buy the same fade higher or flat
+            elif (v.get("door_close") and _now
+                  and str(_now) >= str(v["door_close"])):
+                pass       # THE DOOR-CLOSE HOUR (boss 2026-08-31 15:3x, five
+                           # exhibits: every fresh episode opened 13:45-14:48
+                           # rolled straight into stops as the afternoon turned
+                           # - "remove these cases"): after door_close no NEW
+                           # episode may open; positions already riding keep
+                           # every management law. 알고4 bench; year court owed.
             elif v.get("ban_codes") and s.get("code") in v["ban_codes"]:
                 pass       # STOCK BAN (boss 2026-08-31 14:4x: "today in both
                            # menus SK텔레콤 was very bad - delete SK텔레콤 and
