@@ -679,8 +679,9 @@ _D4.update({"id": "D4", "family": "d4",
             # liquidates everything (trail_all).
             "reload_ups": 3,
             "trail_all": {"arm": 1.0, "drop": 1.0},
-            # SK텔레콤 off the bench (boss 14:4x: "very bad today - delete")
-            "ban_codes": ["017670"]})
+            # SK텔레콤 + LIG디펜스 off the bench (boss 14:4x/15:0x: "very bad
+            # today - delete"; LIG was the day's biggest destroyer, -6.5M)
+            "ban_codes": ["017670", "079550"]})
 # the dip door itself waits for the 3rd rise on the bench (boss: "should not
 # buy at 09:04/09:08 - still decreasing... buy at 09:10")
 _D4["dip"] = dict(_D4.get("dip") or {}, ups=3)
@@ -2404,7 +2405,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         and pos.get("pr_pk", 0) >= pos.get("base", 0)
                         * (1 + float(_ta9.get("arm", 1.0)) / 100)
                         and c <= pos.get("pr_pk", 0)
-                        * (1 - float(_ta9.get("drop", 1.0)) / 100)):
+                        * (1 - float(_ta9.get("drop", 1.0)) / 100)
+                        # never liquidate INTO the fake-win zone (boss 14:5x,
+                        # the 삼성전자 10:00 +0.20%⚠ case): above the fee line
+                        # or below cost - a bar later the exit is honest either
+                        # way
+                        and not (pos.get("base", 0) < c
+                                 <= pos.get("base", 0) * (1 + FEE_PCT / 100))):
                     _dsell(pos["qty"], c, "고점-1% 전량")
                     _drow(f"고점-{_ta9.get('drop', 1.0):g}% 전량 매도 · 3번째 "
                           f"양봉 재진입 대기 · 조각 {len(pos['slices'])}회")
