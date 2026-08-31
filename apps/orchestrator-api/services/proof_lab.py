@@ -711,8 +711,27 @@ VARIANTS.append(_D4)
 # (08-31 m2, checklist seats): as-is -0.24%; +0.45% with door-close 13:30 +
 # the three knife bans - those dials stay OFF pending the year court.
 _D3r = next(v for v in VARIANTS if v["id"] == "D3")
-_D3r.update({"blues_strict": True, "rearm_ups": 3})
+_D3r.update({"blues_strict": True, "rearm_ups": 3,
+             # THE WAVE TELL (boss 2026-08-31 night: "in order to find big
+             # waves... we can use trading volume - if there is a high wave,
+             # most probability the volume is also high. Do not buy and sell
+             # too much"): entries require 1.5x the 20-bar average volume -
+             # quiet turns are not waves, stand aside.
+             # "vol": 1.5 REVERTED same night: 1-min volume bursts select
+             # panic knives, not waves (m2 37%->24%, 스퀘어 +101M->+9M).
+             # The boss's volume idea goes to the year court as a RISING-
+             # volume confirmation instead of a door gate.
+             })
 _D3r["dip"] = dict(_D3r.get("dip") or {}, ups=3)
+# the HIGH-PEAK 2-BLUE EXIT (boss: "it waits until the high peak and after
+# 2 blue, in the 2nd blue sell it"): the ride must stand +1% over cost
+# before the 2-blue exit arms; below that it holds (decay + the -1% stop
+# protect underneath). blues 3 -> 2, arm 0 -> 1.0.
+_D3r["drip"] = _copy9.deepcopy(_D3r["drip"])
+# blues=2/arm=1.0 REVERTED same night (sub-1% rides bled to the stop with
+# no blue exit); the 2-blue-after-high-peak form rides in the year court.
+_D3r["drip"]["retreat"] = dict(_D3r["drip"].get("retreat") or {},
+                               blues=3, arm=0.0)
 
 
 def label(v: dict, ko: bool = True) -> str:
