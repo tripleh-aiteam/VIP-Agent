@@ -2534,11 +2534,16 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         pos["pr_pk"] = c
                         pos["pr_blues"] = 0
                         pos["pr_sold"] = False
-                    elif v.get("blues_strict") and c > prev:
+                    elif v.get("blues_strict") and c >= prev:
                         # 2 blues means 2 IN A ROW (boss 2026-08-31 14:0x, the
                         # LIG 09:09 piece: the streak ran 청-적-청 and the old
                         # counter kept the morning's blues forever - a rise
                         # breaks the streak. 09:15's 청청 stays lawful.)
+                        # 14:5x refinement (한화에어로 10:18: 청-flat-flat-청
+                        # counted as 2 blues): a FLAT close breaks the streak
+                        # too - two blues means two falling closes back to
+                        # back, nothing in between. The true 청청 at
+                        # 10:20/10:21 is where the piece belongs.
                         pos["pr_blues"] = 0
                     elif c < prev:
                         pos["pr_blues"] = pos.get("pr_blues", 0) + 1
