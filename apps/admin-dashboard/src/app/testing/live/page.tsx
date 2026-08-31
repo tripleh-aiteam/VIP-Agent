@@ -463,6 +463,23 @@ function mergeBuys9(buys: [number, number, (string | null)?][]) {
   return out;
 }
 
+// HOLDING SHOWS ONLY WHAT REMAINS (boss 2026-08-31 11:5x: "if in the slice
+// some part already sold out, in the holding only need to show remaining
+// stock with buying time - sold out case should not be shown"): the sold
+// quantity consumes the buys FIRST-IN-FIRST-OUT; a buy fully consumed
+// disappears, a partially consumed one shows its remaining shares.
+function remainBuys9(buys: [number, number, (string | null)?][],
+                     soldQty: number): [number, number, (string | null)?][] {
+  let left = soldQty;
+  const out: [number, number, (string | null)?][] = [];
+  for (const b of buys) {
+    const take = Math.min(left, b[1]);
+    left -= take;
+    if (b[1] - take > 0) out.push([b[0], b[1] - take, b[2] ?? null]);
+  }
+  return out;
+}
+
 function TradeReplay({ ep, t, onClose }: {
   ep: { code: string; name: string; entry?: number; base?: number;
         buy_t?: string; sell_t?: string; live?: boolean; exit?: number;
@@ -3409,8 +3426,15 @@ export default function LiveDeskPage() {
                             🎞 {h.name || h.code}</td>
                           <td className="px-2" style={CELL}>
                             {(() => {
-                              const hb = (h as unknown as { parts?: {
-                                buys?: [number, number, (string | null)?][] } }).parts?.buys;
+                              const hp9 = (h as unknown as { parts?: {
+                                buys?: [number, number, (string | null)?][];
+                                sells?: [number, number, ...unknown[]][] } }).parts;
+                              const hb0 = hp9?.buys;
+                              // holding shows only what REMAINS (boss 2026-08-31):
+                              // sold slices consume the buys FIFO; sold-out fills
+                              // disappear from the holding row
+                              const soldQ9 = (hp9?.sells || []).reduce((a, s) => a + (Number(s[1]) || 0), 0);
+                              const hb = hb0 && soldQ9 > 0 ? remainBuys9(hb0, soldQ9) : hb0;
                               // every buy line is CLICKABLE PROOF (boss 2026-08-20):
                               // the chart opens on this stock with every ▲ marked at
                               // its own bar, and the caption restates this exact fill
@@ -3591,8 +3615,14 @@ export default function LiveDeskPage() {
                               && arrF[i - 1].code === r.code) ? (
                               <div className="text-[10px] text-[var(--text-muted)]">
                                 〃 {t("위와 같은 매수", "same buys as above")}</div>
-                            ) : r.parts?.buys && r.parts.buys.length ? mergeBuys9(r.parts.buys as unknown as
-                              [number, number, (string | null)?][]).map(([p2, q2, t3, nlaws], k2) => (
+                            ) : r.parts?.buys && r.parts.buys.length ? mergeBuys9((() => {
+                              const bb = r.parts.buys as unknown as [number, number, (string | null)?][];
+                              if (!r.partial) return bb;
+                              // a still-open episode's row also shows only the
+                              // remaining shares (boss 2026-08-31, FIFO)
+                              const sq = ((r.parts?.sells || []) as unknown as [number, number][]).reduce((a, s) => a + (Number(s[1]) || 0), 0);
+                              return sq > 0 ? remainBuys9(bb, sq) : bb;
+                            })()).map(([p2, q2, t3, nlaws], k2) => (
                               <div key={k2} className="cursor-pointer underline decoration-dotted"
                                 title={t("클릭: 이 매수를 차트에서 증명", "click: prove this buy on the chart")}
                                 onClick={() => { setSelSlice({ rule: r.rule, name: r.name || r.code,

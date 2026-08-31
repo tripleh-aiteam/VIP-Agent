@@ -613,6 +613,14 @@ _D4.update({"id": "D4", "family": "d4",
             # count (the 하이닉스 09:30 top re-board). Stops re-enter
             # immediately as before. 알고2 stays pure for the diff.
             "door_market": True, "reb_fade": True})
+# ARM OFF on the bench (boss 2026-08-31 11:4x, the 한화에어로 09:14/09:37 and
+# 하이닉스 09:19 missed 2-blue sells - peaks of +0.14~0.69% never armed the
+# 0.7% retreat): on 알고4 the 2-blues sell fires on ANY peak; the fee-line
+# gate (base+0.23%) is the only floor. NOTE ON RECORD: at 한화에어로 09:14/
+# 09:37 the price stood BELOW cost - no law that honors the boss's own
+# fee-line order can sell there; only the -1% stop protects below cost.
+_D4["drip"] = _copy9.deepcopy(_D4["drip"])
+_D4["drip"]["retreat"] = dict(_D4["drip"].get("retreat") or {}, arm=0.0)
 VARIANTS.append(_D4)
 
 
