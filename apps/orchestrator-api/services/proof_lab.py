@@ -678,7 +678,9 @@ _D4.update({"id": "D4", "family": "d4",
             # reloads included; and once riding +1%, a -1% fall off the peak
             # liquidates everything (trail_all).
             "reload_ups": 3,
-            "trail_all": {"arm": 1.0, "drop": 1.0}})
+            "trail_all": {"arm": 1.0, "drop": 1.0},
+            # SK텔레콤 off the bench (boss 14:4x: "very bad today - delete")
+            "ban_codes": ["017670"]})
 # the dip door itself waits for the 3rd rise on the bench (boss: "should not
 # buy at 09:04/09:08 - still decreasing... buy at 09:10")
 _D4["dip"] = dict(_D4.get("dip") or {}, ups=3)
@@ -1826,6 +1828,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 pass       # court 2026-08-25 (알고3's 두산/하이닉스 churn):
                            # after a red cut, re-entry only BELOW the cut price
                            # - never re-buy the same fade higher or flat
+            elif v.get("ban_codes") and s.get("code") in v["ban_codes"]:
+                pass       # STOCK BAN (boss 2026-08-31 14:4x: "today in both
+                           # menus SK텔레콤 was very bad - delete SK텔레콤 and
+                           # show without it"): a banned code takes no entries
+                           # on this variant; the raw tape and records stand
+                           # untouched (never-delete law) - the living replay
+                           # simply trades without it.
             elif v.get("reb_fade") and fade_lock[si]:
                 pass       # THE FULL FADE LOCK (boss 2026-08-31): a profitable
                            # full exit shuts EVERY door on this stock until a
