@@ -673,7 +673,15 @@ _D4.update({"id": "D4", "family": "d4",
             # neither +1% nor 2 blue. We must have rules"): after a retreat
             # piece sells, the next one only arms after 3 rises (his 3-red
             # language; flats count via soft_up). 알고4 bench first.
-            "rearm_ups": 3, "blues_strict": True})
+            "rearm_ups": 3, "blues_strict": True,
+            # boss 14:2x (the 두산 case): entries at the 3rd rise everywhere -
+            # reloads included; and once riding +1%, a -1% fall off the peak
+            # liquidates everything (trail_all).
+            "reload_ups": 3,
+            "trail_all": {"arm": 1.0, "drop": 1.0}})
+# the dip door itself waits for the 3rd rise on the bench (boss: "should not
+# buy at 09:04/09:08 - still decreasing... buy at 09:10")
+_D4["dip"] = dict(_D4.get("dip") or {}, ups=3)
 # ARM OFF on the bench (boss 2026-08-31 11:4x, the 한화에어로 09:14/09:37 and
 # 하이닉스 09:19 missed 2-blue sells - peaks of +0.14~0.69% never armed the
 # 0.7% retreat): on 알고4 the 2-blues sell fires on ANY peak; the fee-line
@@ -2375,6 +2383,26 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     reb_wait[si] = None   # the stop IS the decrease - immediate
                     poss[si] = None
                     continue
+                # TRAIL-ALL (boss 2026-08-31 14:2x, the 두산 09:33-09:49 fall:
+                # rode to +1.88%, fell -1.5% off the peak, and only pieces
+                # sold - the cost-stop line sat below the whole move. "There
+                # should be -1% decrease [from the peak] - it should sell all
+                # stock"): once the ride's peak stands >= arm% over cost, a
+                # drop% fall from that peak liquidates EVERYTHING and arms
+                # the 3-red re-entry. 알고4 bench.
+                _ta9 = v.get("trail_all")
+                if (_ta9 and pos["qty"] > 0 and pos.get("qty_add", 0) <= 0
+                        and pos.get("pr_pk", 0) >= pos.get("base", 0)
+                        * (1 + float(_ta9.get("arm", 1.0)) / 100)
+                        and c <= pos.get("pr_pk", 0)
+                        * (1 - float(_ta9.get("drop", 1.0)) / 100)):
+                    _dsell(pos["qty"], c, "고점-1% 전량")
+                    _drow(f"고점-{_ta9.get('drop', 1.0):g}% 전량 매도 · 3번째 "
+                          f"양봉 재진입 대기 · 조각 {len(pos['slices'])}회")
+                    reb_pk[si] = c
+                    reb_wait[si] = None   # the fall already happened - immediate
+                    poss[si] = None
+                    continue
                 # +1% steps: resting limits at real snapped prices, filled off highs
                 _guard = 0
                 while pos["qty"] > 0 and _guard < 30:
@@ -2421,7 +2449,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # so the same level can sell again on the next rise
                 if (dp.get("pingpong") and pos["k_up"] > 0
                         and pos["qty"] < pos["qty0"]
-                        and pos.get("qty_add", 0) <= 0 and not _chop_now):
+                        and pos.get("qty_add", 0) <= 0 and not _chop_now
+                        # NO RELOADS INTO A FALL (boss 2026-08-31 14:2x, the
+                        # 두산 09:49/09:50 case: 450 shares re-bought while the
+                        # price was still decreasing, all fed to the 10:06
+                        # stop): with reload_ups the rebuy waits for the 3rd
+                        # rise, same as every other buy. 알고4 bench.
+                        and ((up_soft[si] if v.get("soft_up") else up[si])
+                             >= int(v.get("reload_ups", 0)))):
                     _g2 = 0
                     while pos["k_up"] > 0 and pos["qty"] < pos["qty0"] and _g2 < 30:
                         _g2 += 1
