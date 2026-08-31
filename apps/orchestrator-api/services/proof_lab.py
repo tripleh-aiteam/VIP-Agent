@@ -699,6 +699,21 @@ _D4["drip"] = _copy9.deepcopy(_D4["drip"])
 _D4["drip"]["retreat"] = dict(_D4["drip"].get("retreat") or {}, arm=0.0)
 VARIANTS.append(_D4)
 
+# 알고리즘 5 (boss 2026-08-31 evening, verbatim design: "buying exactly same -
+# sharp decrease, stop, 3rd red buy - and wait until the peak; if we gain 1%
+# DO NOT sell, just wait; when it stops increasing and starts decreasing, at
+# the 3rd blue sell ALL; then wait for the decrease to stop and buy again at
+# the 3rd. Maybe 3-4 big chances a day, 2-5%."). Built on 알고3's ride chassis
+# (no rungs, retreat carries 100%) plus today's full discipline stack: 3rd-rise
+# entries (dip ups 3), market fills, fade lock, soft rise count, STRICT
+# back-to-back blues, zone laws (no buy in the selling zone / no sell in the
+# buying zone), -1% stop with 3-red re-entry, 100-checklist seats on menu 2.
+_D5 = _copy9.deepcopy(next(v for v in VARIANTS if v["id"] == "D3"))
+_D5.update({"id": "D5", "family": "d5",
+            "blues_strict": True, "rearm_ups": 3})
+_D5["dip"] = dict(_D5.get("dip") or {}, ups=3)
+VARIANTS.append(_D5)
+
 
 def label(v: dict, ko: bool = True) -> str:
     # the boss's scenarios wear their own name (2026-08-19: the generic label
@@ -2050,7 +2065,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # stormy-up night now changes nothing but the boss's awareness.
                 bk = book(s["seed"] * 1_000 + i, c, "BUY", s["tick"])
                 from services.proof_ml import cap_for as _cap
-                _q = (ml_meta or {}).get("qty") or _cap(c)
+                # THE BIG-HAND SIZES (boss 2026-08-31 evening: "increase the
+                # number of stock - this is free and we can use this; 하이닉스
+                # case 1,000 and others 10,000"): expensive names (>=1M won)
+                # trade 1,000 shares, everything else 10,000. Caution layers
+                # still halve below these.
+                _q = (ml_meta or {}).get("qty") or (
+                    1000 if c >= 1_000_000 else 10000)
                 if v.get("us_habit") and (s.get("us_mode") or "calm") == "storm_down":
                     _q = max(1, _q // 3)
                 # LAYER 1 (boss 2026-08-21): near the year's TOP the desk gets

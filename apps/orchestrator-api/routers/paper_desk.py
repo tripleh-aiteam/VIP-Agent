@@ -1442,12 +1442,26 @@ def _fam_compute(family: str, tick: int, period: int, day: str,
              if not r.get("partial") and (r.get("net_pct") or 0) > 0)
     el = sum(1 for r in rows
              if not r.get("partial") and (r.get("net_pct") or 0) < 0)
+    # TOTAL INVESTED (boss 2026-08-31 evening: "add one statistics on top -
+    # how much we have invested and how much we gain with price and %"):
+    # every won that went into buys, completed episodes and open holdings
+    # alike, summed from the raw fills.
+    _inv9 = 0.0
+    for r in rows:
+        if r.get("partial"):
+            continue
+        for b9 in ((r.get("parts") or {}).get("buys") or []):
+            _inv9 += (b9[0] or 0) * (b9[1] or 0)
+    for h9 in holding:
+        for b9 in ((h9.get("parts") or {}).get("buys") or []):
+            _inv9 += (b9[0] or 0) * (b9[1] or 0)
     _res = {"ok": True, "family": family, "rows": rows,
             "trips": len(rows), "wins": w, "losses": l,
             "ep_wins": ew, "ep_losses": el,
             "win_pct_ep": round(ew / (ew + el) * 100) if (ew + el) else 0,
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
             "holding": holding, "waiting": waiting,
+            "invested": round(_inv9),
             "net_won": sum(r["won"] for r in rows)}
     _FAM_TTL[_fk] = (_t.time(), _res)   # kept: family_daily still reads it
     return _res
@@ -1971,7 +1985,7 @@ def live_warm():
         _recow = []
     for _cw in ([_sixw, _recow] if _recow else [_sixw]):
         _ncw = ",".join(sorted(_cw))
-        for fam in ("d1", "d2", "d3", "d4"):
+        for fam in ("d1", "d2", "d3", "d4", "d5"):
             try:
                 _SWR[("fam", fam, 5, 60, _kd9(), "", "", 1, 1, _ncw)] = (
                     _t2.time(), _fam_compute(fam, 5, 60, "", "", "", 1, 1,
