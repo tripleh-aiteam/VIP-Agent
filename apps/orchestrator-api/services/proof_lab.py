@@ -612,7 +612,12 @@ _D4.update({"id": "D4", "family": "d4",
             # for a real decrease (2 falling closes) before the 3 rises
             # count (the 하이닉스 09:30 top re-board). Stops re-enter
             # immediately as before. 알고2 stays pure for the diff.
-            "door_market": True, "reb_fade": True})
+            "door_market": True, "reb_fade": True,
+            # derisk_free (boss 2026-08-31 12:0x, the LIG 97-share stop):
+            # de-risk sells ignore the chop freeze, re-arm on local bounces,
+            # and may sell BELOW cost - only the 0~+0.23% fake-win zone is
+            # banned. The descent sells pieces instead of riding to the stop.
+            "derisk_free": True})
 # ARM OFF on the bench (boss 2026-08-31 11:4x, the 한화에어로 09:14/09:37 and
 # 하이닉스 09:19 missed 2-blue sells - peaks of +0.14~0.69% never armed the
 # 0.7% retreat): on 알고4 the 2-blues sell fires on ANY peak; the fee-line
@@ -2401,6 +2406,18 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         pos["pr_pk"] = c
                         pos["pr_blues"] = 0
                         pos["pr_sold"] = False
+                    elif (v.get("derisk_free") and pos.get("pr_sold")
+                          and up[si] >= 2):
+                        # LOCAL RE-ARM (boss 2026-08-31 12:0x, the LIG descent:
+                        # after the 737,000 peak the retreat slept for ever -
+                        # it re-armed only on a NEW ABSOLUTE high, so the
+                        # 10:00/10:23/10:44 bounce-and-fade sequences sold
+                        # nothing and 97 shares rode to the stop): a 2-rise
+                        # bounce makes a LOCAL peak the next 2 blues can sell
+                        # against. 알고4 bench.
+                        pos["pr_pk"] = c
+                        pos["pr_blues"] = 0
+                        pos["pr_sold"] = False
                     elif c < prev:
                         pos["pr_blues"] = pos.get("pr_blues", 0) + 1
                     _big = bool(prev) and (prev - c) / prev * 100 >= _pr.get("big", 0.9)
@@ -2490,11 +2507,26 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     # armed at +0.7% but price fell back to base before the 2nd
                     # blue - selling there just donates the 0.23% fee. "Yesterday
                     # I told you do not make this kind of mistake.")
-                    if ((not pos.get("pr_sold")) and not _chop_now
-                            and c > pos.get("base", 0) * (1 + FEE_PCT / 100)
-                            and pos.get("pr_pk", 0) >= pos.get("base", 0)
-                            * (1 + _pr.get("arm", 0.0) / 100)
-                            and pos.get("pr_pk", 0) > pos.get("base", 0)
+                    if ((not pos.get("pr_sold"))
+                            # derisk_free (boss 2026-08-31 12:0x, LIG): a quiet
+                            # downward drift must still sell pieces - the chop
+                            # freeze no longer silences de-risk sells, and a
+                            # 2-blue piece may sell BELOW cost (loss-cutting
+                            # beats riding to the stop: 11:20 at -0.7% vs the
+                            # 11:23 stop at -1.12%). Only the fake-win zone
+                            # (0 ~ +0.23%, the fee-donation sells) stays banned.
+                            and (not _chop_now or v.get("derisk_free"))
+                            and (c > pos.get("base", 0) * (1 + FEE_PCT / 100)
+                                 or (v.get("derisk_free")
+                                     and c < pos.get("base", 0)))
+                            # under derisk_free a LOCAL peak below cost is a
+                            # valid reference (loss-cut pieces); otherwise the
+                            # peak must stand above cost + arm as before
+                            and (v.get("derisk_free")
+                                 or (pos.get("pr_pk", 0) >= pos.get("base", 0)
+                                     * (1 + _pr.get("arm", 0.0) / 100)
+                                     and pos.get("pr_pk", 0)
+                                     > pos.get("base", 0)))
                             and (pos.get("pr_blues", 0) >= _blues9
                                  or _big or _trail_hit)
                             and pos["qty"] == _qty_bar0):
