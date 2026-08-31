@@ -604,7 +604,15 @@ _D4.update({"id": "D4", "family": "d4",
             # door at the 3rd, but never more than 1.5% above the bottom.
             # 알고2 keeps the plain consecutive-rise book; the two boards now
             # diff exactly this door until the year court speaks.
-            "bot_hold": {"bars": 3, "max_above": 1.5}})
+            "bot_hold": {"bars": 3, "max_above": 1.5, "zone_free": 0.20},
+            # THE BOSS'S 08-31 BENCH TRIALS (his three morning cases):
+            # door_market - entries fill AT the door bar (no limit-offer
+            # abandonment chasing a V-rebound; the 오션 09:22 / 두산 09:13
+            # late fills). reb_fade - after a PROFIT exit, re-entry waits
+            # for a real decrease (2 falling closes) before the 3 rises
+            # count (the 하이닉스 09:30 top re-board). Stops re-enter
+            # immediately as before. 알고2 stays pure for the diff.
+            "door_market": True, "reb_fade": True})
 VARIANTS.append(_D4)
 
 
@@ -1479,6 +1487,15 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                # 두산 08-21 walked 11 door->stop cycles on one broken
                                # tape; v["surrender"]=N closes a stock's doors for
                                # the day after its N-th stop. Court dial, default off)
+    # FADE-FIRST RE-ENTRY (boss 2026-08-31 10:4x, the 하이닉스 09:30 case: a
+    # profitable full exit at 09:26 re-boarded 3 rises later at 1,629,000 -
+    # the top of the SAME climb - and paid -1.40%. "It should buy when
+    # decrease happens and stops, like the 10:03/10:06 cases"): with
+    # v["reb_fade"], a NON-STOP exit's re-board anchor waits in reb_wait and
+    # is promoted to reb_pk only after a real decrease shows itself (2
+    # consecutive falling closes). A -1% stop IS the decrease - stop
+    # re-entries stay immediate. 알고4 bench first, at the boss's order.
+    reb_wait = [None] * n
     reb_pk = [None] * n        # re-board anchor (boss 2026-08-21: "after the 2nd
                                # blue sell, THEN AGAIN BUY" - a ride's old peak;
                                # price back above it = the climb resumed)
@@ -1615,6 +1632,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             up[si], dn[si] = up[si] + 1, 0
         elif c < prev:
             up[si], dn[si] = 0, dn[si] + 1
+        # the fade-first lock opens once a real decrease showed itself
+        if reb_wait[si] is not None and dn[si] >= 2:
+            reb_pk[si], reb_wait[si] = reb_wait[si], None
         # the gap pause's adaptive release (boss 2026-08-27: the fade must have
         # happened AND ended - not a clock): below the open marks the fade; the
         # 3rd consecutive rise afterwards lifts the pause for good
@@ -2012,7 +2032,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 if (v.get("surrender") and v.get("surrender_pardon")
                         and stop_ct[si] >= v["surrender"]):
                     pardon_used[si] = True     # this entry IS the one pardon
-                if v.get("exec") == "limit":
+                # DOOR = MARKET (boss 2026-08-31 10:4x, the 한화오션 09:22 /
+                # 두산 09:13 late entries: the limit model offers the door
+                # bar's close and a V-rebound runs away from it - offer after
+                # offer abandons and the desk finally fills only when the
+                # climb STALLS, i.e. it buys the pause near the top, minutes
+                # late): with door_market the entry pays the book at the door
+                # bar itself - the 3rd rise fills AT the 3rd rise. 알고4 bench.
+                if v.get("exec") == "limit" and not v.get("door_market"):
                     _px, _wall = (_wall_offer(s, i, c, s["tick"])
                                   if (v.get("family") == "new" or v.get("wall_price"))
                                   else (c, None))
@@ -2236,6 +2263,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _drow(f"-{dp.get('stop_reset', 1.0):g}% 전량 매도 · 3번째 "
                           f"양봉 재진입 대기 · 조각 {len(pos['slices'])}회")
                     reb_pk[si] = _fill9   # arms the 3-red re-entry
+                    reb_wait[si] = None   # the stop IS the decrease - immediate
                     poss[si] = None
                     continue
                 # +1% steps: resting limits at real snapped prices, filled off highs
@@ -2401,7 +2429,10 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         _dsell(pos["qty"], c, "미상승 3음봉 조기 정리")
                         _drow(f"미상승 3음봉 전량 정리 · 조각 {len(pos['slices'])}회")
                         if dp.get("reboard"):
-                            reb_pk[si] = c
+                            if v.get("reb_fade"):
+                                reb_wait[si] = c
+                            else:
+                                reb_pk[si] = c
                         poss[si] = None
                         continue
                     # ARM (boss 2026-08-20, the NAVER 09:27 case: sold on a
@@ -2446,7 +2477,10 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                             _drow("최고가권 3음봉 전량 매도 · 조각 "
                                   f"{len(pos['slices'])}회")
                             if dp.get("reboard"):
-                                reb_pk[si] = c
+                                if v.get("reb_fade"):
+                                    reb_wait[si] = c
+                                else:
+                                    reb_pk[si] = c
                             poss[si] = None
                             continue
                         _yd3 = (pos.get("qty_tot") or pos["qty0"]) \
@@ -2534,7 +2568,10 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                             and pos["sold_won"] > (pos.get("spent") or pos["cost"])):
                         # remember where this ride peaked - if the price beats
                         # it, the climb never ended and we re-board
-                        reb_pk[si] = pos["pr_pk"]
+                        if v.get("reb_fade"):
+                            reb_wait[si] = pos["pr_pk"]
+                        else:
+                            reb_pk[si] = pos["pr_pk"]
                     poss[si] = None
                 continue
             if v.get("ride"):
