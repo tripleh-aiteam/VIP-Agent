@@ -2806,29 +2806,18 @@ def init_scheduler():
     )
     log.info("scheduler: knowledge sync registered (22:10 UTC = 7:10 AM KST)", extra={"action": "scheduler.knowledge_sync_registered"})
 
-    # ---- Weekly reports — Friday 5:00 PM KST (sources), master 5:20 PM KST.
-    for jid, fn in (("kiwoom", _kiwoom_daily_report), ("newspaper", _newspaper_daily_report),
-                    ("youtube", _youtube_daily_report)):
-        _add_report_job(fn, CronTrigger(day_of_week="fri", hour=17, minute=0, timezone=_KST_TZ),
-                           kwargs={"period": "weekly"}, id=f"{jid}-weekly-report",
-                           replace_existing=True)
-    _add_report_job(_master_daily_report, CronTrigger(day_of_week="fri", hour=17, minute=20, timezone=_KST_TZ),
-                       kwargs={"period": "weekly"}, id="master-weekly-report",
-                       replace_existing=True)
-    REPORTS_ENABLED and log.info("scheduler: Weekly reports registered (Fri 5:00/5:20 PM KST)",
-             extra={"action": "scheduler.weekly_registered"})
-
-    # ---- Monthly reports — last day of month 5:00 PM KST, master 5:20 PM KST.
-    for jid, fn in (("kiwoom", _kiwoom_daily_report), ("newspaper", _newspaper_daily_report),
-                    ("youtube", _youtube_daily_report)):
-        _add_report_job(fn, CronTrigger(day="last", hour=17, minute=0, timezone=_KST_TZ),
-                           kwargs={"period": "monthly"}, id=f"{jid}-monthly-report",
-                           replace_existing=True)
-    _add_report_job(_master_daily_report, CronTrigger(day="last", hour=17, minute=20, timezone=_KST_TZ),
-                       kwargs={"period": "monthly"}, id="master-monthly-report",
-                       replace_existing=True)
-    REPORTS_ENABLED and log.info("scheduler: Monthly reports registered (month-end 5:00/5:20 PM KST)",
-             extra={"action": "scheduler.monthly_registered"})
+    # ---- Weekly + Monthly 추천/종합 reports — RETIRED at the boss's order
+    # (2026-08-31 17:2x, right after the month-end "[TripleH] 월간 종합 추천
+    # 리포트" landed: "I wanna stop this... it should not send at all - not
+    # only me, the other 7 people also should not receive"). The Fri 17:00/
+    # 17:20 weekly and month-end 17:00/17:20 monthly registrations are gone;
+    # the morning 5-report batch is untouched. All compose functions remain
+    # callable manually via POST /reports/compose/* if ever wanted again.
+    # NOTE: any OTHER instance running an older build with REPORTS_ENABLED=
+    # true (the 08-14 migration server) can still send its own copy - it
+    # needs this commit or REPORTS_ENABLED=false to fall silent too.
+    log.info("scheduler: weekly/monthly reco reports RETIRED (boss 2026-08-31)",
+             extra={"action": "scheduler.weekly_monthly_retired"})
 
     # Auto weekly report — Friday 6:30 PM KST
     _add_report_job(
