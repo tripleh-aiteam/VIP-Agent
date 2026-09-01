@@ -737,6 +737,19 @@ _D3r["drip"] = _copy9.deepcopy(_D3r["drip"])
 # no blue exit); the 2-blue-after-high-peak form rides in the year court.
 _D3r["drip"]["retreat"] = dict(_D3r["drip"].get("retreat") or {},
                                blues=3, arm=0.0)
+# THE PURE RIDE (boss 2026-09-01 09:4x: "in Algo 3 both menus: wait until the
+# peak - if sharp decrease of course sell -1% - buy after the 3rd red; if no
+# such decrease, wait, and at the high peak when it starts to decrease sell
+# at the 3rd blue. Anything not following this rule just delete"): 알고3 has
+# exactly TWO exits - the -1% stop and the post-peak 3rd blue IN PROFIT
+# (above the fee line). The decay/미상승 sub--1% cleanups are OFF, below-cost
+# blues sales are OFF (derisk_free removed here - it stays on 알고1/2 whose
+# piece design the boss approved), and in the BUYING ZONE blues never end a
+# ride at all ("it already dropped - do not hurry to sell"; bot_blues 999,
+# same patience 알고1/2 carry). The bell and the stop stand above every zone.
+_D3r["derisk_free"] = False
+_D3r["drip"]["retreat"]["decay"] = False
+_D3r["ctx"] = dict(_D3r.get("ctx") or {}, bot_blues=999)
 
 
 def label(v: dict, ko: bool = True) -> str:
