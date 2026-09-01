@@ -779,6 +779,13 @@ _D3r["stop_close"] = True
 _D3r["reb_hold"] = 3
 _D3r["fade_drop"] = 0.7
 _D3r["blues_flat_pause"] = True
+# RE-ENTER BELOW THE CUT, ride algo only (boss 2026-09-01 14:0x, the SDI
+# triplet: the 10:34 re-buy at 589 ABOVE the 10:22 stop fill 586 "is not a
+# buying case - delete"; the 11:31 re-buy BELOW the 11:10 stop is kept).
+# The 08-28 removal ("price does not care") stands for 알고1/2's piece
+# design; the ride re-enters only where the fall proved a deeper bottom.
+# Measured +224.8M/yr when courted 08-28 - back on the books for D3.
+_D3r["reenter_below_cut"] = True
 
 
 def label(v: dict, ko: bool = True) -> str:
@@ -2750,7 +2757,12 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         # back, nothing in between. The true 청청 at
                         # 10:20/10:21 is where the piece belongs.
                         pos["pr_blues"] = 0
-                    elif c < prev:
+                    elif c < prev or (c == prev
+                                      and v.get("blues_flat_count")
+                                      and pos.get("pr_blues", 0) > 0):
+                        # blues_flat_count (court variant, boss 13:5x "even 2
+                        # of them same height"): a flat EXTENDS a live blue
+                        # streak as a counted blue
                         pos["pr_blues"] = pos.get("pr_blues", 0) + 1
                     _big = bool(prev) and (prev - c) / prev * 100 >= _pr.get("big", 0.9)
                     # SELL-SIDE LAYER (boss 2026-08-21: "around the peak it is
