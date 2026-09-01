@@ -807,6 +807,12 @@ _D3r["peak_fall"] = 1.0
 # SDI 10:06 sale). 삼전 10:02 (-0.3% fall) stays the courted exception.
 _D3r["trail_all"] = {"arm": 1.0, "drop": 1.0}
 _D3r["no_chase_all"] = True
+# BIG-WAVE MINIMUM - BUILT, MEASURED, WITHHELD (09-01 15:5x): a >=1% preceding-
+# fall gate removes the 전기 11:31 dead ride but MEASURES BACKWARDS on 스퀘어
+# (the 10:37 fall reads 1.05% and passes; the GOOD 09:15 morning ride reads
+# shallower and dies - board sum collapsed to -4.66%). Both target entries were
+# lawful under every standing law; awaiting the boss's discriminator.
+# _D3r["min_fall"] = 1.0
 
 
 def label(v: dict, ko: bool = True) -> str:
@@ -2043,6 +2049,16 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                       or c < min(_w9) * (1 + 0.3 / 100)
                   ))(closes[max(0, i - 10):i + 1])):
                 pass       # 제1조, UNIVERSAL - no door outranks the bottom
+            elif (v.get("min_fall") and (lambda _w9: (
+                      # BIG-WAVE MINIMUM (알고3): the preceding fall - window
+                      # high BEFORE the trough down to the trough - must be at
+                      # least min_fall (1%). A wave shallower than the stop
+                      # cannot pay for its own risk (전기 11:31 never armed;
+                      # 스퀘어 10:37 dipped 0.86% and stopped).
+                      max(_w9[:_w9.index(min(_w9)) + 1])
+                      < min(_w9) * (1 + v["min_fall"] / 100)
+                  ))(closes[max(0, i - 30):i + 1])):
+                pass       # too shallow - no wave to ride
             elif (v.get("m1_ban_codes") and s.get("rank_win") is None
                   and s.get("code") in v["m1_ban_codes"]):
                 pass       # MENU-1 DAY BAN (boss 2026-09-01 14:5x: "remove
@@ -2069,7 +2085,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                   # SK하이닉스 and 삼성전자 + Top 10 should be in menu 2"):
                   # the two core names trade on the reco desk with or without
                   # a checklist seat; seats govern only the rotating names.
-                  and s.get("code") not in ("000660", "005930", "402340")
+                  and s.get("code") not in ("000660", "005930", "402340", "010950")
                   and not (str(_now) < (s.get("rank_t0") or "00:00:00")
                            or any(f_ <= str(_now) <= t_
                                   for f_, t_ in s["rank_win"]))

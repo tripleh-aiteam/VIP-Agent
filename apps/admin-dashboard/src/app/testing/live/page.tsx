@@ -91,6 +91,7 @@ const ALIAS9: Record<string, string[]> = {
   "017670": ["sktelecom", "skt", "telecom", "텔레콤"],
   "000660": ["skhynix", "hynix", "하이닉스"],
   "402340": ["sksquare", "square", "스퀘어"],
+  "010950": ["soil", "s-oil", "soill", "에쓰오일", "오일"],
   "005930": ["samsung", "samsungelectronics", "samsungchonja", "삼전"],
   "009150": ["samsungelectro", "samsungjeongi", "전기"],
   "006400": ["samsungsdi", "sdi"],
@@ -704,7 +705,10 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
     { code: "042660", name: "한화오션" }, { code: "034020", name: "두산에너빌리티" },
     // SK스퀘어 joins the core desk (boss 2026-09-01: +5.3% day missed - "we
     // have to use it")
-    { code: "402340", name: "SK스퀘어" }];
+    { code: "402340", name: "SK스퀘어" },
+    // S-Oil joins the same way (boss 2026-09-01 15:3x: "today S-oil also
+    // increased like SK스퀘어 - trade it, both menus")
+    { code: "010950", name: "S-Oil" }];
   const [fam9, setFam9] = useState<"d1" | "d2" | "d3" | "d4">("d2");
   const [open9, setOpen9] = useState(false);
   const [sel9, setSel9] = useState("");
@@ -2347,7 +2351,7 @@ export default function LiveDeskPage() {
   // the page opens on the first one. The DEFAULT view is the boss's six ONLY (his
   // 2026-08-24 order: "in the Live Kiwoom menu it should be the 6 predefined stocks");
   // either filter falls back to everything rather than ever showing an empty desk.
-  const SIX_CODES = new Set(["000660", "005930", "035420", "017670", "042660", "034020", "402340"]);
+  const SIX_CODES = new Set(["000660", "005930", "035420", "017670", "042660", "034020", "402340", "010950"]);
   // reco tabs: SCORE ORDER, top → down (boss 2026-08-24: "only score based, from top
   // to less, no need our 6 prefixed") — a six-member appears here only if it EARNED a
   // score spot; the six have their own desk at /testing/live.

@@ -895,7 +895,7 @@ def _chat_fam_entries(code_set: set, day8: str = ""):
         # every day it can change, so it is OK"). Supersedes the 08-26 "on both"
         # ruling: when the desk asking is exactly the six, chat trades of any
         # OTHER company stay off that board. Menu 2 keeps showing them all.
-        _SIX9 = {"000660", "005930", "017670", "034020", "035420", "042660", "402340"}
+        _SIX9 = {"000660", "005930", "017670", "034020", "035420", "042660", "402340", "010950"}
         _menu1_9 = set(code_set) == _SIX9
         by_code: dict = {}
         for r in recs:
@@ -1312,7 +1312,7 @@ def _fam_compute(family: str, tick: int, period: int, day: str,
     for v in DESK:
         if family != "all" and v.get("family", "old") != family:
             continue
-        _sixset9 = {"000660", "005930", "017670", "034020", "035420", "042660", "402340"}
+        _sixset9 = {"000660", "005930", "017670", "034020", "035420", "042660", "402340", "010950"}
         _codeset9 = {c for c in (codes or "").split(",") if c}
         _rg9 = bool(_codeset9) and _codeset9 != _sixset9
         d = trades(v["id"], tick=tick, period=max(0, min(int(period or 0), 600)),
