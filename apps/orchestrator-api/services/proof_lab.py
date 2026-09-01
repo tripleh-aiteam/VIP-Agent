@@ -1270,6 +1270,17 @@ def _dip_entry(s: dict, v: dict, i: int, ups: int, closes: list) -> bool:
     typ = st["typ"][i]
     if typ and (hi - _cl[i]) < d.get("sharp", 3.0) * typ:
         return False                                 # ... or not SHARP, just a slow drift
+    # THE 1.5% NO-CHASE, dip door edition (boss 2026-09-01 15:2x, the 삼성전기
+    # 10:00 case: stop 09:58 @1,445,000, a violent 2-minute V-bounce, and the
+    # dip door bought the TOP at 1,473,000 (+1.94% off the bottom) because its
+    # drop-to-now still measured 1.3% below the WINDOW high. The lawbook's
+    # 제1조 always said "+1.5% above the bottom is a chase" - now every door
+    # obeys it): the fill must sit within 1.5% of the dip's own trough.
+    _hii9 = st["hii"][i]
+    if 0 <= _hii9 <= i:
+        _trough9 = min(_cl[_hii9:i + 1])
+        if _trough9 and _cl[i] > _trough9 * (1 + 1.5 / 100):
+            return False
     # EXACTLY the 2nd red, never later (boss's 14:43 thought-experiment, 2026-08-11):
     # with >=, a hand that was busy at the turn could buy the 5th or 15th red - the top
     # of a finished bounce. Equality means the buy exists only at the moment his rule
