@@ -3591,6 +3591,26 @@ export default function LiveDeskPage() {
                           }
                           return true;
                         })
+                        // ONE COMPANY, ONE BLOCK (boss 2026-09-01 15:0x:
+                        // "difficult to watch - make a group, SK하이닉스 one
+                        // set, 삼성전자 another"): the completed list groups
+                        // by company - the most recently active company's
+                        // block first, newest trade first inside each block;
+                        // the purple dividers now mark real group borders.
+                        .sort((a, b) => {
+                          const key = (r: FamRow) => (r.d8 || "") + (r.buy_t || "");
+                          const L = new Map<string, string>();
+                          for (const r of fam.rows) {
+                            const k = r.code || "";
+                            const t = key(r);
+                            if (!L.has(k) || t > (L.get(k) as string)) L.set(k, t);
+                          }
+                          const la = L.get(a.code || "") || "", lb = L.get(b.code || "") || "";
+                          if (la !== lb) return la < lb ? 1 : -1;
+                          if (a.code !== b.code) return (a.code || "") < (b.code || "") ? 1 : -1;
+                          const ta = key(a), tb = key(b);
+                          return ta < tb ? 1 : ta > tb ? -1 : 0;
+                        })
                         .map((r, i, arrF) => (
                         <React.Fragment key={`${r.rule}-${r.idx}-${i}`}>
                         <tr className="border-t border-[var(--border-default)]/30"
