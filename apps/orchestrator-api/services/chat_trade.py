@@ -141,6 +141,11 @@ def parse(transcript: Optional[str]) -> Optional[dict]:
     qm = re.search(r"(\d[\d,]*)\s*(?:주|shares?|share|stocks?|개)", tl)
     if not qm:
         qm = re.search(r"\b(\d{1,6})\b\s*$", tl)     # trailing bare number: "buy samsung 10"
+    if not qm:
+        # "buy 1 samsung electronics right now" — bare number right after the verb
+        # was ignored and the budget auto-size (38) answered (2026-09-01). 1-4
+        # digits only, so a 6-digit ticker code can never be read as a quantity.
+        qm = re.search(r"\b(?:buy|sell|매수|매도)\s+(\d{1,4})(?!\d)", tl)
     if qm:
         try:
             qty = max(1, int(qm.group(1).replace(",", "")))
