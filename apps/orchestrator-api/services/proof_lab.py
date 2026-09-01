@@ -792,6 +792,10 @@ _D3r["reenter_below_cut"] = True
 # ON RECORD: this same counting produced the 09:49 early sell he condemned
 # at 13:1x - the blues court (running) prices both; his word rules today.
 _D3r["blues_flat_count"] = True
+# PEAK-FALL SIZE (boss 14:4x, the 하이닉스 09:51 ruling: -0.65% off the
+# peak is not a finished wave - "sell at 10:12"): the 3-blue turn must
+# ALSO measure >=1% down from the peak - shape AND size end a ride.
+_D3r["peak_fall"] = 1.0
 
 
 def label(v: dict, ko: bool = True) -> str:
@@ -2916,6 +2920,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                      > pos.get("base", 0)))
                             and (pos.get("pr_blues", 0) >= _blues9
                                  or _big or _trail_hit)
+                            and (not v.get("peak_fall")
+                                 or c <= pos.get("pr_pk", 0)
+                                 * (1 - float(v["peak_fall"]) / 100))
                             and pos["qty"] == _qty_bar0):
                         # THE SELLING-ZONE FULL EXIT (boss 2026-08-24 11:0x,
                         # his idea for 알고1/2: "we sold some percent, waited
