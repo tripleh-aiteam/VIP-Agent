@@ -2025,10 +2025,18 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             elif (v.get("no_chase_all") and (lambda _w9: (
                       # trough = the lowest CLOSE of the last 10 bars; it must
                       # be >=3 bars old and unbroken (the fall PROVEN stopped -
-                      # the 전기 10:00 two-bar V fails here), and the entry
-                      # must sit within 1.5% of it (SDI's lawful 09:05 lives).
+                      # the 전기 10:00 two-bar V fails here); the entry must
+                      # sit within 1.5% of it (SDI's lawful 09:05 lives); and
+                      # the confirmation must GROW (boss 16:2x, the 두산 09:56
+                      # case: one rise + two flats +0.12% above the trough is
+                      # a pause, not growth - the fall resumed): at least 2
+                      # true rises in the last 3 bars and >=0.3% real height
+                      # above the trough.
                       (len(_w9) - 1 - _w9.index(min(_w9))) < 3
                       or c > min(_w9) * (1 + 1.5 / 100)
+                      or sum(1 for k in range(max(1, len(_w9) - 3), len(_w9))
+                             if _w9[k] > _w9[k - 1]) < 2
+                      or c < min(_w9) * (1 + 0.3 / 100)
                   ))(closes[max(0, i - 10):i + 1])):
                 pass       # 제1조, UNIVERSAL - no door outranks the bottom
             elif v.get("ban_codes") and s.get("code") in v["ban_codes"]:
