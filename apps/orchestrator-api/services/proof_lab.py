@@ -820,7 +820,14 @@ _D3r["no_chase_all"] = True
 # this outranks every door on every variant, both menus. The tape and the
 # recorded orders stay untouched - the never-delete law - only the living
 # replay stops boarding it. Lift next session unless the boss says keep.
-DAY_BAN_ALL = ["034020"]
+DAY_BAN_ALL = [
+    "034020",   # 두산에너빌리티 (16:0x, "all menus and algos")
+    # 16:2x, the second sweep - every row these four owned was struck:
+    "012450",   # 한화에어로스페이스 (09:58 -1.03%, its only trade)
+    "207940",   # 삼성바이오로직스 (09:20 -0.13%, its only trade)
+    "105560",   # KB금융 (09:03 -1.05%, 12:25 +0.18%)
+    "373220",   # LG에너지솔루션 (all five rows; it was already menu-1 banned)
+]
 
 
 def label(v: dict, ko: bool = True) -> str:
