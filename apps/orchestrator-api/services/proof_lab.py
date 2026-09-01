@@ -265,7 +265,10 @@ VARIANTS: list[dict] = [
      # his band (2026-08-13 14:4x): everything "around 1%" - drop 0.9, range
      # 1.0 (the 1.25 range was silently raising the real drop floor to 1.25,
      # caught on the SK하이닉스 11:34 case: -1.02% fall refused by 0.02 of range)
-     "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
+     # ups 1 -> 3 (boss 2026-09-01 10:0x: "buying in Algo 2, 3 must be the
+     # SAME, only selling is different - make it consistent"): every algo
+     # enters at the 3rd red, one buying law for the whole desk.
+     "dip": {"drop": 0.7, "sharp": 3.0, "ups": 3, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      # the second door (boss 08-13): a steady 30-min climb of +1.2% with pullbacks
      # under 0.4%, at a fresh session high, buys too - 삼성전자 rose +6% on 08-12
@@ -379,7 +382,10 @@ VARIANTS: list[dict] = [
      # his band (2026-08-13 14:4x): everything "around 1%" - drop 0.9, range
      # 1.0 (the 1.25 range was silently raising the real drop floor to 1.25,
      # caught on the SK하이닉스 11:34 case: -1.02% fall refused by 0.02 of range)
-     "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
+     # ups 1 -> 3 (boss 2026-09-01 10:0x: "buying in Algo 2, 3 must be the
+     # SAME, only selling is different - make it consistent"): every algo
+     # enters at the 3rd red, one buying law for the whole desk.
+     "dip": {"drop": 0.7, "sharp": 3.0, "ups": 3, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      "trend": {"climb": 1.05, "dd": 0.4, "win": 30},
      "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
@@ -496,7 +502,10 @@ VARIANTS: list[dict] = [
      # the boss's buying-zone law, his 3-red form (measured cost ~0): in the
      # bottom zone the +1% ladder holds until 3 consecutive rises confirm the turn
      "bot_ladder": "3red",
-     "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
+     # ups 1 -> 3 (boss 2026-09-01 10:0x: "buying in Algo 2, 3 must be the
+     # SAME, only selling is different - make it consistent"): every algo
+     # enters at the 3rd red, one buying law for the whole desk.
+     "dip": {"drop": 0.7, "sharp": 3.0, "ups": 3, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      "trend": {"climb": 1.05, "dd": 0.4, "win": 30},
      "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
