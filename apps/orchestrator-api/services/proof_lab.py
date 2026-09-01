@@ -759,6 +759,13 @@ _D3r["drip"]["retreat"] = dict(_D3r["drip"].get("retreat") or {},
 _D3r["derisk_free"] = False
 _D3r["drip"]["retreat"]["decay"] = False
 _D3r["ctx"] = dict(_D3r.get("ctx") or {}, bot_blues=999)
+# THE SHARP-RISE QUALIFIER (boss 2026-09-01 10:5x, the 하이닉스 09:21 /
+# KB금융 +0.52% hurry cases: "sharply increase, and after it stops
+# increasing, in the 3rd blue sell. The 09:21 3-blue is the BUYING zone of
+# the trade - it already decreased, it must increase - do not hurry"):
+# 알고3's 3-blue full exit only arms once the ride's peak stands +1% over
+# cost. Below that: pure waiting - the -1% stop is the only exit.
+_D3r["drip"]["retreat"]["arm"] = 1.0
 
 
 def label(v: dict, ko: bool = True) -> str:
