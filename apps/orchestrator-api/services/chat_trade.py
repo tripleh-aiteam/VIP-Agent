@@ -182,7 +182,15 @@ _STATUS_KW = ("sold out", "did it sell", "is it sold", "filled", "체결됐", "�
 
 def is_status_q(transcript: Optional[str]) -> bool:
     t = (transcript or "").lower()
-    return bool(t) and any(k in t for k in _STATUS_KW)
+    if not t:
+        return False
+    # "did my naver sell order fill?" got an ML decision card (2026-09-01) —
+    # any did/is + my/the + order phrasing is a record question
+    if re.search(r"(?:did|is|has|have)\s+(?:my|the)\b.*\border\b"
+                 r"|\border\s+(?:fill|filled|go\s+through|executed?|done)\b"
+                 r"|내\s*주문|주문\s*(?:들어갔|됐|체결)", t):
+        return True
+    return any(k in t for k in _STATUS_KW)
 
 
 def order_status_reply(db, transcript: Optional[str], lang: str) -> Optional[str]:

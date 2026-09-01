@@ -7427,6 +7427,10 @@ def _run_agent_impl(
             and not _is_my_chat_orders_q(transcript)
             and not _is_cancelish(transcript)
             and not _is_statusish(transcript)
+            # "알고2 뭐 보유하고 있어?" is a PER-ALGO ride question, not the net
+            # portfolio (2026-09-01) — its own lane answers from the menus' data
+            and not _re.search(r"(?:algo|알고(?:리즘)?)\s*-?\s*[1-4]",
+                               (transcript or "").lower())
             and _PORTFOLIO_RE.search(transcript)):
         _pf = _paper_portfolio_reply(db, lang, agent_id, focus_text=transcript)
         if _pf:
@@ -7824,6 +7828,87 @@ def _run_agent_impl(
                 return {"intent": "stock_up_down", "language": lang,
                         "reply": "\n".join(L_ud), "action": None, "speak": True,
                         "transcript": transcript, "tool_used": "realtime_quote"}
+
+    # === 🤖 PER-ALGO HOLDINGS (boss 2026-09-01: "Checklist Reco Desk, Algo 3 —
+    # how many stocks are we holding, what are they?" got a SELL-advice card for
+    # one stock): answers from the same per-rule ride data the menus render. ===
+    _t_ah = (transcript or "").lower()
+    _m_ah = _re.search(r"(?:algo|알고(?:리즘)?)\s*-?\s*([1-4])", _t_ah)
+    if (not confirmed_tool and not attachment_ids and transcript and _m_ah
+            and any(k in _t_ah for k in ("hold", "보유", "가지고", "들고", "몇 종목",
+                                         "how many", "what are they", "종목 뭐"))):
+        try:
+            _fam_ah = f"d{_m_ah.group(1)}"
+            from services import kiwoom_tape as _kt_ah
+            _all_codes = [s.get("code") for s in (_kt_ah.status().get("stocks") or [])
+                          if s.get("code")]
+            _SIX_AH = ["000660", "005930", "017670", "034020", "035420", "042660"]
+            if any(k in _t_ah for k in ("menu 1", "menu1", "메뉴1", "메뉴 1", "live desk",
+                                        "live kiwoom", "라이브")):
+                _codes_ah, _desk_nm = _SIX_AH, ("Live Kiwoom Desk", "라이브 키움 데스크")
+            elif any(k in _t_ah for k in ("menu 2", "menu2", "메뉴2", "메뉴 2", "reco",
+                                          "checklist", "추천", "체크리스트")):
+                _codes_ah = [c for c in _all_codes if c not in _SIX_AH]
+                _desk_nm = ("Checklist Reco Desk", "체크리스트 추천 데스크")
+            else:
+                _codes_ah, _desk_nm = _all_codes, ("both desks", "두 데스크 전체")
+            from routers.paper_desk import live_family_trades as _lft_ah
+            _res_ah = _lft_ah(family=_fam_ah, tick=5, period=0, day="", frm="", to="",
+                              gate=1, auto=1, codes=",".join(_codes_ah))
+            if _res_ah.get("computing"):
+                import time as _tm_ah
+                for _w9 in range(6):
+                    _tm_ah.sleep(3)
+                    _res_ah = _lft_ah(family=_fam_ah, tick=5, period=0, day="", frm="",
+                                      to="", gate=1, auto=1, codes=",".join(_codes_ah))
+                    if not _res_ah.get("computing"):
+                        break
+            from services.chat_trade import text_lang_en as _tle_ah
+            _en_ah = _tle_ah(transcript, lang)
+            _an = _m_ah.group(1)
+            if _res_ah.get("computing"):
+                # a fresh restart replays the whole day's tape — claiming "0
+                # stocks" while it computes would be a lie (2026-09-01)
+                return {"intent": "algo_holdings", "language": lang,
+                        "reply": ("⏳ 데스크가 오늘 데이터를 다시 계산하는 중입니다 — "
+                                  "1~2분 뒤 다시 물어봐 주세요." if not _en_ah else
+                                  "⏳ The desk is recomputing today's rides — please "
+                                  "ask again in a minute or two."),
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "algo_holdings"}
+            _hold_ah = [h for h in (_res_ah.get("holding") or [])
+                        if str(h.get("rule", "")).lower() != "chatbot"]
+            if not _hold_ah:
+                _rep_ah = (f"🤖 **Algo {_an} ({_fam_ah.upper()}) on the {_desk_nm[0]}: "
+                           f"holding 0 stocks right now** — every ride is closed. "
+                           f"Today it completed {len([x for x in (_res_ah.get('rows') or []) if str(x.get('rule','')).lower() != 'chatbot'])} trips."
+                           if _en_ah else
+                           f"🤖 **알고{_an} ({_fam_ah.upper()}) — {_desk_nm[1]} 기준 현재 보유 0종목** — "
+                           f"모든 라이드가 정리된 상태입니다. 오늘 완료된 매매: "
+                           f"{len([x for x in (_res_ah.get('rows') or []) if str(x.get('rule','')).lower() != 'chatbot'])}건.")
+            else:
+                L_ah = [(f"🤖 **Algo {_an} ({_fam_ah.upper()}) on the {_desk_nm[0]} — "
+                         f"holding {len(_hold_ah)} stock(s):**" if _en_ah else
+                         f"🤖 **알고{_an} ({_fam_ah.upper()}) — {_desk_nm[1]} 기준 "
+                         f"보유 {len(_hold_ah)}종목:**")]
+                for h in _hold_ah[:15]:
+                    _q_ah = h.get("qty_left") or h.get("qty") or 0
+                    _up_ah = h.get("unreal_pct")
+                    _mk_ah = ("🟢" if (_up_ah or 0) >= 0 else "🔴")
+                    _tail_ah = (f" ({_up_ah:+.2f}%)" if _up_ah is not None else "")
+                    L_ah.append(f"· {_mk_ah} {h.get('name')} — {int(_q_ah):,}"
+                                + ("주" if not _en_ah else " sh")
+                                + f" @ ₩{float(h.get('entry') or 0):,.0f}"
+                                + (f" ({h.get('buy_t', '')[:5]})" if h.get("buy_t") else "")
+                                + f" → ₩{float(h.get('last') or 0):,.0f}{_tail_ah}")
+                L_ah.append(("자세한 내용은 해당 메뉴에서 확인하실 수 있어요." if not _en_ah
+                             else "Full detail lives on that menu's board."))
+                _rep_ah = "\n".join(L_ah)
+            return {"intent": "algo_holdings", "language": lang, "reply": _rep_ah,
+                    "action": None, "speak": True, "transcript": transcript,
+                    "tool_used": "algo_holdings"}
+        except Exception as e:
+            log.warning(f"algo-holdings lane failed: {str(e)[:120]}")
 
     # === 📃 TRADING UNIVERSE (boss 2026-08-28: "teach all stock names to chatbot")
     # — "what stocks are we trading?" answers from the LIVE watch list + today's
