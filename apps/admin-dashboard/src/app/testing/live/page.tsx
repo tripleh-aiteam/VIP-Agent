@@ -91,7 +91,6 @@ const ALIAS9: Record<string, string[]> = {
   "017670": ["sktelecom", "skt", "telecom", "텔레콤"],
   "000660": ["skhynix", "hynix", "하이닉스"],
   "402340": ["sksquare", "square", "스퀘어"],
-  "010950": ["soil", "s-oil", "soill", "에쓰오일", "오일"],
   "005930": ["samsung", "samsungelectronics", "samsungchonja", "삼전"],
   "009150": ["samsungelectro", "samsungjeongi", "전기"],
   "006400": ["samsungsdi", "sdi"],

@@ -815,6 +815,14 @@ _D3r["no_chase_all"] = True
 # _D3r["min_fall"] = 1.0
 
 
+# TODAY'S DESK-WIDE BAN (boss 2026-09-01 16:0x: "remove 두산에너빌리티 from
+# today's tradings for ALL menus and algos"): unlike m1_ban_codes (menu 1 only)
+# this outranks every door on every variant, both menus. The tape and the
+# recorded orders stay untouched - the never-delete law - only the living
+# replay stops boarding it. Lift next session unless the boss says keep.
+DAY_BAN_ALL = ["034020"]
+
+
 def label(v: dict, ko: bool = True) -> str:
     # the boss's scenarios wear their own name (2026-08-19: the generic label
     # printed "1 up (no gate) / +2 ticks take" under 알고리즘 rows - the words
@@ -2059,6 +2067,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                       < min(_w9) * (1 + v["min_fall"] / 100)
                   ))(closes[max(0, i - 30):i + 1])):
                 pass       # too shallow - no wave to ride
+            elif s.get("code") in DAY_BAN_ALL:
+                pass       # DESK-WIDE DAY BAN - every menu, every algo
             elif (v.get("m1_ban_codes") and s.get("rank_win") is None
                   and s.get("code") in v["m1_ban_codes"]):
                 pass       # MENU-1 DAY BAN (boss 2026-09-01 14:5x: "remove
