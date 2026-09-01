@@ -823,6 +823,21 @@ _D3r["trail_all"] = {"arm": 1.0, "drop": 1.5}
 # exempt (at 09:01 the session high IS the current bar). Measured: +4.08% ->
 # +5.96%, win 52% -> 60%, and 한미's late 13:49 -1.27% chase disappears.
 _D3r["no_high_chase"] = 0.3
+
+# THE COURT EXTENDS THE TWO FIXES TO THE REST OF THE DESK (18:4x, 20 stored
+# days, every stock). no_high_chase on 알고1/2/4 and the 1.5% trail wherever a
+# trail exists:
+#   알고1  -192.62% -> -163.09%   (per-trip -0.282% -> -0.273%)
+#   알고2  -166.66% -> -142.10%   (per-trip -0.259% -> -0.242%)
+#   알고4  -105.02% ->  -79.52%   (per-trip -0.236% -> -0.213%)
+# ON RECORD, and this is the finding that matters more than the improvement:
+# ALL FOUR ALGOS STILL LOSE over the window. 알고3 -26.93% is 3x better than
+# the next best and 7x better than 알고1. Less bad is not profitable.
+for _v9 in VARIANTS:
+    if _v9.get("id") in ("D1", "D2", "D4"):
+        _v9["no_high_chase"] = 0.3
+        if _v9.get("trail_all"):
+            _v9["trail_all"] = dict(_v9["trail_all"], drop=1.5)
 _D3r["no_chase_all"] = True
 # THE OPENING DOOR, ON (boss 09-01 17:0x: "S-Oil should buy at 09:01 and sell
 # around 09:18"). Measured on today's full menu-2 desk BEFORE deploying:
