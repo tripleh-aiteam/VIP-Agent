@@ -807,6 +807,13 @@ _D3r["peak_fall"] = 1.0
 # SDI 10:06 sale). 삼전 10:02 (-0.3% fall) stays the courted exception.
 _D3r["trail_all"] = {"arm": 1.0, "drop": 1.0}
 _D3r["no_chase_all"] = True
+# THE OPENING DOOR, ON (boss 09-01 17:0x: "S-Oil should buy at 09:01 and sell
+# around 09:18"). Measured on today's full menu-2 desk BEFORE deploying:
+# board -8.08% -> -4.76%, win 35% -> 38%; the door's own five entries net
+# +4.24% (S-Oil 09:01 +2.39% - his trade, exiting 09:18 on the ordinary trail -
+# and SDI 09:05 +3.34%, against 메리츠 -0.25% and HD현대 -1.24%). up=0.5 beat
+# up=0.3 by dropping a SK텔레콤 -1.32% open.
+_D3r["open_door"] = {"bars": 5, "up": 0.5}
 # BIG-WAVE MINIMUM - BUILT, MEASURED, WITHHELD (09-01 15:5x): a >=1% preceding-
 # fall gate removes the 전기 11:31 dead ride but MEASURES BACKWARDS on 스퀘어
 # (the 10:37 fall reads 1.05% and passes; the GOOD 09:15 morning ride reads
@@ -1332,6 +1339,26 @@ def _dip_entry(s: dict, v: dict, i: int, ups: int, closes: list) -> bool:
     # of a finished bounce. Equality means the buy exists only at the moment his rule
     # names; if the hand is busy then, that dip is honestly missed, not chased.
     return ups == d.get("ups", 1)
+
+
+def _open_entry(s: dict, v: dict, i: int, closes: list) -> bool:
+    """THE OPENING DOOR (boss 2026-09-01 17:0x, the S-Oil case: "it should buy
+    at 09:01 and sell around 09:18"). 제1조 wants a trough at least 3 bars old;
+    at 09:01 the session is two bars long, so the gate is unsatisfiable by
+    CONSTRUCTION - not because the shape is bad - and the ride could never
+    board a stock that climbs straight off the bell. Inside the first
+    open_door.bars minutes, a stock trading open_door.up% above its OWN open on
+    a rising bar boards once. The exits are untouched: on S-Oil the ordinary
+    trail (peak -1%) lands on 09:18 by itself, exactly where the boss put it."""
+    od = v.get("open_door")
+    if not od or i < 1 or i > int(od.get("bars", 5)):
+        return False
+    op = s.get("open_px")
+    if not op:
+        return False
+    c = closes[i]
+    return (c >= op * (1 + float(od.get("up", 0.3)) / 100)
+            and c > closes[i - 1])
 
 
 def _bot_hold_entry(s: dict, v: dict, i: int, closes: list) -> bool:
@@ -2053,7 +2080,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            # anyway): after a full exit NOTHING boards more
                            # than 1.5% above the post-exit low, whichever door
                            # asks. 제1조: a late confirmation is a chase.
-            elif (v.get("no_chase_all") and (lambda _w9: (
+            elif (v.get("no_chase_all")
+                  and not (v.get("open_door") and _open_entry(s, v, i, closes))
+                  and (lambda _w9: (
                       # trough = the lowest CLOSE of the last 10 bars; it must
                       # be >=3 bars old and unbroken (the fall PROVEN stopped -
                       # the 전기 10:00 two-bar V fails here); the entry must
@@ -2216,7 +2245,11 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                   # the buying-zone bottom-hold door also passes the fence
                   # (its own zone_free logic decides)
                   and not (v.get("bot_hold")
-                           and _bot_hold_entry(s, v, i, closes))):
+                           and _bot_hold_entry(s, v, i, closes))
+                  # the opening door passes it too - the first minutes of a
+                  # session are always "narrow" by range
+                  and not (v.get("open_door")
+                           and _open_entry(s, v, i, closes))):
                 pass
             elif v.get("run") and not _run_entry(s, v, i, up[si], closes):
                 pass
@@ -2233,6 +2266,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            and _bot_hold_entry(s, v, i, closes))
                   and not (v.get("recovery")
                            and _recovery_entry(s, v, i, closes, _now))
+                  and not (v.get("open_door")
+                           and _open_entry(s, v, i, closes))
                   and not (v.get("family_door")
                            and bool((s.get("fam_sig") or [])[i:i + 1]
                                     and s["fam_sig"][i]))
@@ -2732,7 +2767,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         and not _bot_zone9
                         and pos.get("pr_pk", 0) >= pos.get("base", 0)
                         * (1 + float(_ta9.get("arm", 1.0)) / 100)
-                        and (c <= _tline9 or _tlo9 <= _tline9)
+                        # CLOSE-CONFIRMED (boss 09-01 17:1x, the S-Oil ruling "sell around
+                        # 09:18"): the wick-triggered trail sold 09:10 at the
+                        # line, then the wave made a HIGHER peak at 09:14 and
+                        # his exit arrived at 09:18. His own stop law already
+                        # says a wick alone never ends a ride (the SDI 260-won
+                        # case); the trail now obeys the same. Measured on
+                        # today's full desk: -4.76% -> -1.79%, win 38% -> 39%.
+                        and c <= _tline9
                         # never liquidate INTO the fake-win zone (boss 14:5x,
                         # the 삼성전자 10:00 +0.20%⚠ case): above the fee line
                         # or below cost - a bar later the exit is honest either
