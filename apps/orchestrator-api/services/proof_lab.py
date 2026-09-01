@@ -796,6 +796,13 @@ _D3r["blues_flat_count"] = True
 # peak is not a finished wave - "sell at 10:12"): the 3-blue turn must
 # ALSO measure >=1% down from the peak - shape AND size end a ride.
 _D3r["peak_fall"] = 1.0
+# THE UNIFIED EXIT (boss 15:3x, the 하이닉스 10:25 ruling - it is his own
+# 고점-1% 전량 law): armed at +1%, a -1% fall from the peak sells ALL at the
+# line, immediately - candle shapes are the backup, the line is the law.
+# Satisfies EVERY 하이닉스/SDI trace today (09:5x -0.94% no sale; 10:25 sale;
+# SDI 10:06 sale). 삼전 10:02 (-0.3% fall) stays the courted exception.
+_D3r["trail_all"] = {"arm": 1.0, "drop": 1.0}
+_D3r["no_chase_all"] = True
 
 
 def label(v: dict, ko: bool = True) -> str:
@@ -1278,8 +1285,16 @@ def _dip_entry(s: dict, v: dict, i: int, ups: int, closes: list) -> bool:
     # obeys it): the fill must sit within 1.5% of the dip's own trough.
     _hii9 = st["hii"][i]
     if 0 <= _hii9 <= i:
-        _trough9 = min(_cl[_hii9:i + 1])
+        _lows9 = s.get("lows") or _cl
+        _trough9 = min(_lows9[_hii9:i + 1])
         if _trough9 and _cl[i] > _trough9 * (1 + 1.5 / 100):
+            return False
+        # ...and a bounce that already recovered MORE THAN HALF of the fall is
+        # not a dip any more (boss 15:2x, the 전기 10:00 V-bounce: the door
+        # kept seeing the old deep fall while the bottom had V-recovered) -
+        # the turn happened without us; wait for a fresh fall.
+        if (_trough9 and hi and hi > _trough9
+                and (_cl[i] - _trough9) / (hi - _trough9) > 0.5):
             return False
     # EXACTLY the 2nd red, never later (boss's 14:43 thought-experiment, 2026-08-11):
     # with >=, a hand that was busy at the turn could buy the 5th or 15th red - the top
@@ -1877,12 +1892,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 pe_hi9[si] = None
         else:
             pe_hi9[si] = None
+        _lowb9 = (s.get("lows") or closes)[i]
         if reb_pk[si] is not None:
-            if reb_lo9[si] is None or c < reb_lo9[si]:
+            if reb_lo9[si] is None or _lowb9 < reb_lo9[si]:
                 nl_age9[si] = 0     # the bottom just fell again - hold count resets
             else:
                 nl_age9[si] += 1
-            reb_lo9[si] = c if reb_lo9[si] is None else min(reb_lo9[si], c)
+            reb_lo9[si] = _lowb9 if reb_lo9[si] is None else min(reb_lo9[si], _lowb9)
             # the wave left without us: once the bounce stands +3% above the
             # post-exit bottom, the post-stop state retires - future entries
             # need a FRESH fall (the dip/bot doors' own windows)
@@ -2001,6 +2017,15 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            # anyway): after a full exit NOTHING boards more
                            # than 1.5% above the post-exit low, whichever door
                            # asks. 제1조: a late confirmation is a chase.
+            elif (v.get("no_chase_all")
+                  and (lambda _tl9: _tl9 and c + 2 * (s.get("tick") or 0)
+                       > _tl9 * (1 + 1.5 / 100))(
+                      min((s.get("lows") or closes)[max(0, i - 10):i + 1]))):
+                pass       # 제1조, UNIVERSAL (boss 15:4x, the 전기 10:00 entry
+                           # that survived every per-door guard because it came
+                           # through a momentum door with none): NO door may
+                           # fill more than 1.5% above the last-10-bars low -
+                           # measured on the price we PAY (close + spread).
             elif v.get("ban_codes") and s.get("code") in v["ban_codes"]:
                 pass       # STOCK BAN (boss 2026-08-31 14:4x: "today in both
                            # menus SK텔레콤 was very bad - delete SK텔레콤 and
