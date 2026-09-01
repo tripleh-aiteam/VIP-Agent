@@ -766,6 +766,7 @@ _D3r["ctx"] = dict(_D3r.get("ctx") or {}, bot_blues=999)
 # 알고3's 3-blue full exit only arms once the ride's peak stands +1% over
 # cost. Below that: pure waiting - the -1% stop is the only exit.
 _D3r["drip"]["retreat"]["arm"] = 1.0
+_D3r["stop_close"] = True
 
 
 def label(v: dict, ko: bool = True) -> str:
@@ -2484,7 +2485,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # bar, when the raised base has actually lived through a bar.
                 _lo9 = (c if pos.get("add_i") == i
                         else (s.get("lows") or closes)[i])
-                if _lo9 <= _stpl9 or c <= _stpl9:
+                # stop_close (boss 2026-09-01 11:4x, the 삼성SDI 260원 wick:
+                # entry 09:05 at his exact minute, then the 09:10 candle's LOW
+                # grazed the -1% line by 260 won while the close held above -
+                # the intrabar trigger split his one ride into a stop+re-entry
+                # "duplicate"): on ride variants the stop confirms on the
+                # CLOSE; a wick alone does not end a ride. 알고1/2 keep the
+                # 08-24 intrabar trigger their piece design was built with.
+                if c <= _stpl9 or ((not v.get("stop_close")) and _lo9 <= _stpl9):
                     # boss 2026-08-13 12:1x: "in ALL cases if it decreases -1.5%,
                     # sell out all and again buy" - the scout-only exception from
                     # the pre-flight audit is repealed at his order; every -1.5%
