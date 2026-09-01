@@ -778,6 +778,7 @@ _D3r["stop_close"] = True
 # case-3 law: the post-stop bottom must HOLD 3 bars before the 3-red re-buy
 _D3r["reb_hold"] = 3
 _D3r["fade_drop"] = 0.7
+_D3r["blues_flat_pause"] = True
 
 
 def label(v: dict, ko: bool = True) -> str:
@@ -2719,7 +2720,16 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         pos["pr_pk"] = c
                         pos["pr_blues"] = 0
                         pos["pr_sold"] = False
-                    elif v.get("blues_strict") and c >= prev:
+                    elif (v.get("blues_strict")
+                          and (c > prev
+                               # blues_flat_pause (boss 2026-09-01 13:4x, the
+                               # SDI 10:05 trace: 청청-도지 IS a finished turn
+                               # to his eye): on the ride algo a FLAT pauses
+                               # the blue streak without breaking it - only a
+                               # RED restarts the count. 알고2's 2-blue piece
+                               # counter keeps flats-break (에어로 10:18 law).
+                               or (c == prev
+                                   and not v.get("blues_flat_pause")))):
                         # 2 blues means 2 IN A ROW (boss 2026-08-31 14:0x, the
                         # LIG 09:09 piece: the streak ran 청-적-청 and the old
                         # counter kept the morning's blues forever - a rise
