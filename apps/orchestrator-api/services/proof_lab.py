@@ -1263,7 +1263,13 @@ def _bot_hold_entry(s: dict, v: dict, i: int, closes: list) -> bool:
     _dp0 = s.get("daily_pos")
     _in_bot9 = (bh.get("zone_free") is not None and _dp0 is not None
                 and _dp0 <= bh["zone_free"])
-    if st["rng"][i] < d.get("chop", 0.40) and not _in_bot9:
+    # the bottom-hold door carries its OWN chop dial (boss 2026-09-01 10:3x,
+    # the 하이닉스 09:17 case: the 3rd rise stood ready but the door borrowed
+    # the dip door's strict 1.0% fence and the 30-min range read 0.96% - a
+    # hair under - so the buy slid to 09:24. A held bottom with a ~1% range
+    # is not a dead oscillation; 0.40% is the floor, the late guard protects
+    # the rest.)
+    if st["rng"][i] < float(bh.get("chop", 0.40)) and not _in_bot9:
         return False
     n = int(bh.get("bars", 3))
     j = i - n
