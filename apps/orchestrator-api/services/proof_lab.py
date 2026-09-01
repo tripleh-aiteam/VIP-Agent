@@ -2667,7 +2667,17 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 _tline9 = (pos.get("pr_pk", 0)
                            * (1 - float((_ta9 or {}).get("drop", 1.0)) / 100))
                 _tlo9 = (s.get("lows") or closes)[i]
+                _dpz9 = s.get("daily_pos")
+                _bot_zone9 = (_dpz9 is not None
+                              and _dpz9 <= (v.get("ctx") or {}).get("sell_bot", 0.20))
                 if (_ta9 and pos["qty"] > 0 and pos.get("qty_add", 0) <= 0
+                        # ZONE-GATED TRAIL (boss 16:5x, the 스퀘어 09:32 case:
+                        # "it is in the buying zone, it can increase again -
+                        # wait"): in the year's buying zone the 고점-1% trail
+                        # stands aside; blues-form, the -1% stop and the bell
+                        # still sell. NOTE: activates properly only once the
+                        # zone data repair lands (스퀘어 reads dp 0.48 today).
+                        and not _bot_zone9
                         and pos.get("pr_pk", 0) >= pos.get("base", 0)
                         * (1 + float(_ta9.get("arm", 1.0)) / 100)
                         and (c <= _tline9 or _tlo9 <= _tline9)
@@ -2679,13 +2689,20 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                  <= pos.get("base", 0) * (1 + FEE_PCT / 100))):
                     _tfill9 = (float(int(_tline9 // tk) * tk)
                                if c > _tline9 else c)
-                    _dsell(pos["qty"], _tfill9, "고점-1% 전량")
-                    _drow(f"고점-{_ta9.get('drop', 1.0):g}% 전량 매도 · 3번째 "
-                          f"양봉 재진입 대기 · 조각 {len(pos['slices'])}회")
-                    reb_pk[si] = c
-                    reb_wait[si] = None   # the fall already happened - immediate
-                    poss[si] = None
-                    continue
+                    # the FILL obeys the fee-zone law too (boss 15:1x, the
+                    # 스퀘어 +0.10%⚠ exit: the gate tested the close while
+                    # the touch-fill landed inside the fake-win zone)
+                    if (pos.get("base", 0) < _tfill9
+                            <= pos.get("base", 0) * (1 + FEE_PCT / 100)):
+                        pass
+                    else:
+                        _dsell(pos["qty"], _tfill9, "고점-1% 전량")
+                        _drow(f"고점-{_ta9.get('drop', 1.0):g}% 전량 매도 · 3번째 "
+                              f"양봉 재진입 대기 · 조각 {len(pos['slices'])}회")
+                        reb_pk[si] = c
+                        reb_wait[si] = None   # the fall already happened
+                        poss[si] = None
+                        continue
                 # +1% steps: resting limits at real snapped prices, filled off highs
                 _guard = 0
                 while pos["qty"] > 0 and _guard < 30:
