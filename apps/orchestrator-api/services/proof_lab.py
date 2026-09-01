@@ -786,6 +786,12 @@ _D3r["blues_flat_pause"] = True
 # design; the ride re-enters only where the fall proved a deeper bottom.
 # Measured +224.8M/yr when courted 08-28 - back on the books for D3.
 _D3r["reenter_below_cut"] = True
+# FLATS COUNT AS BLUES (boss 2026-09-01 14:1x, ordered three times on the
+# 삼전 ride: "sell 10:02 - already 3 blues, even 2 of them same height"):
+# a flat extends a live blue streak AS a counted blue on the ride algo.
+# ON RECORD: this same counting produced the 09:49 early sell he condemned
+# at 13:1x - the blues court (running) prices both; his word rules today.
+_D3r["blues_flat_count"] = True
 
 
 def label(v: dict, ko: bool = True) -> str:
