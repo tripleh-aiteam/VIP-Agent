@@ -2857,13 +2857,19 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                             # 3-blue exit executes only if the FILL itself
                             # stands min_gain% over cost - the peak arming
                             # alone is not enough, the blues eat 1-1.5%.
-                            and (not v.get("min_gain") or _day_top9
+                            and (not v.get("min_gain")
                                  or c >= pos.get("base", 0)
                                  * (1 + float(v["min_gain"]) / 100))
                             # under derisk_free a LOCAL peak below cost is a
                             # valid reference (loss-cut pieces); otherwise the
                             # peak must stand above cost + arm as before
-                            and (v.get("derisk_free") or _day_top9
+                            # day-top no longer waives the arm (boss 13:1x,
+                            # the 삼성전자 09:49 +0.88% early sell: on a fresh
+                            # rally every new high IS the day top, and the
+                            # waiver quick-sold a growing wave) - at the day
+                            # top the blues run faster (2), the +2% arming
+                            # still rules
+                            and (v.get("derisk_free")
                                  or (pos.get("pr_pk", 0) >= pos.get("base", 0)
                                      * (1 + _pr.get("arm", 0.0) / 100)
                                      and pos.get("pr_pk", 0)
