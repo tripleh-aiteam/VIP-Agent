@@ -871,11 +871,17 @@ def finish(db, word: str) -> Optional[str]:
         L = ([f"🕐 **Order queued — {p['side']} {p['name']} {p['qty']:,} shares, LIMIT ₩{lp:,.0f}**",
               "It is now waiting in the book and fills AUTOMATICALLY the moment the price touches "
               f"₩{lp:,.0f}{_gap}. I'll record it as a 💬 chatbot order when it fills. "
+              # the boss watches the process HERE, not on the menus (2026-09-01:
+              # "how can I check in the live, can I see inside chatbot?")
+              "👀 I'm watching it for you — the moment it fills, a ✅ message appears "
+              "RIGHT HERE in this chat. Ask \"order status\" anytime for the live gap. "
               f"Cancel anytime: \"cancel {p['name']} order\"."]
              if en else
              [f"🕐 **대기 주문 접수 — {side_word} {p['name']} {p['qty']:,}주 · 지정가 ₩{lp:,.0f}**",
               f"호가창에 줄을 섰습니다. 가격이 ₩{lp:,.0f}에 닿는 순간 자동으로 체결되고 "
-              f"💬 챗봇 주문으로 기록됩니다{_gap}. 취소는 \"{p['name']} 주문 취소\"라고 말씀하세요."])
+              f"💬 챗봇 주문으로 기록됩니다{_gap}. "
+              f"👀 제가 지켜보고 있다가 체결되는 순간 이 채팅에 ✅ 알림을 바로 띄워드립니다. "
+              f"중간 확인은 \"주문 상태\", 취소는 \"{p['name']} 주문 취소\"라고 말씀하세요."])
         L += ["", _desk_links(en)]
         return "\n".join(L)
     if not res.get("ok"):
