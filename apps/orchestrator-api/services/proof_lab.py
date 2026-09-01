@@ -1996,7 +1996,12 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            # lowest stop fill + the 3rd rising candle = the
                            # REAL bottom formed lower - one more try, all 3 algos
             elif (v.get("reenter_below_cut") and cut_px[si] is not None
-                  and c >= cut_px[si]):
+                  # 0.3% tolerance on the cut line (boss 16:0x, the 하이닉스
+                  # 11:44 re-entry sat 1,000 won - 0.06% - above the 11:36
+                  # stop and his below-cut law blocked it by a hair; SDI's
+                  # banned 10:34 chase was +0.51% above its cut and stays
+                  # banned): at/below cut +0.3% re-enters, above is the trap.
+                  and c >= cut_px[si] * (1 + 0.3 / 100)):
                 pass       # court 2026-08-25 (알고3's 두산/하이닉스 churn):
                            # after a red cut, re-entry only BELOW the cut price
                            # - never re-buy the same fade higher or flat
@@ -2017,15 +2022,15 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            # anyway): after a full exit NOTHING boards more
                            # than 1.5% above the post-exit low, whichever door
                            # asks. 제1조: a late confirmation is a chase.
-            elif (v.get("no_chase_all")
-                  and (lambda _tl9: _tl9 and c + 2 * (s.get("tick") or 0)
-                       > _tl9 * (1 + 1.5 / 100))(
-                      min((s.get("lows") or closes)[max(0, i - 10):i + 1]))):
-                pass       # 제1조, UNIVERSAL (boss 15:4x, the 전기 10:00 entry
-                           # that survived every per-door guard because it came
-                           # through a momentum door with none): NO door may
-                           # fill more than 1.5% above the last-10-bars low -
-                           # measured on the price we PAY (close + spread).
+            elif (v.get("no_chase_all") and (lambda _w9: (
+                      # trough = the lowest CLOSE of the last 10 bars; it must
+                      # be >=3 bars old and unbroken (the fall PROVEN stopped -
+                      # the 전기 10:00 two-bar V fails here), and the entry
+                      # must sit within 1.5% of it (SDI's lawful 09:05 lives).
+                      (len(_w9) - 1 - _w9.index(min(_w9))) < 3
+                      or c > min(_w9) * (1 + 1.5 / 100)
+                  ))(closes[max(0, i - 10):i + 1])):
+                pass       # 제1조, UNIVERSAL - no door outranks the bottom
             elif v.get("ban_codes") and s.get("code") in v["ban_codes"]:
                 pass       # STOCK BAN (boss 2026-08-31 14:4x: "today in both
                            # menus SK텔레콤 was very bad - delete SK텔레콤 and
