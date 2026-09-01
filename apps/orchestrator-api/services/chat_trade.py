@@ -191,7 +191,7 @@ def order_status_reply(db, transcript: Optional[str], lang: str) -> Optional[str
     'I don't disclose personal positions')."""
     if not is_status_q(transcript):
         return None
-    en = not re.search(r"[가-힣]", transcript or "") and bool(re.search(r"[a-zA-Z]", transcript or ""))
+    en = text_lang_en(transcript, lang)
     from datetime import timedelta, timezone
     from sqlalchemy import text as _sqt
     KST = timezone(timedelta(hours=9))
@@ -273,7 +273,7 @@ def breakeven_reply(db, transcript: Optional[str], lang: str,
         return None
     if not any(k in t for k in ("sell", "팔", "매도", "gain", "본전", "잃")):
         return None
-    en = not re.search(r"[가-힣]", transcript or "") and bool(re.search(r"[a-zA-Z]", transcript or ""))
+    en = text_lang_en(transcript, lang)
     from services.assistant_agent import _all_stocks_in_query
     stocks = _all_stocks_in_query(transcript)
     code = stocks[0][0] if stocks else ctx_code
@@ -431,7 +431,7 @@ def cancel_open(db, transcript: Optional[str], lang: str) -> Optional[str]:
     t = (transcript or "").lower()
     if not t or not has_cancel_word(t):
         return None
-    en = not re.search(r"[가-힣]", transcript or "") and bool(re.search(r"[a-zA-Z]", transcript or ""))
+    en = text_lang_en(transcript, lang)
     from sqlalchemy import text as _sqt
     from services.assistant_agent import _all_stocks_in_query
     stocks = _all_stocks_in_query(transcript)
@@ -477,17 +477,37 @@ def stash_offer(code: str, name: str, en: bool, side: str = "BUY") -> None:
     _save_pending()
 
 
+def text_lang_en(transcript: Optional[str], lang: str) -> bool:
+    """Reply language by the SENTENCE, not the stock's name: 'please sell
+    LG에너지솔루션 stock now' is an ENGLISH command even though the name is Hangul
+    (boss 2026-09-01: it got the Korean 얼마나 팔까요 prompt). Stock-name tokens are
+    stripped first; any Hangul left ('buy lg 1주') still means Korean — money text
+    never rides through a translator either way."""
+    txt = transcript or ""
+    try:
+        from services import stock_resolver as _sr
+        _sr._build()
+        for run in set(re.findall(r"[가-힣A-Za-z0-9-]+", txt)):
+            if run.lower() in _sr._ALIAS:
+                txt = txt.replace(run, " ")
+    except Exception:
+        pass
+    if re.search(r"[가-힣]", txt):
+        return False
+    if re.search(r"[a-zA-Z]", txt):
+        return True
+    return str(lang or "").lower().startswith("en")
+
+
+def cmd_lang_en(transcript: Optional[str], code: str, lang: str) -> bool:
+    return text_lang_en(transcript, lang)
+
+
 def build_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
     cmd = parse(transcript)
     if not cmd:
         return None
-    # ANY Hangul in the command → Korean preview ("buy lg 1주" once got the EN preview,
-    # which the language guard then LLM-translated into '구매/귀하가' — order text with
-    # money numbers must never ride through a translator)
-    if re.search(r"[가-힣]", transcript or ""):
-        en = False
-    else:
-        en = str(lang or "").lower().startswith("en") or bool(re.search(r"[a-zA-Z]", transcript or ""))
+    en = cmd_lang_en(transcript, cmd["code"], lang)
     return _make_preview(db, cmd["code"], cmd["name"], cmd["side"], cmd["qty"],
                          cmd["all_"], en, price_asked=cmd.get("price"),
                          market_flag=bool(cmd.get("market")),

@@ -108,8 +108,8 @@ def make_preview(db, transcript: str, lang: str) -> Optional[str]:
     cmd = parse(db, transcript)
     if not cmd:
         return None
-    en = (not re.search(r"[가-힣]", transcript)
-          and str(lang or "").lower().startswith("en"))
+    from services.chat_trade import text_lang_en
+    en = text_lang_en(transcript, lang)
     if not cmd["qty"]:
         try:
             from services.chat_trade import advise_qty
