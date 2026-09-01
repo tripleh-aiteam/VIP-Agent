@@ -210,6 +210,7 @@ VARIANTS: list[dict] = [
      # 3-red re-entry.
      "door_market": True, "reb_fade": True, "derisk_free": True,
      "soft_up": True,
+     "m1_ban_codes": ["035420", "034020"],
      # volume law (boss: "volume up -> price up"): at a dip rebound volume is
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
@@ -327,6 +328,7 @@ VARIANTS: list[dict] = [
      # 3-red re-entry.
      "door_market": True, "reb_fade": True, "derisk_free": True,
      "soft_up": True,
+     "m1_ban_codes": ["035420", "034020"],
      # volume law (boss: "volume up -> price up"): at a dip rebound volume is
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
@@ -443,6 +445,7 @@ VARIANTS: list[dict] = [
      # 3-red re-entry.
      "door_market": True, "reb_fade": True, "derisk_free": True,
      "soft_up": True,
+     "m1_ban_codes": ["035420", "034020"],
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
      # THE DAILY-CHART CIRCLE, D3 first (boss 2026-08-21 night: "near the
      # lowest part we have to buy, not sell - and be patient with the rise;
@@ -668,6 +671,7 @@ _D4.update({"id": "D4", "family": "d4",
      # 3-red re-entry.
      "door_market": True, "reb_fade": True, "derisk_free": True,
      "soft_up": True,
+     "m1_ban_codes": ["035420", "034020"],
             # THE BOSS'S 08-31 BENCH TRIALS (his three morning cases):
             # door_market - entries fill AT the door bar (no limit-offer
             # abandonment chasing a V-rebound; the 오션 09:22 / 두산 09:13
@@ -2039,6 +2043,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                       or c < min(_w9) * (1 + 0.3 / 100)
                   ))(closes[max(0, i - 10):i + 1])):
                 pass       # 제1조, UNIVERSAL - no door outranks the bottom
+            elif (v.get("m1_ban_codes") and s.get("rank_win") is None
+                  and s.get("code") in v["m1_ban_codes"]):
+                pass       # MENU-1 DAY BAN (boss 2026-09-01 14:5x: "remove
+                           # NAVER and 두산 from menu 1 today - we should not
+                           # trade them"): the six-desk (no rank timeline =
+                           # menu 1) skips these codes; menu 2's seat law
+                           # governs them there as usual. Lift next session
+                           # unless the boss says keep.
             elif v.get("ban_codes") and s.get("code") in v["ban_codes"]:
                 pass       # STOCK BAN (boss 2026-08-31 14:4x: "today in both
                            # menus SK텔레콤 was very bad - delete SK텔레콤 and
