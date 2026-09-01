@@ -210,7 +210,7 @@ VARIANTS: list[dict] = [
      # 3-red re-entry.
      "door_market": True, "reb_fade": True, "derisk_free": True,
      "soft_up": True,
-     "m1_ban_codes": ["035420", "034020", "373220", "042660"],
+     "m1_ban_day": "20260901",
      # volume law (boss: "volume up -> price up"): at a dip rebound volume is
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
@@ -328,7 +328,7 @@ VARIANTS: list[dict] = [
      # 3-red re-entry.
      "door_market": True, "reb_fade": True, "derisk_free": True,
      "soft_up": True,
-     "m1_ban_codes": ["035420", "034020", "373220", "042660"],
+     "m1_ban_day": "20260901",
      # volume law (boss: "volume up -> price up"): at a dip rebound volume is
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
@@ -445,7 +445,7 @@ VARIANTS: list[dict] = [
      # 3-red re-entry.
      "door_market": True, "reb_fade": True, "derisk_free": True,
      "soft_up": True,
-     "m1_ban_codes": ["035420", "034020", "373220", "042660"],
+     "m1_ban_day": "20260901",
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
      # THE DAILY-CHART CIRCLE, D3 first (boss 2026-08-21 night: "near the
      # lowest part we have to buy, not sell - and be patient with the rise;
@@ -671,7 +671,7 @@ _D4.update({"id": "D4", "family": "d4",
      # 3-red re-entry.
      "door_market": True, "reb_fade": True, "derisk_free": True,
      "soft_up": True,
-     "m1_ban_codes": ["035420", "034020", "373220", "042660"],
+     "m1_ban_day": "20260901",
             # THE BOSS'S 08-31 BENCH TRIALS (his three morning cases):
             # door_market - entries fill AT the door bar (no limit-offer
             # abandonment chasing a V-rebound; the 오션 09:22 / 두산 09:13
@@ -850,15 +850,33 @@ _D3r["open_door"] = {"bars": 5, "up": 0.5}
 # the year-peak ban does not bench them either (see the no_buy_top gate).
 DESK_CORE = ("000660", "005930", "402340", "010950")
 
-DAY_BAN_ALL = [
-    "034020",   # 두산에너빌리티 (16:0x, "all menus and algos")
-    # 16:2x, the second sweep - every row these four owned was struck:
-    "012450",   # 한화에어로스페이스 (09:58 -1.03%, its only trade)
-    "207940",   # 삼성바이오로직스 (09:20 -0.13%, its only trade)
-    "105560",   # KB금융 (09:03 -1.05%, 12:25 +0.18%)
-    "042700",   # 한미반도체 (17:3x, "for today we do not need this")
-    "373220",   # LG에너지솔루션 (all five rows; it was already menu-1 banned)
-]
+# Each ban is stamped with the SESSION it was ordered for. Every one of these
+# orders was literally "remove it from TODAY's trading", so the ban binds that
+# day's replay and expires by itself - it must never silently eat tomorrow's
+# session (18:0x readiness check: as a flat list these six would have killed a
+# third of the desk at tomorrow's bell).
+DAY_BAN_BY_DAY = {
+    "20260901": [
+        "034020",   # 두산에너빌리티 (16:0x, "all menus and algos")
+        "012450",   # 한화에어로스페이스 (09:58 -1.03%, its only trade)
+        "207940",   # 삼성바이오로직스 (09:20 -0.13%, its only trade)
+        "105560",   # KB금융 (09:03 -1.05%, 12:25 +0.18%)
+        "042700",   # 한미반도체 (17:3x, "for today we do not need this")
+        "373220",   # LG에너지솔루션 (all five rows; also menu-1 banned)
+    ],
+}
+
+
+def _day_bans(s: dict) -> list:
+    """The bans in force for the session this stock is being replayed on."""
+    d8 = s.get("d8") or ""
+    if not d8:
+        from services.kiwoom_tape import _day as _kd
+        try:
+            d8 = _kd()
+        except Exception:
+            return []
+    return DAY_BAN_BY_DAY.get(str(d8).replace("-", ""), [])
 
 
 def label(v: dict, ko: bool = True) -> str:
@@ -2134,10 +2152,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                       < min(_w9) * (1 + v["min_fall"] / 100)
                   ))(closes[max(0, i - 30):i + 1])):
                 pass       # too shallow - no wave to ride
-            elif s.get("code") in DAY_BAN_ALL:
-                pass       # DESK-WIDE DAY BAN - every menu, every algo
-            elif (v.get("m1_ban_codes") and s.get("rank_win") is None
-                  and s.get("code") in v["m1_ban_codes"]):
+            elif s.get("code") in _day_bans(s):
+                pass       # DESK-WIDE DAY BAN - every menu, every algo, and
+                           # ONLY on the session it was ordered for
+            elif (v.get("m1_ban_day") and s.get("rank_win") is None
+                  and str(s.get("d8") or "").replace("-", "")
+                  == v["m1_ban_day"]
+                  and s.get("code") in ("035420", "034020",
+                                        "373220", "042660")):
                 pass       # MENU-1 DAY BAN (boss 2026-09-01 14:5x: "remove
                            # NAVER and 두산 from menu 1 today - we should not
                            # trade them"): the six-desk (no rank timeline =
