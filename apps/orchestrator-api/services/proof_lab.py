@@ -863,7 +863,12 @@ _D3r["open_door"] = {"bars": 5, "up": 0.5}
 # should be in menu 2", + SK스퀘어 09-01, + S-Oil 09-01 16:3x): these names
 # trade on BOTH desks with or without a checklist seat, and - since 16:4x -
 # the year-peak ban does not bench them either (see the no_buy_top gate).
-DESK_CORE = ("000660", "005930", "402340", "010950")
+# THE ONE DESK'S SEAT-FREE SIX (boss 2026-09-02: "from the first menu take
+# these 6 by default and from the 100 checklist take a top 5"). His six trade on
+# the reco desk with or without a checklist seat; the five checklist names hold
+# seats by definition, being the top five. Replaces the 09-01 core - SK스퀘어 and
+# S-Oil keep trading only while the checklist crowns them.
+DESK_CORE = ("000660", "005930", "035420", "017670", "042660", "034020")
 
 # Each ban is stamped with the SESSION it was ordered for. Every one of these
 # orders was literally "remove it from TODAY's trading", so the ban binds that

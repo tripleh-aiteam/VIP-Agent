@@ -423,11 +423,16 @@ def pick(day: str, n: int | None = None, refresh_character: bool = False) -> dic
     if mode == "score":
         chosen = list(earned)
     elif mode == "both":
-        # BOTH DESKS AT ONCE (boss 2026-08-24): his six in his order, then the score's
-        # top n that aren't already among the six — one combined desk, no duplicates.
+        # THE ONE DESK (boss 2026-09-02 09:1x: "I do not wanna go and check both
+        # menus - only one menu and all stock what I wanna... total 11"): his six
+        # in his order, ALWAYS, then the checklist's best n that are not already
+        # among them. Taking `earned[:n]` and dropping the duplicates gave FEWER
+        # than 6+n whenever the checklist crowned one of his own six (today it
+        # crowned 두산 #2 and 하이닉스 #5, so the desk would have been 9, not 11);
+        # the desk now fills to 6+n every day.
         chosen = [r for r in rows if r["code"] in DESK]
         chosen.sort(key=lambda r: DESK.index(r["code"]))
-        chosen += [r for r in earned if r["code"] not in DESK]
+        chosen += [r for r in rows if r["code"] not in DESK][:n]
     else:
         chosen = [r for r in rows if r["code"] in DESK]
         chosen.sort(key=lambda r: DESK.index(r["code"]))   # his order, not the score's

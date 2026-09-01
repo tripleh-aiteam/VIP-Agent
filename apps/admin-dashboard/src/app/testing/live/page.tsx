@@ -1005,13 +1005,23 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
           </div>
         ))}
         <div className="flex gap-1 flex-wrap items-center">
-          {(["d1", "d2", "d3", "d4"] as const).map((f) => (
+          {/* THREE ALGOS, ONE BACKUP (boss 2026-09-02: "so please implement
+              total 11 with 3 Algo. Algo 4 is for back up in urgent case") -
+              알고4 keeps its board and stays one click away, but it is set
+              apart so the desk reads as three. */}
+          {(["d1", "d2", "d3"] as const).map((f) => (
             <button key={f} onClick={() => setFam9(f)}
               className="px-2 py-0.5 rounded border text-[10.5px]"
               style={fam9 === f ? { background: "#37474f", color: "#fff", borderColor: "#37474f", fontWeight: 700 }
                                 : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
-              {f === "d4" ? t("알고4 (갭룰)", "Algo 4 (gap)") : t(`알고${f[1]}`, `Algo ${f[1]}`)}</button>
+              {t(`알고${f[1]}`, `Algo ${f[1]}`)}</button>
           ))}
+          <button onClick={() => setFam9("d4")}
+            title={t("예비 — 긴급 시에만", "backup — urgent use only")}
+            className="px-2 py-0.5 rounded border text-[10.5px] border-dashed"
+            style={fam9 === "d4" ? { background: "#6d4c41", color: "#fff", borderColor: "#6d4c41", fontWeight: 700 }
+                                 : { borderColor: "var(--border-default)", color: "var(--text-tertiary)", opacity: 0.75 }}>
+            {t("알고4 · 예비", "Algo 4 · backup")}</button>
           <span className="mx-1 opacity-40">|</span>
           {deskList9.map((s) => {
             const isH = holds9.some((h) => h.code === s.code);
@@ -2354,12 +2364,17 @@ export default function LiveDeskPage() {
   // reco tabs: SCORE ORDER, top → down (boss 2026-08-24: "only score based, from top
   // to less, no need our 6 prefixed") — a six-member appears here only if it EARNED a
   // score spot; the six have their own desk at /testing/live.
-  // the seat-free core (engine: DESK_CORE) - always on the reco desk, seat or
-  // no seat, year-zone or not
-  const CORE_CODES9 = new Set(["000660", "005930", "402340", "010950"]);
-  const recoSetPre9 = new Set(((dpick?.rows || []).filter((r) => r.by_score)).map((r) => r.code));
-  const _recoRows = (dpick?.rows || []).filter((r) => r.by_score)
-    .sort((a, b) => (b.score || 0) - (a.score || 0));
+  // THE ONE DESK (boss 2026-09-02): his six + the checklist's top five = 11.
+  // The backend marks every member `on_desk`, in his order (six first), so the
+  // board no longer shows only what the checklist earned - it shows the desk.
+  const CORE_CODES9 = new Set(["000660", "005930", "035420", "017670", "042660", "034020"]);
+  const recoSetPre9 = new Set(((dpick?.rows || []).filter((r) => r.on_desk)).map((r) => r.code));
+  const _recoRows = (dpick?.rows || []).filter((r) => r.on_desk)
+    .sort((a, b) => {
+      const ac = CORE_CODES9.has(a.code), bc = CORE_CODES9.has(b.code);
+      if (ac !== bc) return ac ? -1 : 1;           // his six lead, always
+      return (b.score || 0) - (a.score || 0);
+    });
   // LIVE top-N — ONE TRUTH (boss 2026-08-25 13:5x: the header showed one set
   // of numbers and the heartbeat another): the header chips now read the SAME
   // 4-second tape-scorer snapshot the heartbeat and the buy-gate use; the
