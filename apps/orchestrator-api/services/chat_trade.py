@@ -837,6 +837,71 @@ def qty_reply(db, transcript: Optional[str]) -> Optional[str]:
                          p.get("side") or "BUY", qty, False, bool(p.get("en")))
 
 
+def verb_only_side(transcript: Optional[str]) -> Optional[str]:
+    """'I wanna buy' / '팔아줘' with NO stock named (boss 2026-09-01: 'if I did
+    not [name] any stock it should ask me which stock do you wanna') — returns
+    the side so the caller can ask WHICH stock."""
+    t = (transcript or "").strip()
+    tl = t.lower()
+    if not t or len(t) > 60 or any(w in tl for w in _ADVICE_BLOCK):
+        return None
+    side = None
+    m = _CMD_EN.match(tl) or _CMD_EN2.search(tl)
+    if m:
+        side = "BUY" if m.group(1).lower() == "buy" else "SELL"
+    elif any(k in t for k in _KO_SELL):
+        side = "SELL"
+    elif any(k in t for k in _KO_BUY):
+        side = "BUY"
+    if not side:
+        return None
+    try:
+        from services.assistant_agent import _all_stocks_in_query
+        if _all_stocks_in_query(t):
+            return None
+    except Exception:
+        return None
+    return side
+
+
+def which_stock_ask(db, side: str, transcript: Optional[str], lang: str) -> str:
+    """The polite 'which stock?' — stashes the side; the next message naming a
+    stock (stock_reply) continues into the normal qty/price flow."""
+    en = text_lang_en(transcript, lang)
+    _load_pending()
+    _PENDING.clear()
+    _PENDING.update({"need_stock": True, "side": side, "ts": time.time(), "en": en})
+    _save_pending()
+    if en:
+        w = "buy" if side == "BUY" else "sell"
+        return (f"🛒 Which stock would you like to {w}? Just tell me the name — "
+                f"e.g. \"삼성전자\" or \"skhynix\".\n"
+                f"💡 Not sure? Say \"recommend stocks\" and I'll bring today's Top 3.")
+    w = "사" if side == "BUY" else "팔아"
+    return (f"🛒 어떤 종목을 {w}드릴까요? 종목 이름만 말씀해 주세요 — 예: \"삼성전자\".\n"
+            f"💡 고민되시면 \"추천해줘\"라고 하시면 오늘의 TOP 3를 보여드립니다.")
+
+
+def stock_reply(db, transcript: Optional[str], lang: str) -> Optional[str]:
+    """A bare stock name while the which-stock question stands."""
+    _load_pending()
+    if (not _PENDING or not _PENDING.get("need_stock")
+            or time.time() - _PENDING.get("ts", 0) > _TTL):
+        return None
+    if len((transcript or "").strip()) > 40:
+        return None
+    try:
+        from services.stock_resolver import resolve_one
+        code, name = resolve_one(transcript or "")
+    except Exception:
+        code = name = None
+    if not code:
+        return None
+    p = dict(_PENDING)
+    return _make_preview(db, code, name or code, p.get("side") or "BUY", None,
+                         False, bool(p.get("en")))
+
+
 def confirm_check(transcript: Optional[str]) -> Optional[str]:
     """'yes'/'no' when the message answers a FRESH pending order, else None."""
     _load_pending()

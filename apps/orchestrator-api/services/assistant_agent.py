@@ -8307,6 +8307,11 @@ def _run_agent_impl(
                     return {"intent": "chat_trade", "language": lang, "reply": _ctr,
                             "action": None, "speak": True, "transcript": transcript,
                             "tool_used": "chat_trade"}
+            _cts9 = _ct.stock_reply(db, transcript, lang)
+            if _cts9:
+                return {"intent": "chat_trade_confirm", "language": lang, "reply": _cts9,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "chat_trade"}
             _ctq = _ct.qty_reply(db, transcript)
             if _ctq:
                 return {"intent": "chat_trade_confirm", "language": lang, "reply": _ctq,
@@ -8335,6 +8340,17 @@ def _run_agent_impl(
                         "action": None, "speak": True, "transcript": transcript,
                         "tool_used": "chat_trade"}
             _ctp = _ct.build_preview(db, transcript, lang)
+            # bare "I wanna buy" with NO stock and no it/this reference → ask
+            # WHICH stock (boss 2026-09-01), never guess from context
+            if (not _ctp
+                    and not _re.search(r"\b(?:it|this|that|them)\b|이거|그거|저거|이 종목|그 종목",
+                                       (transcript or "").lower())):
+                _vs9 = _ct.verb_only_side(transcript)
+                if _vs9:
+                    return {"intent": "chat_trade_confirm", "language": lang,
+                            "reply": _ct.which_stock_ask(db, _vs9, transcript, lang),
+                            "action": None, "speak": True, "transcript": transcript,
+                            "tool_used": "chat_trade"}
             # "buy it" after a skhynix turn — the context stock completes the command
             if not _ctp and _ctx_stock:
                 _cs9 = _ctx_stock
