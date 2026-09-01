@@ -765,8 +765,12 @@ _D3r["ctx"] = dict(_D3r.get("ctx") or {}, bot_blues=999)
 # the trade - it already decreased, it must increase - do not hurry"):
 # 알고3's 3-blue full exit only arms once the ride's peak stands +1% over
 # cost. Below that: pure waiting - the -1% stop is the only exit.
-_D3r["drip"]["retreat"]["arm"] = 1.0
+# arm 1.0 -> 2.0 (boss 2026-09-01 12:1x: "wait, it is the PEAK not +1% -
+# it should gain at least 2%"): the 3-blue exit arms only past +2%; below
+# that only the -1% stop speaks.
+_D3r["drip"]["retreat"]["arm"] = 2.0
 _D3r["stop_close"] = True
+_D3r["min_gain"] = 2.0
 
 
 def label(v: dict, ko: bool = True) -> str:
@@ -2171,8 +2175,10 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # case 1,000 and others 10,000"): expensive names (>=1M won)
                 # trade 1,000 shares, everything else 10,000. Caution layers
                 # still halve below these.
+                # x10 (boss 2026-09-01 12:1x: "하이닉스/삼성전자 10,000 and
+                # cheaper ones 100,000 - it is fake money, we can use it")
                 _q = (ml_meta or {}).get("qty") or (
-                    1000 if c >= 1_000_000 else 10000)
+                    10000 if c >= 1_000_000 else 100000)
                 if v.get("us_habit") and (s.get("us_mode") or "calm") == "storm_down":
                     _q = max(1, _q // 3)
                 # LAYER 1 (boss 2026-08-21): near the year's TOP the desk gets
@@ -2795,6 +2801,15 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                             and (c > pos.get("base", 0) * (1 + FEE_PCT / 100)
                                  or (v.get("derisk_free")
                                      and c < pos.get("base", 0)))
+                            # MIN-GAIN (boss 2026-09-01 12:1x: "it should gain
+                            # at least 2% - otherwise keep watching, do not
+                            # hurry; only -1% sells"): on ride variants the
+                            # 3-blue exit executes only if the FILL itself
+                            # stands min_gain% over cost - the peak arming
+                            # alone is not enough, the blues eat 1-1.5%.
+                            and (not v.get("min_gain")
+                                 or c >= pos.get("base", 0)
+                                 * (1 + float(v["min_gain"]) / 100))
                             # under derisk_free a LOCAL peak below cost is a
                             # valid reference (loss-cut pieces); otherwise the
                             # peak must stand above cost + arm as before
