@@ -843,6 +843,14 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
     except Exception as _ce:
         from services.logger import log as _lg
         _lg.warning(f"chat fam merge failed: {str(_ce)[:120]}")
+    # 🗑 chat-erased trips vanish from the board (boss 2026-09-01: "remove SK하이닉스
+    # which bought at 10:17") — display filter only, records stay; "복원해줘" undoes
+    try:
+        if res.get("ok") and res.get("rows"):
+            from services.trip_eraser import filter_rows as _tef
+            res = {**res, "rows": _tef(list(res["rows"]), day or _kd9())}
+    except Exception:
+        pass
     return res
 
 

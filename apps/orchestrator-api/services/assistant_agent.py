@@ -7537,6 +7537,10 @@ def _run_agent_impl(
                 pass
             if (is_position_question(transcript) and not _ca_gate.kind(transcript)
                     and not _imp_cmd
+                    # remove/delete words mean the history ERASER, never advice
+                    # (2026-09-01: "remove skhynix bought at 10:17" got an ML card)
+                    and not _re.search(r"\b(?:remove|delete)\b|삭제|지워|없애",
+                                       (transcript or "").lower())
                     and not _is_cancelish(transcript) and not _is_statusish(transcript)):
                 from services.position_advice import advise as _pos_advise
                 _adv = _pos_advise(db, parse(transcript))
@@ -7828,6 +7832,74 @@ def _run_agent_impl(
                 return {"intent": "stock_up_down", "language": lang,
                         "reply": "\n".join(L_ud), "action": None, "speak": True,
                         "transcript": transcript, "tool_used": "realtime_quote"}
+
+    # === 🗑 DELETE TRADING-HISTORY ROWS (boss 2026-09-01: "since I am using fake
+    # money I wanna even delete trading history — 'remove SK하이닉스 which bought
+    # at 10:17' should delete it"). Display-only: the row vanishes from both
+    # menus, records stay honest, "복원해줘/restore" undoes. ===
+    _t_er = (transcript or "").lower()
+    _er_del = (any(k in _t_er for k in ("remove", "delete", "삭제", "지워", "지워줘", "없애"))
+               and (any(k in _t_er for k in ("history", "trip", "기록", "거래", "매매",
+                                             "bought at", "산 거", "row", "this"))
+                    or "▲" in (transcript or "") or "▼" in (transcript or "")))
+    _er_res = (any(k in _t_er for k in ("restore", "복원", "복구", "되돌려"))
+               and any(k in _t_er for k in ("trip", "history", "기록", "거래", "삭제",
+                                            "deleted", "removed", "hidden")))
+    if (not confirmed_tool and not attachment_ids and transcript
+            and (_er_del or _er_res)
+            and not any(k in _t_er for k in ("주문 취소", "cancel order", "취소해"))):
+        try:
+            from services import trip_eraser as _te
+            from services.chat_trade import text_lang_en as _tle_er
+            from services.kiwoom_tape import _day as _kd_er
+            _en_er = _tle_er(transcript, lang)
+            _day_er = _kd_er()
+            if _er_res:
+                try:
+                    from services.stock_resolver import resolve_one as _ro_er
+                    _rc_er, _rn_er = _ro_er(transcript)
+                except Exception:
+                    _rc_er = _rn_er = None
+                n = _te.restore(_day_er, _rc_er)
+                _rep_er = ((f"♻️ {n}건의 숨긴 기록을 복원했습니다 — 두 메뉴에 다시 표시됩니다."
+                            if n else "복원할 숨긴 기록이 없습니다.") if not _en_er else
+                           (f"♻️ Restored {n} hidden record(s) — they show on both menus again."
+                            if n else "Nothing hidden to restore."))
+                return {"intent": "trip_erase", "language": lang, "reply": _rep_er,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "trip_eraser"}
+            from services.stock_resolver import resolve_one as _ro_er
+            _ec, _en_nm = _ro_er(transcript)
+            if not _ec:
+                _rep_er = ("어느 종목의 기록을 지울까요? 예: \"SK하이닉스 10:17에 산 기록 삭제\""
+                           if not _en_er else
+                           "Which stock's record should I remove? e.g. "
+                           "\"remove skhynix bought at 10:17\"")
+                return {"intent": "trip_erase", "language": lang, "reply": _rep_er,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "trip_eraser"}
+            # the BUY time: "bought at 10:17" / a pasted row's first ▲ time
+            _tm_er = None
+            _mt_er = (_re.search(r"(?:bought\s+at|산|매수)[^0-9]{0,8}(\d{1,2}:\d{2})", _t_er)
+                      or _re.search(r"▲\s*(\d{1,2}:\d{2})", transcript))
+            if _mt_er:
+                _tm_er = _mt_er.group(1).zfill(5)
+            _te.hide(_day_er, _ec, _tm_er or "")
+            if _tm_er:
+                _rep_er = ((f"🗑 **{_en_nm}** — {_tm_er} 매수 기록을 두 메뉴에서 지웠습니다. "
+                            f"되돌리려면 \"삭제한 기록 복원\"이라고 말씀하세요.") if not _en_er else
+                           (f"🗑 Removed the **{_en_nm}** trip bought at {_tm_er} from both "
+                            f"menus. Say \"restore deleted history\" to undo."))
+            else:
+                _rep_er = ((f"🗑 **{_en_nm}** — 오늘의 매매 기록 전체를 두 메뉴에서 지웠습니다. "
+                            f"되돌리려면 \"삭제한 기록 복원\"이라고 말씀하세요.") if not _en_er else
+                           (f"🗑 Removed ALL of today's **{_en_nm}** trips from both menus. "
+                            f"Say \"restore deleted history\" to undo."))
+            return {"intent": "trip_erase", "language": lang, "reply": _rep_er,
+                    "action": None, "speak": True, "transcript": transcript,
+                    "tool_used": "trip_eraser"}
+        except Exception as e:
+            log.warning(f"trip-erase lane failed: {str(e)[:120]}")
 
     # === 🤖 PER-ALGO HOLDINGS (boss 2026-09-01: "Checklist Reco Desk, Algo 3 —
     # how many stocks are we holding, what are they?" got a SELL-advice card for
