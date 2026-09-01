@@ -2278,7 +2278,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                   # non-core name; only the boss's own desk stocks are exempt,
                   # and their dp today (하이닉스 .54, 스퀘어 .50) is far below
                   # the line, so nothing else changes.
-                  and s.get("code") not in DESK_CORE
+                  # THE EXEMPTION IS WITHDRAWN (boss 09-01 19:0x, his closing
+                  # rules for 알고3: "do not buy in the selling zone"). It was
+                  # added at 16:3x so S-Oil could trade after he asked three
+                  # times; his general law now outranks that one-stock order.
+                  # COLLISION ON RECORD: S-Oil reads daily_pos 0.980 - it IS in
+                  # the selling zone - so this silences the S-Oil trades he
+                  # asked for. His word tomorrow decides which wins.
                   and s["daily_pos"] >= v["ctx"]["no_buy_top"]):
                 pass       # THE PEAK-ZONE BAN (boss 2026-08-21 night: "at
                            # least we are not buying in the highest zone") -
