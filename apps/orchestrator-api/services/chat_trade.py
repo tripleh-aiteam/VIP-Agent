@@ -595,6 +595,29 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
                     f"🧮 You hold {pos:,} shares of **{name}** — how much should I sell?\n"
                     f"· e.g. **\"10%\"** (= {max(1, round(pos * 0.10)):,} sh) · \"half\" · \"30 shares\" · \"all\"")
     else:
+        if (not cmd["qty"] and price_asked is None and not market_flag
+                and pct is None):
+            # BARE BUY → ASK, don't assume (boss 2026-09-01: "if I do not tell
+            # price and number of stock it should ask politely how many and how
+            # much per stock") — the reply ("10주 시장가" / "10주 215,000원에" /
+            # bare "10주") flows through qty_reply into the confirmation.
+            _adv = advise_qty(px)
+            _PENDING.clear()
+            _PENDING.update({"offer": True, "side": "BUY", "code": code,
+                             "name": name, "ts": time.time(), "en": en})
+            _save_pending()
+            if en:
+                return (f"🛒 **{name}** — how many shares would you like, and at "
+                        f"what price?\n"
+                        f"· e.g. **\"10 shares market\"** (fills instantly) · "
+                        f"**\"10 shares at {int(px):,}\"** (your limit price) · "
+                        f"just **\"10 shares\"** → I propose the best order-book price\n"
+                        f"· For reference: live ₩{px:,.0f} · suggested size by budget: "
+                        f"{_adv:,} shares")
+            return (f"🛒 **{name}** — 몇 주를, 어떤 가격으로 사드릴까요?\n"
+                    f"· 예: **\"10주 시장가\"** (즉시 체결) · **\"10주 {int(px):,}원에\"** "
+                    f"(지정가) · 그냥 **\"10주\"** → 호가창 기준 최적가를 제안해 드립니다\n"
+                    f"· 참고: 현재가 ₩{px:,.0f} · 예산 기준 추천 수량 {_adv:,}주")
         qty = cmd["qty"] or advise_qty(px)
     fee = BUY_COST_PCT if side == "BUY" else SELL_COST_PCT
     # PRICE OFFERING like a real trader (boss 2026-08-26): his own price wins;
@@ -782,6 +805,26 @@ def qty_reply(db, transcript: Optional[str]) -> Optional[str]:
                              t in ("전량", "전부", "all", "다"), bool(p.get("en")),
                              pct=(50 if (not pm and t in ("절반", "반만", "half"))
                                   else (max(1, min(100, int(pm.group(1)))) if pm else None)))
+    # combined size + price answer to the polite ask (boss 2026-09-01): "10주
+    # 시장가" / "10주 215,000원에" / "10 shares market" / "10 shares at 215000"
+    mc = re.fullmatch(
+        r"(\d[\d,]*)\s*(?:주|shares?|share|stocks?|개)?\s*(?:를|을)?\s*"
+        r"(?:(?:@|at)?\s*(\d[\d,]{4,})\s*(?:원|won)?(?:에)?|(시장가|market(?:\s*price)?))\s*"
+        r"(?:please|주세요|요|로|사줘|매수|매도|팔아줘|팔아|해줘)?[.!? ]*", t)
+    if mc:
+        try:
+            qty = max(1, int(mc.group(1).replace(",", "")))
+        except Exception:
+            return None
+        _price = None
+        if mc.group(2):
+            try:
+                _price = float(mc.group(2).replace(",", ""))
+            except Exception:
+                _price = None
+        return _make_preview(db, p["code"], p.get("name") or p["code"],
+                             p.get("side") or "BUY", qty, False, bool(p.get("en")),
+                             price_asked=_price, market_flag=bool(mc.group(3)))
     m = re.fullmatch(r"(\d[\d,]*)\s*(?:주|shares?|share|stocks?|개)?\s*"
                      r"(?:please|주세요|요|로|사줘|매수|매도)?[.! ]*", t)
     if not m:
