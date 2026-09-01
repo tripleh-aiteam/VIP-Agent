@@ -2633,18 +2633,28 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # drop% fall from that peak liquidates EVERYTHING and arms
                 # the 3-red re-entry. 알고4 bench.
                 _ta9 = v.get("trail_all")
+                # the 고점-1% line is a RESTING order (boss 15:5x, the 하이닉스
+                # 10:25 ruling: close 1,692,000 sat 90 won above the line but
+                # the 10:26 wick touched it - the touch fills at the line).
+                # The LOSS stop stays close-confirmed (the SDI 260-won law);
+                # the PROFIT-protect line fills on touch - two lines, two
+                # correct behaviors.
+                _tline9 = (pos.get("pr_pk", 0)
+                           * (1 - float((_ta9 or {}).get("drop", 1.0)) / 100))
+                _tlo9 = (s.get("lows") or closes)[i]
                 if (_ta9 and pos["qty"] > 0 and pos.get("qty_add", 0) <= 0
                         and pos.get("pr_pk", 0) >= pos.get("base", 0)
                         * (1 + float(_ta9.get("arm", 1.0)) / 100)
-                        and c <= pos.get("pr_pk", 0)
-                        * (1 - float(_ta9.get("drop", 1.0)) / 100)
+                        and (c <= _tline9 or _tlo9 <= _tline9)
                         # never liquidate INTO the fake-win zone (boss 14:5x,
                         # the 삼성전자 10:00 +0.20%⚠ case): above the fee line
                         # or below cost - a bar later the exit is honest either
                         # way
                         and not (pos.get("base", 0) < c
                                  <= pos.get("base", 0) * (1 + FEE_PCT / 100))):
-                    _dsell(pos["qty"], c, "고점-1% 전량")
+                    _tfill9 = (float(int(_tline9 // tk) * tk)
+                               if c > _tline9 else c)
+                    _dsell(pos["qty"], _tfill9, "고점-1% 전량")
                     _drow(f"고점-{_ta9.get('drop', 1.0):g}% 전량 매도 · 3번째 "
                           f"양봉 재진입 대기 · 조각 {len(pos['slices'])}회")
                     reb_pk[si] = c
