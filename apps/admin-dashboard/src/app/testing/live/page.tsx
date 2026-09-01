@@ -400,6 +400,21 @@ function LiveChart({ bars, marks, focus, off = 0, h = 320 }:
       prog.current = true;
       try { c.chart.timeScale().setVisibleRange(userRange.current as never); } catch {}
       setTimeout(() => { prog.current = false; }, 0);
+    } else {
+      // AT the live edge → FOLLOW like Kiwoom (boss 2026-09-01: "as time passes
+      // new chart should appear"). setData() every 3s keeps the OLD logical
+      // range, so fresh bars were landing beyond the right edge, off screen —
+      // the holding's chart looked frozen at click time. Keep his zoom width,
+      // slide the window to include the newest bar.
+      prog.current = true;
+      try {
+        const lr = c.chart.timeScale().getVisibleLogicalRange() as
+          { from: number; to: number } | null;
+        const w9 = lr ? Math.max(20, (lr.to as number) - (lr.from as number)) : 95;
+        c.chart.timeScale().setVisibleLogicalRange({
+          from: Math.max(0, bars.length + 2 - w9), to: bars.length + 2 });
+      } catch { /* no-op */ }
+      setTimeout(() => { prog.current = false; }, 0);
     }
   }, [ready, bars, marks, focus, off]);
 
