@@ -805,7 +805,24 @@ _D3r["peak_fall"] = 1.0
 # line, immediately - candle shapes are the backup, the line is the law.
 # Satisfies EVERY 하이닉스/SDI trace today (09:5x -0.94% no sale; 10:25 sale;
 # SDI 10:06 sale). 삼전 10:02 (-0.3% fall) stays the courted exception.
-_D3r["trail_all"] = {"arm": 1.0, "drop": 1.0}
+# THE HURRY FIX (boss 09-01 17:3x: "today's most repeated mistake - selling too
+# early, before the real peak"; his all-day rulings on 하이닉스 09:51->10:12,
+# 삼전 09:49->10:02, SDI, NAVER 14:39, 스퀘어 09:32->10:13). A 1% retreat is
+# these stocks' ordinary breathing - it is not a peak. The trail now waits for
+# a 1.5% turn. Measured on today's full menu-2 desk: -1.79% -> +4.08%, win 39%
+# -> 52%. What it cost us today, measured: the first trades took +3.95% while
+# holding to their own later peak was worth +18.92% (스퀘어 alone +0.85% taken
+# vs +5.08% available).
+_D3r["trail_all"] = {"arm": 1.0, "drop": 1.5}
+# THE LATE-BUY FIX (boss 09-01 17:3x, the 한미반도체 exhibit: "this is example
+# of the buying late"). At 10:00 the desk boarded 한미 at ₩216,500 - EXACTLY
+# the 30-bar high, with the real trough already 29 bars old: the bounce was
+# over and we joined it at the top. 제1조 only looks back 10 bars, so on a
+# stock chopping sideways every small wiggle looks like a fresh trough. No door
+# may now board within 0.3% of the last 30 bars' high - the opening door is
+# exempt (at 09:01 the session high IS the current bar). Measured: +4.08% ->
+# +5.96%, win 52% -> 60%, and 한미's late 13:49 -1.27% chase disappears.
+_D3r["no_high_chase"] = 0.3
 _D3r["no_chase_all"] = True
 # THE OPENING DOOR, ON (boss 09-01 17:0x: "S-Oil should buy at 09:01 and sell
 # around 09:18"). Measured on today's full menu-2 desk BEFORE deploying:
@@ -839,6 +856,7 @@ DAY_BAN_ALL = [
     "012450",   # 한화에어로스페이스 (09:58 -1.03%, its only trade)
     "207940",   # 삼성바이오로직스 (09:20 -0.13%, its only trade)
     "105560",   # KB금융 (09:03 -1.05%, 12:25 +0.18%)
+    "042700",   # 한미반도체 (17:3x, "for today we do not need this")
     "373220",   # LG에너지솔루션 (all five rows; it was already menu-1 banned)
 ]
 
@@ -2080,6 +2098,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            # anyway): after a full exit NOTHING boards more
                            # than 1.5% above the post-exit low, whichever door
                            # asks. 제1조: a late confirmation is a chase.
+            elif (v.get("no_high_chase") and i >= 30
+                  and not (v.get("open_door")
+                           and _open_entry(s, v, i, closes))
+                  and closes[i] >= max(closes[i - 30:i + 1])
+                  * (1 - float(v["no_high_chase"]) / 100)):
+                pass       # NO BOARDING AT THE RECENT HIGH - see the 한미
+                           # 10:00 exhibit at the _D3r dial above
             elif (v.get("no_chase_all")
                   and not (v.get("open_door") and _open_entry(s, v, i, closes))
                   and (lambda _w9: (
