@@ -771,6 +771,11 @@ _D3r["ctx"] = dict(_D3r.get("ctx") or {}, bot_blues=999)
 _D3r["drip"]["retreat"]["arm"] = 2.0
 _D3r["stop_close"] = True
 _D3r["min_gain"] = 2.0
+# case-1 law: intraday top 15% = the day's selling zone (2 blues, no arm)
+_D3r["day_top_exit"] = {"top": 0.85, "min_rng": 0.8, "blues": 2}
+# case-3 law: the post-stop bottom must HOLD 3 bars before the 3-red re-buy
+_D3r["reb_hold"] = 3
+_D3r["fade_drop"] = 0.7
 
 
 def label(v: dict, ko: bool = True) -> str:
@@ -1674,6 +1679,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     # >+1.5% above the bottom is a chase): the re-entry door now tracks the
     # post-exit trough and refuses to board more than 1.5% above it.
     reb_lo9 = [None] * n
+    nl_age9 = [0] * n   # bars since the post-exit bottom last made a new low
+    pe_hi9 = [None] * n  # post-profit-exit high (the fade must fall 0.7% from it)
     # SOFT RISE COUNT (boss 2026-08-31 12:3x, the LIG 11:07 case - closes went
     # ▲ = ▲ = ▲ and the hard count reached 3 only at 11:09, two bars and
     # 3,000원 late. His law, stated twice today: "some of them equal is fine -
@@ -1824,9 +1831,26 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
         # the fade-first lock opens once a real decrease showed itself
         if reb_wait[si] is not None and dn[si] >= 2:
             reb_pk[si], reb_wait[si] = reb_wait[si], None
-        if fade_lock[si] and dn[si] >= 2:
-            fade_lock[si] = False
+        if fade_lock[si]:
+            pe_hi9[si] = c if pe_hi9[si] is None else max(pe_hi9[si], c)
+            # THE REAL-DECREASE UNLOCK (boss 2026-09-01 13:0x, the 하이닉스
+            # 10:17 case: a -0.6% sideways wobble counted as "the decrease"
+            # and the 3rd rise bought a wobble-top into a -1% stop): after a
+            # profit exit the fade must be a SHARP fall - 2 blues AND 0.7%
+            # down from the post-exit high (fade_drop; 0 = old behavior).
+            if (dn[si] >= 2
+                    and (not v.get("fade_drop") or pe_hi9[si] is None
+                         or c <= pe_hi9[si]
+                         * (1 - float(v["fade_drop"]) / 100))):
+                fade_lock[si] = False
+                pe_hi9[si] = None
+        else:
+            pe_hi9[si] = None
         if reb_pk[si] is not None:
+            if reb_lo9[si] is None or c < reb_lo9[si]:
+                nl_age9[si] = 0     # the bottom just fell again - hold count resets
+            else:
+                nl_age9[si] += 1
             reb_lo9[si] = c if reb_lo9[si] is None else min(reb_lo9[si], c)
             # the wave left without us: once the bounce stands +3% above the
             # post-exit bottom, the post-stop state retires - future entries
@@ -1978,7 +2002,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            and (up_soft[si] if v.get("soft_up") else up[si])
                            >= int(v.get("reboard_ups", 3))
                            and (reb_lo9[si] is None
-                                or c <= reb_lo9[si] * (1 + 1.5 / 100)))):
+                                or c <= reb_lo9[si] * (1 + 1.5 / 100))
+                           and nl_age9[si] >= int(v.get("reb_hold", 0)))):
                 pass       # THE LIVING TOP-3 (boss 2026-08-25 12:3x, menu 2:
                            # "check every few seconds and buy using the
                            # checklist - not only one time"): on the reco desk
@@ -2053,7 +2078,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            and (up_soft[si] if v.get("soft_up") else up[si])
                            >= int(v.get("reboard_ups", 3))
                            and (reb_lo9[si] is None
-                                or c <= reb_lo9[si] * (1 + 1.5 / 100)))
+                                or c <= reb_lo9[si] * (1 + 1.5 / 100))
+                           and nl_age9[si] >= int(v.get("reb_hold", 0)))
                   # the buying-zone bottom-hold door also passes the fence
                   # (its own zone_free logic decides)
                   and not (v.get("bot_hold")
@@ -2087,7 +2113,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            and (up_soft[si] if v.get("soft_up") else up[si])
                            >= int(v.get("reboard_ups", 3))
                            and (reb_lo9[si] is None
-                                or c <= reb_lo9[si] * (1 + 1.5 / 100)))):
+                                or c <= reb_lo9[si] * (1 + 1.5 / 100))
+                           and nl_age9[si] >= int(v.get("reb_hold", 0)))):
                 pass
             elif (v.get("dip")
                   and not (v.get("drip", {}).get("reboard")
@@ -2095,7 +2122,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            and (up_soft[si] if v.get("soft_up") else up[si])
                            >= int(v.get("reboard_ups", 3))
                            and (reb_lo9[si] is None
-                                or c <= reb_lo9[si] * (1 + 1.5 / 100)))
+                                or c <= reb_lo9[si] * (1 + 1.5 / 100))
+                           and nl_age9[si] >= int(v.get("reb_hold", 0)))
                   and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]
                   <= last_exit[si]):
                 # the 3rd-red re-board is EXEMPT from one-per-dip (boss
@@ -2781,6 +2809,28 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     # end a ride, default 2) and retreat.trail (a fixed % fall
                     # from the peak sells regardless of candle count). Neither
                     # is set on any live variant until the 250-day study picks.
+                    # THE DAY'S OWN SELLING ZONE (boss 2026-09-01 12:4x, the
+                    # HD현대 09:04 case: "09:00 was the peak - sell at 09:08,
+                    # it is the selling zone; if we gain and 2 blues come,
+                    # sell - high probability it goes down"): when the price
+                    # stands in the top 15% of TODAY's range (and the day has
+                    # a real range), the ride does not wait for +2% - 2 blues
+                    # sell everything above the fee line. The year-zone data
+                    # cannot carry this law (the 370-day window still holds
+                    # the spring blow-off tops); the day's own chart can.
+                    _dt9 = v.get("day_top_exit")
+                    _day_top9 = False
+                    if _dt9:
+                        _dh9 = max((s.get("highs") or closes)[: i + 1])
+                        _dl9 = min((s.get("lows") or closes)[: i + 1])
+                        if (c and _dh9 > _dl9
+                                and (_dh9 - _dl9) / c * 100
+                                >= float(_dt9.get("min_rng", 0.8))
+                                and c >= _dl9 + float(_dt9.get("top", 0.85))
+                                * (_dh9 - _dl9)):
+                            _day_top9 = True
+                    if _day_top9:
+                        _blues9 = int(_dt9.get("blues", 2))
                     _trail9 = _pr.get("trail")
                     _trail_hit = bool(_trail9) and pos.get("pr_pk", 0) > 0 \
                         and c <= pos.get("pr_pk", 0) * (1 - _trail9 / 100)
@@ -2807,13 +2857,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                             # 3-blue exit executes only if the FILL itself
                             # stands min_gain% over cost - the peak arming
                             # alone is not enough, the blues eat 1-1.5%.
-                            and (not v.get("min_gain")
+                            and (not v.get("min_gain") or _day_top9
                                  or c >= pos.get("base", 0)
                                  * (1 + float(v["min_gain"]) / 100))
                             # under derisk_free a LOCAL peak below cost is a
                             # valid reference (loss-cut pieces); otherwise the
                             # peak must stand above cost + arm as before
-                            and (v.get("derisk_free")
+                            and (v.get("derisk_free") or _day_top9
                                  or (pos.get("pr_pk", 0) >= pos.get("base", 0)
                                      * (1 + _pr.get("arm", 0.0) / 100)
                                      and pos.get("pr_pk", 0)
