@@ -8315,6 +8315,11 @@ def _run_agent_impl(
                     return {"intent": "chat_trade", "language": lang, "reply": _ctr,
                             "action": None, "speak": True, "transcript": transcript,
                             "tool_used": "chat_trade"}
+            _ctpr = _ct.price_reply(db, transcript)
+            if _ctpr:
+                return {"intent": "chat_trade_confirm", "language": lang, "reply": _ctpr,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "chat_trade"}
             _cts9 = _ct.stock_reply(db, transcript, lang)
             if _cts9:
                 return {"intent": "chat_trade_confirm", "language": lang, "reply": _cts9,

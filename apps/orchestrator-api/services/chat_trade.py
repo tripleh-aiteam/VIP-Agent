@@ -833,8 +833,61 @@ def qty_reply(db, transcript: Optional[str]) -> Optional[str]:
         qty = max(1, int(m.group(1).replace(",", "")))
     except Exception:
         return None
+    # qty ONLY on a BUY → ask the PRICE as its own question (boss 2026-09-01:
+    # "it asked stock number but did not ask price"); sells keep their flow
+    if (p.get("side") or "BUY") == "BUY" and p.get("offer"):
+        en2 = bool(p.get("en"))
+        _px2 = None
+        try:
+            from services.paper_desk import _live_price
+            _px2, _ = _live_price(p["code"])
+        except Exception:
+            pass
+        _PENDING.clear()
+        _PENDING.update({"need_price": True, "side": "BUY", "code": p["code"],
+                         "name": p.get("name") or p["code"], "qty": qty,
+                         "ts": time.time(), "en": en2})
+        _save_pending()
+        _pxs = f"₩{float(_px2):,.0f}" if _px2 else "?"
+        if en2:
+            return (f"💰 **{qty:,} shares — got it.** And the price?\n"
+                    f"· **\"market\"** — fills instantly at the live price ({_pxs})\n"
+                    f"· **\"at 151,600\"** — your own limit price\n"
+                    f"· **\"best\"** — I take the order-book best (front of the biggest wall)")
+        return (f"💰 **{qty:,}주 — 확인했습니다.** 가격은 어떻게 할까요?\n"
+                f"· **\"시장가\"** — 현재가({_pxs})로 즉시 체결\n"
+                f"· **\"151,600원에\"** — 원하시는 지정가\n"
+                f"· **\"제안가\"** — 호가창 기준 최적가로 제가 제안")
     return _make_preview(db, p["code"], p.get("name") or p["code"],
                          p.get("side") or "BUY", qty, False, bool(p.get("en")))
+
+
+def price_reply(db, transcript: Optional[str]) -> Optional[str]:
+    """The price answer to the 💰 question: '시장가' / '151,600원에' / '제안가'."""
+    _load_pending()
+    if (not _PENDING or not _PENDING.get("need_price")
+            or time.time() - _PENDING.get("ts", 0) > _TTL):
+        return None
+    t = (transcript or "").strip().lower()
+    if not t or len(t) > 40:
+        return None
+    p = dict(_PENDING)
+    en = bool(p.get("en"))
+    if re.search(r"시장가|\bmarket\b", t):
+        return _make_preview(db, p["code"], p.get("name") or p["code"], "BUY",
+                             int(p["qty"]), False, en, market_flag=True)
+    if re.search(r"제안|추천|최적|알아서|아무|그냥|\bbest\b|\bbook\b|propose", t):
+        return _make_preview(db, p["code"], p.get("name") or p["code"], "BUY",
+                             int(p["qty"]), False, en)
+    pm = re.search(r"(\d[\d,]{3,})\s*(?:원|won)?", t)
+    if pm:
+        try:
+            _pr = float(pm.group(1).replace(",", ""))
+        except Exception:
+            return None
+        return _make_preview(db, p["code"], p.get("name") or p["code"], "BUY",
+                             int(p["qty"]), False, en, price_asked=_pr)
+    return None
 
 
 def verb_only_side(transcript: Optional[str]) -> Optional[str]:
@@ -926,6 +979,19 @@ def finish(db, word: str) -> Optional[str]:
     _PENDING.clear()
     _save_pending()
     en = bool(p.get("en"))
+    # a which-stock / which-price QUESTION is standing — "네" can't answer it;
+    # re-ask instead of crashing into an execute with missing fields
+    if p.get("need_stock") or p.get("need_price"):
+        if word == "no":
+            return ("알겠습니다 — 주문 없이 두겠습니다." if not en
+                    else "Understood — no order.")
+        _PENDING.update(p)          # keep the question alive
+        _save_pending()
+        if p.get("need_stock"):
+            return ("어떤 종목인지 이름을 말씀해 주세요 — 예: \"삼성전자\"." if not en
+                    else "Please tell me the stock name — e.g. \"삼성전자\".")
+        return ("가격을 먼저 정해주세요 — \"시장가\" · \"151,600원에\" · \"제안가\"." if not en
+                else "Please pick the price first — \"market\" · \"at 151,600\" · \"best price\".")
     # a CONDITIONAL rule waiting for its "네" (Step 3): yes stores the standing
     # rule (no order yet — the watchdog fires it at the trigger), no drops it
     if p.get("cond"):
