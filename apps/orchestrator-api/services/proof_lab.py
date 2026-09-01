@@ -1662,6 +1662,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     # stays shut until a real decrease shows itself (2 consecutive falling
     # closes). A -1% stop is itself the decrease - no lock. 알고4 bench.
     fade_lock = [False] * n
+    # RE-ENTRY NO-CHASE GUARD (boss 2026-09-01 11:2x, the 삼성전기 10:00 case:
+    # stop at 09:58 @1,445,000, a violent 2-minute bounce, and the 3-red door
+    # re-bought the TOP at 1,473,000 (+1.94% off the post-stop bottom) for an
+    # instant -1.02%. The lawbook's own 제1조 says a confirmation arriving
+    # >+1.5% above the bottom is a chase): the re-entry door now tracks the
+    # post-exit trough and refuses to board more than 1.5% above it.
+    reb_lo9 = [None] * n
     # SOFT RISE COUNT (boss 2026-08-31 12:3x, the LIG 11:07 case - closes went
     # ▲ = ▲ = ▲ and the hard count reached 3 only at 11:09, two bars and
     # 3,000원 late. His law, stated twice today: "some of them equal is fine -
@@ -1814,6 +1821,16 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             reb_pk[si], reb_wait[si] = reb_wait[si], None
         if fade_lock[si] and dn[si] >= 2:
             fade_lock[si] = False
+        if reb_pk[si] is not None:
+            reb_lo9[si] = c if reb_lo9[si] is None else min(reb_lo9[si], c)
+            # the wave left without us: once the bounce stands +3% above the
+            # post-exit bottom, the post-stop state retires - future entries
+            # need a FRESH fall (the dip/bot doors' own windows)
+            if c > reb_lo9[si] * (1 + 3.0 / 100):
+                reb_pk[si] = None
+                reb_lo9[si] = None
+        else:
+            reb_lo9[si] = None
         # the gap pause's adaptive release (boss 2026-08-27: the fade must have
         # happened AND ended - not a clock): below the open marks the fade; the
         # 3rd consecutive rise afterwards lifts the pause for good
@@ -1915,6 +1932,15 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            # - "remove these cases"): after door_close no NEW
                            # episode may open; positions already riding keep
                            # every management law. 알고4 bench; year court owed.
+            elif (reb_pk[si] is not None and reb_lo9[si] is not None
+                  and c > reb_lo9[si] * (1 + 1.5 / 100)):
+                pass       # POST-STOP NO-CHASE, ALL DOORS (boss 2026-09-01
+                           # 11:2x, the 삼성전기 10:00 case - the re-entry door
+                           # was guarded but the bottom-hold door boarded the
+                           # violent bounce at +1.94% off the post-stop bottom
+                           # anyway): after a full exit NOTHING boards more
+                           # than 1.5% above the post-exit low, whichever door
+                           # asks. 제1조: a late confirmation is a chase.
             elif v.get("ban_codes") and s.get("code") in v["ban_codes"]:
                 pass       # STOCK BAN (boss 2026-08-31 14:4x: "today in both
                            # menus SK텔레콤 was very bad - delete SK텔레콤 and
@@ -1944,7 +1970,10 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                   # traded today re-enters through the 3-red law even without
                   # a current seat - the bench law governs NEW boarding only.
                   and not (v.get("drip", {}).get("reboard") and reb_pk[si]
-                           and up[si] >= int(v.get("reboard_ups", 3)))):
+                           and (up_soft[si] if v.get("soft_up") else up[si])
+                           >= int(v.get("reboard_ups", 3))
+                           and (reb_lo9[si] is None
+                                or c <= reb_lo9[si] * (1 + 1.5 / 100)))):
                 pass       # THE LIVING TOP-3 (boss 2026-08-25 12:3x, menu 2:
                            # "check every few seconds and buy using the
                            # checklist - not only one time"): on the reco desk
@@ -2016,7 +2045,10 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                   # His standing law "at the 3rd we buy, price does not care"
                   # now carries through quiet recoveries too.
                   and not (v.get("drip", {}).get("reboard") and reb_pk[si]
-                           and up[si] >= int(v.get("reboard_ups", 3)))
+                           and (up_soft[si] if v.get("soft_up") else up[si])
+                           >= int(v.get("reboard_ups", 3))
+                           and (reb_lo9[si] is None
+                                or c <= reb_lo9[si] * (1 + 1.5 / 100)))
                   # the buying-zone bottom-hold door also passes the fence
                   # (its own zone_free logic decides)
                   and not (v.get("bot_hold")
@@ -2048,13 +2080,17 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                   and not (v.get("drip", {}).get("reboard")
                            and reb_pk[si]
                            and (up_soft[si] if v.get("soft_up") else up[si])
-                           >= int(v.get("reboard_ups", 3)))):
+                           >= int(v.get("reboard_ups", 3))
+                           and (reb_lo9[si] is None
+                                or c <= reb_lo9[si] * (1 + 1.5 / 100)))):
                 pass
             elif (v.get("dip")
                   and not (v.get("drip", {}).get("reboard")
                            and reb_pk[si]
                            and (up_soft[si] if v.get("soft_up") else up[si])
-                           >= int(v.get("reboard_ups", 3)))
+                           >= int(v.get("reboard_ups", 3))
+                           and (reb_lo9[si] is None
+                                or c <= reb_lo9[si] * (1 + 1.5 / 100)))
                   and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]
                   <= last_exit[si]):
                 # the 3rd-red re-board is EXEMPT from one-per-dip (boss
@@ -2233,7 +2269,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # old peak (that waited 3 minutes and paid 1,723,000 for what
                 # the 3rd red offered cheaper)
                 if (v.get("drip", {}).get("reboard") and reb_pk[si]
-                        and up[si] >= int(v.get("reboard_ups", 3))):
+                        and (up_soft[si] if v.get("soft_up") else up[si])
+                        >= int(v.get("reboard_ups", 3))):
                     reb_pk[si] = None    # one re-board per sold ride
                 if v.get("dip") and not _via_trend:
                     _std = _dip_state(s, v["dip"].get("win_sec", 600))
