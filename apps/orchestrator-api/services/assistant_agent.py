@@ -5667,8 +5667,20 @@ def _wanted_lang(language: Optional[str], transcript: Optional[str]) -> Optional
         return "en"
     if l.startswith("ko"):
         return "ko"
-    h = sum(1 for c in (transcript or "") if 0xAC00 <= ord(c) <= 0xD7A3)
-    a = sum(1 for c in (transcript or "") if "a" <= c.lower() <= "z")
+    # judge by the SENTENCE, not a Korean stock name inside it ("am I holding
+    # 삼성SDI?" is an ENGLISH question — the guard translated the English answer
+    # into mangled Korean, 2026-09-01): strip stock-name tokens first
+    t = transcript or ""
+    try:
+        from services import stock_resolver as _sr
+        _sr._build()
+        for run in set(_re.findall(r"[가-힣A-Za-z0-9-]+", t)):
+            if run.lower() in _sr._ALIAS:
+                t = t.replace(run, " ")
+    except Exception:
+        pass
+    h = sum(1 for c in t if 0xAC00 <= ord(c) <= 0xD7A3)
+    a = sum(1 for c in t if "a" <= c.lower() <= "z")
     if h > 0:
         return "ko"
     return "en" if a >= 3 else None
@@ -5870,6 +5882,36 @@ def _paper_portfolio_reply(db, lang: str, agent_id: str = "vip",
                 else:
                     L.append((f"**❌ No — you don't hold {_fn9 or _fc9} right now.**\n" if en
                               else f"**❌ 아니요 — {_fn9 or _fc9}은(는) 현재 보유하고 있지 않습니다.**\n"))
+            # SHORT ANSWER for a named-stock ask (boss 2026-09-01: "am I holding
+            # 삼성SDI?" got the full 17-position dump — and a bare 'no' read as a
+            # mistake because the algos DO trade SDI all day): answer that one
+            # stock, prove a 'no' with the last trade receipt, offer the rest.
+            if not _hit9:
+                try:
+                    from datetime import timedelta as _tdp, timezone as _tzp
+                    from sqlalchemy import text as _sqp
+                    _lt9 = db.execute(_sqp(
+                        "SELECT side, fill_price, filled_at, COALESCE(source,'') "
+                        "FROM paper_desk_orders WHERE ticker=:t AND status='FILLED' "
+                        "ORDER BY id DESC LIMIT 1"), {"t": _fc9}).fetchone()
+                    if _lt9:
+                        _tm9 = ""
+                        try:
+                            _tm9 = _lt9[2].astimezone(_tzp(_tdp(hours=9))).strftime("%m-%d %H:%M") if _lt9[2] else ""
+                        except Exception:
+                            pass
+                        _who9 = ("your chatbot order" if str(_lt9[3]) in ("chat", "chatbot")
+                                 else "the algorithm") if en else \
+                                ("챗봇 주문" if str(_lt9[3]) in ("chat", "chatbot") else "알고리즘")
+                        L.append((f"Last trade: {_lt9[0]} @ ₩{float(_lt9[1] or 0):,.0f} "
+                                  f"({_tm9} · {_who9}) — the position is closed now." if en else
+                                  f"마지막 거래: {'매수' if _lt9[0] == 'BUY' else '매도'} "
+                                  f"@ ₩{float(_lt9[1] or 0):,.0f} ({_tm9} · {_who9}) — 현재는 정리된 상태입니다."))
+                except Exception:
+                    pass
+            L.append(("\nFull portfolio: just ask \"show my holdings\"." if en
+                      else "\n전체 보유 현황은 \"보유 현황 보여줘\"라고 물어보세요."))
+            return "\n".join(L)
     if en:
         L.append(f"**🧾 Your paper-trading desk — {len(poss)} position(s) right now**")
         if not poss:
