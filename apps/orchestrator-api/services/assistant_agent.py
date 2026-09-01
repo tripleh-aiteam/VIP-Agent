@@ -8121,13 +8121,21 @@ def _run_agent_impl(
     if not confirmed_tool and not attachment_ids and transcript:
         try:
             from services import global_quotes as _gq
-            # NO history inheritance when the message names a KR stock or is an
-            # imperative order — "please sell LG에너지솔루션 stock now" borrowed XRP
-            # from an old crypto chat and answered about Ripple (2026-09-01)
+            # NO history inheritance when the message names a KR stock, is an
+            # order in ANY phrasing, or is a RECOMMENDATION ask — "please sell
+            # LG에너지솔루션" borrowed XRP, and "I wanna buy stock so which stock
+            # would you recommend" borrowed GOOGL from an old Google chat
+            # (2026-09-01, twice in one day: inheritance only serves bare
+            # follow-ups like "and the volume?")
             _g_hist = history or []
+            _tg9 = (transcript or "").lower()
             if (_all_stocks_in_query(transcript)
-                    or _re.match(r"^\s*(?:please\s+|pls\s+)?(?:buy|sell)\b",
-                                 (transcript or "").lower())
+                    or _re.match(r"^\s*(?:please\s+|pls\s+)?(?:buy|sell)\b", _tg9)
+                    or _re.search(r"\b(?:i\s+wanna|i\s+want\s+to|i'?d\s+like\s+to"
+                                  r"|would\s+like\s+to|please)\s+(?:buy|sell)\b", _tg9)
+                    or _re.search(r"\bwanna\s+buy\b|\bwanna\s+sell\b", _tg9)
+                    or "recommend" in _tg9 or "추천" in transcript
+                    or _is_watchlist_question(transcript)
                     or any(k in transcript for k in ("사줘", "팔아줘", "매수", "매도"))):
                 _g_hist = []
             _gres = _gq.reply(transcript, lang, _g_hist)
