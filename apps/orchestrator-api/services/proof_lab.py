@@ -2729,7 +2729,17 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                # RED restarts the count. 알고2's 2-blue piece
                                # counter keeps flats-break (에어로 10:18 law).
                                or (c == prev
-                                   and not v.get("blues_flat_pause")))):
+                                   # ...and only on a FAT ride (boss's two
+                                   # same-day exhibits: SDI peak +4% wants the
+                                   # quick 청청-도지 harvest at 10:01; 삼전's
+                                   # young +1.3% ride must NOT re-sell at
+                                   # 09:49): flats pause only once the peak
+                                   # stands >= +2% over cost; young rides
+                                   # demand pure consecutive blues.
+                                   and not (v.get("blues_flat_pause")
+                                            and pos.get("pr_pk", 0)
+                                            >= pos.get("base", 0)
+                                            * (1 + 2.0 / 100))))):
                         # 2 blues means 2 IN A ROW (boss 2026-08-31 14:0x, the
                         # LIG 09:09 piece: the streak ran 청-적-청 and the old
                         # counter kept the morning's blues forever - a rise
