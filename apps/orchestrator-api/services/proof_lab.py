@@ -286,7 +286,12 @@ VARIANTS: list[dict] = [
      # rung takes 50% of the position, and the retreat/down-side sales take
      # 50% too - two rungs and the hand is empty. 알고리즘2 keeps the 10%
      # drip. Same doors, same sizes, same resets - only the harvest differs.
-     "drip": {"step": 1.0, "up_frac": 0.50, "stop_vol": {"win": 30, "mult": 0.5, "min": 1.0, "max": 2.0}, "dn_frac": 0.50, "stop_reset": 1.0,
+     # stop_vol REMOVED (boss 2026-09-01 09:2x, the 한화에어로 -2.09% fill:
+     # "it must be -1%, our exit"): the vol-scaled widening (08-28, clamp
+     # 1.0-2.0%) is gone from all four algos - the stop is a fixed -1% again.
+     # The 08-28 court value of the scaling stays on record; tonight's court
+     # may re-price it, the boss's word rules.
+     "drip": {"step": 1.0, "up_frac": 0.50, "dn_frac": 0.50, "stop_reset": 1.0,
               # 14:00 closing hour (boss package 2026-08-20: +39.2M/yr, win 69%)
               "sell_after": "15:19",
               "slice_total": True, "rebuy": True, "reboard": True,
@@ -390,7 +395,7 @@ VARIANTS: list[dict] = [
      # -1% below the top (same ladder as 알고리즘1); what remains distinct is the
      # RELOAD - a fresh sharp-decrease turn buys back what was sold. The duel now
      # isolates exactly one question: does the reload law earn its keep?
-     "drip": {"step": 1.0, "up_frac": 0.10, "stop_vol": {"win": 30, "mult": 0.5, "min": 1.0, "max": 2.0}, "dn_frac": 0.10, "stop_reset": 1.0,
+     "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.0,
               # PING-PONG (boss's law, measured +38M/yr and chosen 2026-08-20
               # after the SK텔레콤 98,100-top reload: a sold rung re-buys only
               # a full step CHEAPER and sells again at the same rung - round
@@ -498,7 +503,7 @@ VARIANTS: list[dict] = [
      "morning": {"until": "09:20", "vol_x": 1.5, "min_run": 0.3,
                  "alt_run": 1.0},
      "burst": {"rise": 0.7, "win_min": 10},
-     "drip": {"step": 999.0, "up_frac": 1.0, "stop_vol": {"win": 30, "mult": 0.5, "min": 1.0, "max": 2.0}, "dn_frac": 0.0, "stop_reset": 1.0,
+     "drip": {"step": 999.0, "up_frac": 1.0, "dn_frac": 0.0, "stop_reset": 1.0,
               # 14:00 closing hour + TRAIL exit (boss package 2026-08-20,
               # +66.5M/yr combined): armed at +0.85% as before, but the ride
               # ends at -0.5% off the peak - a fixed give-back instead of two
