@@ -701,7 +701,10 @@ function OrderRoom({ t, desk }: { t: (ko: string, en: string) => string;
   const SIX9: { code: string; name: string }[] = [
     { code: "000660", name: "SK하이닉스" }, { code: "005930", name: "삼성전자" },
     { code: "035420", name: "NAVER" }, { code: "017670", name: "SK텔레콤" },
-    { code: "042660", name: "한화오션" }, { code: "034020", name: "두산에너빌리티" }];
+    { code: "042660", name: "한화오션" }, { code: "034020", name: "두산에너빌리티" },
+    // SK스퀘어 joins the core desk (boss 2026-09-01: +5.3% day missed - "we
+    // have to use it")
+    { code: "402340", name: "SK스퀘어" }];
   const [fam9, setFam9] = useState<"d1" | "d2" | "d3" | "d4">("d2");
   const [open9, setOpen9] = useState(false);
   const [sel9, setSel9] = useState("");
@@ -2344,7 +2347,7 @@ export default function LiveDeskPage() {
   // the page opens on the first one. The DEFAULT view is the boss's six ONLY (his
   // 2026-08-24 order: "in the Live Kiwoom menu it should be the 6 predefined stocks");
   // either filter falls back to everything rather than ever showing an empty desk.
-  const SIX_CODES = new Set(["000660", "005930", "035420", "017670", "042660", "034020"]);
+  const SIX_CODES = new Set(["000660", "005930", "035420", "017670", "042660", "034020", "402340"]);
   // reco tabs: SCORE ORDER, top → down (boss 2026-08-24: "only score based, from top
   // to less, no need our 6 prefixed") — a six-member appears here only if it EARNED a
   // score spot; the six have their own desk at /testing/live.

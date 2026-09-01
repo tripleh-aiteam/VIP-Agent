@@ -210,7 +210,7 @@ VARIANTS: list[dict] = [
      # 3-red re-entry.
      "door_market": True, "reb_fade": True, "derisk_free": True,
      "soft_up": True,
-     "m1_ban_codes": ["035420", "034020"],
+     "m1_ban_codes": ["035420", "034020", "373220"],
      # volume law (boss: "volume up -> price up"): at a dip rebound volume is
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
@@ -328,7 +328,7 @@ VARIANTS: list[dict] = [
      # 3-red re-entry.
      "door_market": True, "reb_fade": True, "derisk_free": True,
      "soft_up": True,
-     "m1_ban_codes": ["035420", "034020"],
+     "m1_ban_codes": ["035420", "034020", "373220"],
      # volume law (boss: "volume up -> price up"): at a dip rebound volume is
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
@@ -445,7 +445,7 @@ VARIANTS: list[dict] = [
      # 3-red re-entry.
      "door_market": True, "reb_fade": True, "derisk_free": True,
      "soft_up": True,
-     "m1_ban_codes": ["035420", "034020"],
+     "m1_ban_codes": ["035420", "034020", "373220"],
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
      # THE DAILY-CHART CIRCLE, D3 first (boss 2026-08-21 night: "near the
      # lowest part we have to buy, not sell - and be patient with the rise;
@@ -671,7 +671,7 @@ _D4.update({"id": "D4", "family": "d4",
      # 3-red re-entry.
      "door_market": True, "reb_fade": True, "derisk_free": True,
      "soft_up": True,
-     "m1_ban_codes": ["035420", "034020"],
+     "m1_ban_codes": ["035420", "034020", "373220"],
             # THE BOSS'S 08-31 BENCH TRIALS (his three morning cases):
             # door_market - entries fill AT the door bar (no limit-offer
             # abandonment chasing a V-rebound; the 오션 09:22 / 두산 09:13
@@ -2069,7 +2069,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                   # SK하이닉스 and 삼성전자 + Top 10 should be in menu 2"):
                   # the two core names trade on the reco desk with or without
                   # a checklist seat; seats govern only the rotating names.
-                  and s.get("code") not in ("000660", "005930")
+                  and s.get("code") not in ("000660", "005930", "402340")
                   and not (str(_now) < (s.get("rank_t0") or "00:00:00")
                            or any(f_ <= str(_now) <= t_
                                   for f_, t_ in s["rank_win"]))
