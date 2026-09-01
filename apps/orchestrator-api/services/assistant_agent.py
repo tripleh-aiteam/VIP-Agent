@@ -8392,7 +8392,12 @@ def _run_agent_impl(
     if not confirmed_tool and not attachment_ids and not _is_movers_q(transcript):
         try:
             from services import checklist_advice as _ca
-            if _ca.kind(transcript) and (_all_stocks_in_query(transcript) or _ctx_stock):
+            # "which stock would you recommend?" with NO stock named is a TOP-3
+            # RECOMMENDATION ask — the context stock must not turn it into a
+            # single-stock verdict (2026-09-01: it judged SK하이닉스 from history)
+            if (_ca.kind(transcript) and (_all_stocks_in_query(transcript) or _ctx_stock)
+                    and not (_is_watchlist_question(transcript)
+                             and not _all_stocks_in_query(transcript))):
                 _adv_tx = (transcript if _all_stocks_in_query(transcript)
                            else f"{_ctx_stock} {transcript}")
                 _adv = _ca.build(db, _adv_tx, lang)
