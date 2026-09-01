@@ -113,6 +113,15 @@ TESTS = [
      lambda i, r: ("Shakespeare" in r or "셰익스피어" in r, "verifiable fact")),
     ("offtopic", "'감사합니다'를 영어로 번역해줘", None,
      lambda i, r: ("thank" in r.lower(), "translation")),
+    # --- N. a KR sell order can NEVER become a crypto answer (2026-09-01:
+    # "please sell LG에너지솔루션 stock now" answered about XRP — the global lane
+    # borrowed an old crypto topic from history) ---
+    ("assistant", "please sell LG에너지솔루션 stock now",
+     [{"role": "user", "content": "bitcoin price?"},
+      {"role": "assistant", "content": "🪙 XRP (Ripple) ₩1,910"}],
+     lambda i, r: (i in ("chat_trade", "chat_trade_confirm")
+                   and "XRP" not in r and "BTC" not in r and "LG에너지솔루션" in r,
+                   "order desk answers, crypto never inherits into an order")),
     # --- M. movers obey the ask (2026-08-28 boss battery) ---
     ("movers", "No I need top 10 that increased after market opeining", None,
      # no word "stock" in the sentence — must still be the movers lane, today,

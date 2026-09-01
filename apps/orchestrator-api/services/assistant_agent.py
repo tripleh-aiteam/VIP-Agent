@@ -7897,7 +7897,16 @@ def _run_agent_impl(
     if not confirmed_tool and not attachment_ids and transcript:
         try:
             from services import global_quotes as _gq
-            _gres = _gq.reply(transcript, lang, history or [])
+            # NO history inheritance when the message names a KR stock or is an
+            # imperative order — "please sell LG에너지솔루션 stock now" borrowed XRP
+            # from an old crypto chat and answered about Ripple (2026-09-01)
+            _g_hist = history or []
+            if (_all_stocks_in_query(transcript)
+                    or _re.match(r"^\s*(?:please\s+|pls\s+)?(?:buy|sell)\b",
+                                 (transcript or "").lower())
+                    or any(k in transcript for k in ("사줘", "팔아줘", "매수", "매도"))):
+                _g_hist = []
+            _gres = _gq.reply(transcript, lang, _g_hist)
             if _gres:
                 return {"intent": _gres["intent"], "language": lang,
                         "reply": _gres["reply"], "action": None, "speak": True,
