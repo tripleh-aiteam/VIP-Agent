@@ -846,9 +846,12 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
     # 🗑 chat-erased trips vanish from the board (boss 2026-09-01: "remove SK하이닉스
     # which bought at 10:17") — display filter only, records stay; "복원해줘" undoes
     try:
-        if res.get("ok") and res.get("rows"):
+        if res.get("ok"):
+            from services.trip_eraser import filter_holding as _teh
             from services.trip_eraser import filter_rows as _tef
-            res = {**res, "rows": _tef(list(res["rows"]), day or _kd9())}
+            res = {**res,
+                   "rows": _tef(list(res.get("rows") or []), day or _kd9()),
+                   "holding": _teh(list(res.get("holding") or []), day or _kd9())}
     except Exception:
         pass
     return res

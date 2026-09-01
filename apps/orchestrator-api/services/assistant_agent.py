@@ -6495,7 +6495,9 @@ _SPELL_SET = frozenset(_SPELL_VOCAB)
 _SPELL_DIRECT = {"lasy": "last", "laast": "last", "yersterday": "yesterday",
                  "tommorow": "tomorrow", "tommorrow": "tomorrow", "wich": "which",
                  "prise": "price", "prive": "price", "shuld": "should",
-                 "yiu": "you", "yuo": "you", "wjo": "who", "whu": "who"}
+                 "yiu": "you", "yuo": "you", "wjo": "who", "whu": "who",
+                 "delet": "delete", "delte": "delete", "deleet": "delete",
+                 "remvoe": "remove", "rmove": "remove"}
 
 
 def _spell_normalize(q: Optional[str]) -> Optional[str]:
@@ -7838,9 +7840,10 @@ def _run_agent_impl(
     # at 10:17' should delete it"). Display-only: the row vanishes from both
     # menus, records stay honest, "복원해줘/restore" undoes. ===
     _t_er = (transcript or "").lower()
-    _er_del = (any(k in _t_er for k in ("remove", "delete", "삭제", "지워", "지워줘", "없애"))
+    _er_del = (any(k in _t_er for k in ("remove", "delete", "삭제", "지워", "지워줘", "없애",
+                                        "hide", "숨겨"))
                and (any(k in _t_er for k in ("history", "trip", "기록", "거래", "매매",
-                                             "bought at", "산 거", "row", "this"))
+                                             "bought at", "산 거", "row", "this", "holding"))
                     or "▲" in (transcript or "") or "▼" in (transcript or "")))
     _er_res = (any(k in _t_er for k in ("restore", "복원", "복구", "되돌려"))
                and any(k in _t_er for k in ("trip", "history", "기록", "거래", "삭제",
@@ -7884,6 +7887,28 @@ def _run_agent_impl(
                       or _re.search(r"▲\s*(\d{1,2}:\d{2})", transcript))
             if _mt_er:
                 _tm_er = _mt_er.group(1).zfill(5)
+            # a HOLDING row is not history yet (boss 2026-09-01: pasted
+            # "holding — not sold yet" and asked to delete — "it can ask should
+            # I sell or delete"): offer BOTH, and arm the sell for his "네"
+            if (any(k in _t_er for k in ("holding", "not sold", "보유"))
+                    and not any(k in _t_er for k in ("숨겨", "hide", "기록만"))):
+                try:
+                    from services.chat_trade import stash_offer as _so_er
+                    _so_er(_ec, _en_nm or _ec, _en_er, side="SELL")
+                except Exception:
+                    pass
+                _rep_er = ((f"🤔 **{_en_nm}** — 이 항목은 아직 **보유 중**(미매도)입니다. 어떻게 할까요?\n"
+                            f"· **팔기** — \"네\" 또는 \"팔아줘\"라고 하시면 매도 주문을 띄웁니다\n"
+                            f"· **기록만 숨기기** — \"{_en_nm} 기록만 숨겨줘\"라고 하시면 보유는 그대로, "
+                            f"화면에서만 사라집니다") if not _en_er else
+                           (f"🤔 **{_en_nm}** — this row is still **HELD** (not sold yet). "
+                            f"What do you want?\n"
+                            f"· **Sell it** — reply \"yes\" or \"sell it\" and I'll bring the order\n"
+                            f"· **Hide the row only** — say \"hide {_en_nm} row only\" and the "
+                            f"position stays, only the board row disappears"))
+                return {"intent": "trip_erase", "language": lang, "reply": _rep_er,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "trip_eraser"}
             _te.hide(_day_er, _ec, _tm_er or "")
             if _tm_er:
                 _rep_er = ((f"🗑 **{_en_nm}** — {_tm_er} 매수 기록을 두 메뉴에서 지웠습니다. "

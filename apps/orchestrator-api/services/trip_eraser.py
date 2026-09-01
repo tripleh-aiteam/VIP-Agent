@@ -71,5 +71,11 @@ def filter_rows(rows: list, day8: str) -> list:
     return out
 
 
+def filter_holding(hold: list, day8: str) -> list:
+    """Drop hidden HOLDING rows too (boss 2026-09-01: a pasted 'holding — not
+    sold yet' row should also be hideable). Same matching as filter_rows."""
+    return filter_rows(hold, day8)
+
+
 def hidden_count(day8: str) -> int:
     return sum(1 for x in _load() if x.get("day") == day8)
