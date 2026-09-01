@@ -210,7 +210,7 @@ VARIANTS: list[dict] = [
      # 3-red re-entry.
      "door_market": True, "reb_fade": True, "derisk_free": True,
      "soft_up": True,
-     "m1_ban_codes": ["035420", "034020", "373220"],
+     "m1_ban_codes": ["035420", "034020", "373220", "042660"],
      # volume law (boss: "volume up -> price up"): at a dip rebound volume is
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
@@ -328,7 +328,7 @@ VARIANTS: list[dict] = [
      # 3-red re-entry.
      "door_market": True, "reb_fade": True, "derisk_free": True,
      "soft_up": True,
-     "m1_ban_codes": ["035420", "034020", "373220"],
+     "m1_ban_codes": ["035420", "034020", "373220", "042660"],
      # volume law (boss: "volume up -> price up"): at a dip rebound volume is
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
@@ -445,7 +445,7 @@ VARIANTS: list[dict] = [
      # 3-red re-entry.
      "door_market": True, "reb_fade": True, "derisk_free": True,
      "soft_up": True,
-     "m1_ban_codes": ["035420", "034020", "373220"],
+     "m1_ban_codes": ["035420", "034020", "373220", "042660"],
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
      # THE DAILY-CHART CIRCLE, D3 first (boss 2026-08-21 night: "near the
      # lowest part we have to buy, not sell - and be patient with the rise;
@@ -671,7 +671,7 @@ _D4.update({"id": "D4", "family": "d4",
      # 3-red re-entry.
      "door_market": True, "reb_fade": True, "derisk_free": True,
      "soft_up": True,
-     "m1_ban_codes": ["035420", "034020", "373220"],
+     "m1_ban_codes": ["035420", "034020", "373220", "042660"],
             # THE BOSS'S 08-31 BENCH TRIALS (his three morning cases):
             # door_market - entries fill AT the door bar (no limit-offer
             # abandonment chasing a V-rebound; the 오션 09:22 / 두산 09:13
@@ -820,6 +820,12 @@ _D3r["no_chase_all"] = True
 # this outranks every door on every variant, both menus. The tape and the
 # recorded orders stay untouched - the never-delete law - only the living
 # replay stops boarding it. Lift next session unless the boss says keep.
+# THE SEAT-FREE CORE (boss: "in any case SK하이닉스 and 삼성전자 + Top 10
+# should be in menu 2", + SK스퀘어 09-01, + S-Oil 09-01 16:3x): these names
+# trade on BOTH desks with or without a checklist seat, and - since 16:4x -
+# the year-peak ban does not bench them either (see the no_buy_top gate).
+DESK_CORE = ("000660", "005930", "402340", "010950")
+
 DAY_BAN_ALL = [
     "034020",   # 두산에너빌리티 (16:0x, "all menus and algos")
     # 16:2x, the second sweep - every row these four owned was struck:
@@ -2102,7 +2108,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                   # SK하이닉스 and 삼성전자 + Top 10 should be in menu 2"):
                   # the two core names trade on the reco desk with or without
                   # a checklist seat; seats govern only the rotating names.
-                  and s.get("code") not in ("000660", "005930", "402340", "010950")
+                  and s.get("code") not in DESK_CORE
                   and not (str(_now) < (s.get("rank_t0") or "00:00:00")
                            or any(f_ <= str(_now) <= t_
                                   for f_, t_ in s["rank_win"]))
@@ -2169,6 +2175,19 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            # ("t10" form). Exits untouched; default off.
             elif (v.get("ctx") and s.get("daily_pos") is not None
                   and v["ctx"].get("no_buy_top") is not None
+                  # THE CORE IS NOT BENCHED BY THE YEAR ZONE (boss 09-01 16:3x,
+                  # asked three times: "S-oil also increased like SK스퀘어 -
+                  # trade it", then "there is not S-Oil, check again"). S-Oil
+                  # reads daily_pos 0.980 - year low 57,800, high 153,600,
+                  # today 151,700 - so the peak-zone ban silently refused every
+                  # door and the stock could not appear on either board. ON
+                  # RECORD, measured before deploying: with the ban lifted
+                  # S-Oil's trips today all LOSE (알고2 -0.73/-1.26/-1.17/
+                  # -0.46, 알고3 -1.30/-1.28). The ban still rules every
+                  # non-core name; only the boss's own desk stocks are exempt,
+                  # and their dp today (하이닉스 .54, 스퀘어 .50) is far below
+                  # the line, so nothing else changes.
+                  and s.get("code") not in DESK_CORE
                   and s["daily_pos"] >= v["ctx"]["no_buy_top"]):
                 pass       # THE PEAK-ZONE BAN (boss 2026-08-21 night: "at
                            # least we are not buying in the highest zone") -

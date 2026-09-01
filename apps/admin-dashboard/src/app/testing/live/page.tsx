@@ -2354,6 +2354,9 @@ export default function LiveDeskPage() {
   // reco tabs: SCORE ORDER, top → down (boss 2026-08-24: "only score based, from top
   // to less, no need our 6 prefixed") — a six-member appears here only if it EARNED a
   // score spot; the six have their own desk at /testing/live.
+  // the seat-free core (engine: DESK_CORE) - always on the reco desk, seat or
+  // no seat, year-zone or not
+  const CORE_CODES9 = new Set(["000660", "005930", "402340", "010950"]);
   const recoSetPre9 = new Set(((dpick?.rows || []).filter((r) => r.by_score)).map((r) => r.code));
   const _recoRows = (dpick?.rows || []).filter((r) => r.by_score)
     .sort((a, b) => (b.score || 0) - (a.score || 0));
@@ -2384,7 +2387,11 @@ export default function LiveDeskPage() {
   // as the entry gate decides. Rows without dp count as buyable.
   const _recoLive = rankHead9?.rows
     ? rankHead9.rows
-        .filter((x) => !(typeof x.dp === "number" && x.dp >= 0.85))
+        // the seat-free core is never benched by the year zone (boss 09-01
+        // 16:3x, the S-Oil case: dp 0.98 dropped it from the seats, so the
+        // stock he had just ordered onto both desks was invisible here)
+        .filter((x) => CORE_CODES9.has(x.code)
+          || !(typeof x.dp === "number" && x.dp >= 0.85))
         .slice(0, rankHead9.top_n ?? 5).map((x) => ({
         code: x.code, name: x.name, live_total: x.avg, score: x.avg,
         by_score: recoSetPre9.has(x.code) }))
