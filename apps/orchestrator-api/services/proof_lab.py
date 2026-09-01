@@ -1916,6 +1916,11 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            # same climb twice. Stops don't lock (the stop IS
                            # the decrease). 알고4 bench.
             elif (s.get("rank_win") is not None and _now
+                  # SEAT-FREE CORE (boss 2026-09-01 10:2x, final: "in any case
+                  # SK하이닉스 and 삼성전자 + Top 10 should be in menu 2"):
+                  # the two core names trade on the reco desk with or without
+                  # a checklist seat; seats govern only the rotating names.
+                  and s.get("code") not in ("000660", "005930")
                   and not (str(_now) < (s.get("rank_t0") or "00:00:00")
                            or any(f_ <= str(_now) <= t_
                                   for f_, t_ in s["rank_win"]))
