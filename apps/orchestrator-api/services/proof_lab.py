@@ -768,11 +768,13 @@ _D3r["ctx"] = dict(_D3r.get("ctx") or {}, bot_blues=999)
 # arm 1.0 -> 2.0 (boss 2026-09-01 12:1x: "wait, it is the PEAK not +1% -
 # it should gain at least 2%"): the 3-blue exit arms only past +2%; below
 # that only the -1% stop speaks.
-_D3r["drip"]["retreat"]["arm"] = 2.0
+# arm settles at 1.0 (boss 13:3x, the full picture: 삼전 10:02 ~+1.4% and
+# HD현대-class harvests are GOOD; only sub-1% peaks may not sell. The 2.0
+# floor blocked his own good sells.)
+_D3r["drip"]["retreat"]["arm"] = 1.0
 _D3r["stop_close"] = True
-_D3r["min_gain"] = 2.0
-# case-1 law: intraday top 15% = the day's selling zone (2 blues, no arm)
-_D3r["day_top_exit"] = {"top": 0.85, "min_rng": 0.8, "blues": 2}
+# day_top_exit RETIRED same day (the blues=2 shortcut sold 삼전 mid-rise at
+# 09:49): strict 3 blues everywhere - the rise must truly end
 # case-3 law: the post-stop bottom must HOLD 3 bars before the 3-red re-buy
 _D3r["reb_hold"] = 3
 _D3r["fade_drop"] = 0.7
