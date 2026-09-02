@@ -906,7 +906,16 @@ _D3r["no_chase_all"] = True
 # +4.24% (S-Oil 09:01 +2.39% - his trade, exiting 09:18 on the ordinary trail -
 # and SDI 09:05 +3.34%, against 메리츠 -0.25% and HD현대 -1.24%). up=0.5 beat
 # up=0.3 by dropping a SK텔레콤 -1.32% open.
-_D3r["open_door"] = {"bars": 5, "up": 0.5}
+# THRESHOLD RAISED 0.5 -> 0.8 (boss 2026-09-02 11:5x, the 삼성SDI case: "it
+# should buy at 09:03 not 09:01 because there is not total 3 red"). The opening
+# door was what bought 09:01: SDI opened 553,000 and 09:01 closed 557,000, a
+# +0.72% jump that cleared the old 0.5% bar with a single candle behind it -
+# and the very next bar fell -1.08%, so the ride was stopped out for -1.29%.
+# At 0.8% the door waits for 09:03 (+1.08% over the open) and the same ride
+# reads +0.31% instead. ON RECORD: this also retires the S-Oil style of entry
+# he asked for on 09-01 - S-Oil's 09:01 was only +0.59% over its open and would
+# no longer qualify.
+_D3r["open_door"] = {"bars": 5, "up": 0.8}
 # BIG-WAVE MINIMUM - BUILT, MEASURED, WITHHELD (09-01 15:5x): a >=1% preceding-
 # fall gate removes the 전기 11:31 dead ride but MEASURES BACKWARDS on 스퀘어
 # (the 10:37 fall reads 1.05% and passes; the GOOD 09:15 morning ride reads
