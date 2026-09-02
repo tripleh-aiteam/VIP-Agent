@@ -7451,6 +7451,10 @@ def _run_agent_impl(
             # portfolio (2026-09-01) — its own lane answers from the menus' data
             and not _re.search(r"(?:algo|알고(?:리즘)?)\s*-?\s*[1-4]",
                                (transcript or "").lower())
+            # remove/delete words mean the ERASER, never a holdings readout
+            # (2026-09-02: 'remove this: <pasted 보유 row>' got '✅ Yes you hold')
+            and not _re.search(r"\b(?:remove|delete)\b|삭제|지워|없애",
+                               (transcript or "").lower())
             and _PORTFOLIO_RE.search(transcript)):
         _pf = _paper_portfolio_reply(db, lang, agent_id, focus_text=transcript)
         if _pf:
@@ -7918,11 +7922,14 @@ def _run_agent_impl(
     # at 10:17' should delete it"). Display-only: the row vanishes from both
     # menus, records stay honest, "복원해줘/restore" undoes. ===
     _t_er = (transcript or "").lower()
-    _er_del = (any(k in _t_er for k in ("remove", "delete", "삭제", "지워", "지워줘", "없애",
-                                        "hide", "숨겨"))
-               and (any(k in _t_er for k in ("history", "trip", "기록", "거래", "매매",
-                                             "bought at", "산 거", "row", "this", "holding"))
-                    or "▲" in (transcript or "") or "▼" in (transcript or "")))
+    _er_del = ((any(k in _t_er for k in ("remove", "delete", "삭제", "지워", "지워줘", "없애",
+                                         "hide", "숨겨"))
+                and (any(k in _t_er for k in ("history", "trip", "기록", "거래", "매매",
+                                              "bought at", "산 거", "row", "this", "holding"))
+                     or "▲" in (transcript or "") or "▼" in (transcript or "")))
+               # bare "Remove itt" answering the sell-or-hide question (2026-09-02)
+               or bool(_re.fullmatch(r"\s*(?:please\s+)?(?:remove|delete|삭제|지워줘?|없애줘?)"
+                                     r"(?:\s+(?:itt?|this|that|그거|이거))?\s*[.!]*", _t_er)))
     _er_res = (any(k in _t_er for k in ("restore", "복원", "복구", "되돌려"))
                and any(k in _t_er for k in ("trip", "history", "기록", "거래", "삭제",
                                             "deleted", "removed", "hidden")))
@@ -7952,6 +7959,30 @@ def _run_agent_impl(
             from services.stock_resolver import resolve_one as _ro_er
             _ec, _en_nm = _ro_er(transcript)
             if not _ec:
+                # "Remove itt" right after the sell-or-hide question: the pending
+                # offer knows the stock — remove = hide the row, position kept
+                # (2026-09-02: this fell to the raw LLM, which INVENTED a '✅ sold
+                # at market' confirmation)
+                try:
+                    from services import chat_trade as _ct_er
+                    _ct_er._load_pending()
+                    if _ct_er._PENDING.get("offer") and _ct_er._PENDING.get("code"):
+                        _ec = _ct_er._PENDING["code"]
+                        _en_nm = _ct_er._PENDING.get("name") or _ec
+                        _ct_er._PENDING.clear()
+                        _ct_er._save_pending()
+                        _te.hide(_day_er, _ec, "")
+                        _rep_er = ((f"🗑 **{_en_nm}** — 화면 기록만 숨겼습니다 (보유 포지션은 "
+                                    f"그대로입니다 — 팔려면 \"{_en_nm} 팔아줘\"). "
+                                    f"되돌리기: \"삭제한 기록 복원\".") if not _en_er else
+                                   (f"🗑 **{_en_nm}** — hid the board row only (the position "
+                                    f"is STILL HELD — say \"sell {_en_nm}\" to sell). "
+                                    f"Undo: \"restore deleted history\"."))
+                        return {"intent": "trip_erase", "language": lang, "reply": _rep_er,
+                                "action": None, "speak": True, "transcript": transcript,
+                                "tool_used": "trip_eraser"}
+                except Exception:
+                    pass
                 _rep_er = ("어느 종목의 기록을 지울까요? 예: \"SK하이닉스 10:17에 산 기록 삭제\""
                            if not _en_er else
                            "Which stock's record should I remove? e.g. "
@@ -9129,7 +9160,8 @@ def _run_agent_impl(
     _t_cl = (transcript or "").lower()
     if (not confirmed_tool and not attachment_ids and transcript
             and len(transcript) <= 110
-            and _re.search(r"\b(?:buy|sell|order)\b|사줘|팔아|매수|매도|주문|사려|팔려", _t_cl)
+            and _re.search(r"\b(?:buy|sell|order|remove|delete)\b|사줘|팔아|매수|매도|주문"
+                           r"|사려|팔려|삭제|지워", _t_cl)
             and not _re.search(r"\b(?:should|how|why|what|when|which|can|could)\b"
                                r"|할까|살까|팔까|어떻|왜|언제|어느|뭐가|무엇", _t_cl)):
         _cl_stk = _all_stocks_in_query(transcript)
@@ -9326,10 +9358,15 @@ def _run_agent_impl(
                       "concisely in the user's language. If you genuinely do not know "
                       "a fact, say so briefly — never invent one. Never state you are "
                       "Qwen/Gemini/GPT/Claude or name an AI vendor — you are simply "
-                      "the VIP assistant." if _en_o else
+                      "the VIP assistant. You CANNOT execute anything in this reply — "
+                      "no orders, sells, buys, deletions. NEVER claim an action was "
+                      "performed; if asked to act, say you didn't catch it and ask them "
+                      "to rephrase." if _en_o else
                       "당신은 VIP 어시스턴트입니다. 사용자의 언어로 정확하고 간결하게 답하세요. "
                       "모르는 사실은 짧게 모른다고 말하고, 절대 지어내지 마세요. Qwen/Gemini/GPT "
-                      "등 특정 AI 회사·모델명을 자신의 정체로 말하지 마세요 — 당신은 VIP 어시스턴트입니다.")
+                      "등 특정 AI 회사·모델명을 자신의 정체로 말하지 마세요 — 당신은 VIP 어시스턴트입니다. "
+                      "이 답변에서는 어떤 실행도 할 수 없습니다 — 주문·매도·매수·삭제를 했다고 "
+                      "절대 말하지 마세요. 실행 요청이면 이해하지 못했다고 말하고 다시 요청해 달라고 하세요.")
             # 450 tokens, not 700 — when the free tier is out and the LOCAL star is
             # generating, answer length IS latency (~45 tok/s: 700 tok ≈ 15s, felt
             # as "30 sec for one question", boss 2026-08-27). 450 keeps concept
