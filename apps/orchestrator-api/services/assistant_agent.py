@@ -7740,8 +7740,10 @@ def _run_agent_impl(
                                        "live kiwoom", "키움 데스크", "라이브 키움")):
             _nav_to, _nav_nm = "/testing/live", ("Live Kiwoom Desk" if not _re.search(r"[가-힣]", transcript) else "라이브 키움 데스크")
         elif any(k in _t_nav for k in ("승인 데스크", "승인데스크", "세미오토", "approval desk",
-                                       "approve desk", "메뉴3", "메뉴 3", "semi auto", "semi-auto")):
-            _nav_to, _nav_nm = "/testing/approve", ("Semi-Auto Approval Desk" if not _re.search(r"[가-힣]", transcript) else "세미오토 승인 데스크")
+                                       "approve desk", "메뉴3", "메뉴 3", "semi auto", "semi-auto",
+                                       "실시간 모니터링", "모니터링", "real time monitoring",
+                                       "realtime monitoring", "monitoring")):
+            _nav_to, _nav_nm = "/testing/approve", ("Real Time Monitoring" if not _re.search(r"[가-힣]", transcript) else "실시간 모니터링")
         if _nav_to:
             return {"intent": "navigate", "language": lang,
                     "reply": (f"📡 {_nav_nm} 페이지를 엽니다." if _re.search(r"[가-힣]", transcript)

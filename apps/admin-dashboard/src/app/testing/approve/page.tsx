@@ -75,11 +75,11 @@ export default function ApprovePage() {
         <a href="/testing" style={{ color: "inherit" }}>← 모의투자 메뉴</a>
         <a href="/testing/live" style={{ color: "#00838f" }}>📡 메뉴1 실시간 키움</a>
         <a href="/testing/reco" style={{ color: "#e65100" }}>🎯 메뉴2 추천 (자동)</a>
-        <b style={{ color: "#2e7d32" }}>🤝 메뉴3 승인 (반자동)</b>
+        <b style={{ color: "#2e7d32" }}>🖥 메뉴3 실시간 모니터링</b>
       </div>
-      <h1 style={{ fontSize: 22, fontWeight: 800 }}>🤝 세미오토 승인 데스크
+      <h1 style={{ fontSize: 22, fontWeight: 800 }}>🖥 실시간 모니터링
         <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 10, opacity: 0.7 }}>
-          Semi-Auto Approval Desk — 에이전트가 제안하고, 사람이 승인합니다</span></h1>
+          Real Time Monitoring — 에이전트가 제안하고, 사람이 승인합니다</span></h1>
       <div style={{ fontSize: 12.5, opacity: 0.8, margin: "6px 0 14px" }}>
         에이전트가 100 체크리스트·1년 역사 데이터·호가창·거래량·뉴스를 실시간으로 검사하다가
         기회가 오면 <b style={{ color: "#e53935" }}>매수</b>/<b style={{ color: "#1e88e5" }}>매도</b> 팝업으로
