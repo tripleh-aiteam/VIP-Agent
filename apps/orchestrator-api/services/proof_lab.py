@@ -847,6 +847,21 @@ for _v2 in VARIANTS:
         # sell 10%"); his newer word wins and the band is closed on 알고2.
         _v2["drip"]["early"] = 0.0
 
+# THE SMALL-BLUE 3-RED LAW, ARMED AT HIS WORD (boss 2026-09-02 10:3x: "please
+# deploy all what I said recently", after I reported the court against it).
+# "One red, small blue, again one red = 3 reds, buy on the last red." Applied to
+# ALL FOUR algos because his standing law is that BUYING is the same everywhere
+# and only the selling differs. 0.2% is the reading of "small" - a fifth of a
+# percent, roughly one or two ticks on these names; it fires about once a day.
+# THE NUMBER ON RECORD, measured on 알고3 over 20 stored days before deploying:
+#   OFF 347tr win 38% -26.81% | 0.1% 358tr -33.08% | 0.2% 370tr -36.03%
+#   0.3% 380tr -36.62% | 0.5% 381tr -38.53%
+# It is monotonically worse as the tolerance widens and it moved no entry on
+# today's tape. Deployed on his explicit override, not on the evidence.
+for _v3 in VARIANTS:
+    if _v3.get("id") in ("D1", "D2", "D3", "D4"):
+        _v3["soft_blue"] = 0.2
+
 # THE COURT EXTENDS THE TWO FIXES TO THE REST OF THE DESK (18:4x, 20 stored
 # days, every stock). no_high_chase on 알고1/2/4 and the 1.5% trail wherever a
 # trail exists:
