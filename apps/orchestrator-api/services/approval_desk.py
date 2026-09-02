@@ -53,7 +53,21 @@ def desk_codes() -> list[tuple[str, str, float | None]]:
     try:
         from services.checklist_reco import _ranking
         rows = (_ranking() or {}).get("rows") or []
-        scores = {str(r.get("code")): r.get("score") for r in rows}
+        # The pinned six must still SHOW a score even when the morning gates
+        # rejected them - the ranking drops gated names, so their number is
+        # read from the full daily-pick instead (boss 2026-09-02 18:2x: four of
+        # ten rooms were reading "score None", which would look broken in the
+        # demo). The gates still decide who may be RECOMMENDED; the six are
+        # watched either way, because they are his standing choice.
+        allrows = rows
+        try:
+            import json as _j, urllib.request as _ur
+            allrows = (_j.load(_ur.urlopen(
+                "http://127.0.0.1:8000/paper-desk/daily-pick",
+                timeout=120)).get("rows") or []) or rows
+        except Exception:
+            pass
+        scores = {str(r.get("code")): r.get("score") for r in allrows}
         out = [(c, n, scores.get(c)) for c, n, _s in out]
         six_set = {c for c, _n in SIX}
         extra = [r for r in rows if str(r.get("code")) not in six_set][:4]
@@ -221,64 +235,154 @@ def scan(db) -> dict:
             if not px:
                 continue
             px = float(px)
-            # ---- SELL watch on OUR held lots ----
+            # THE ENGINE DECIDES, THE BOSS APPROVES (boss 2026-09-02 18:0x:
+            # "menu 3 must implement all buying and selling cases of algo 3").
+            # The old scanner carried its OWN three-line rule - score>=55, not
+            # selling zone, no bad news - which shared nothing with the engine:
+            # no 3rd-red door, no 제1조, no gap guard, no chop fence, no average
+            # gate, no trail, no shelf break. Menu 2 and Menu 3 could therefore
+            # disagree on the same stock in the same minute. Now 알고3 replays
+            # today's tape for this stock and whatever IT holds is what Menu 3
+            # offers - zero re-coded law, so the two menus cannot drift apart.
+            view = _algo3_view(code, name)
+            if view.get("err"):
+                log.warning(f"approval algo3 {code}: {view['err']}")
+                continue
+            a_hold = view.get("hold")
             lot = next((h for h in st["held"] if h["code"] == code), None)
-            if lot and ("SELL", code) not in pending_codes \
-                    and time.time() - st["cool"].get(f"SELL:{code}", 0) > _SELL_COOLDOWN:
-                entry = float(lot["price"])
-                pnl = (px / entry - 1) * 100
-                reasons = []
-                if pnl <= -1.0:
-                    reasons.append(f"매수가 ₩{entry:,.0f} 대비 {pnl:.2f}% 하락 — -1% 손절 법칙")
-                try:
-                    from services.checklist_reco import _year_zone
-                    z = _year_zone(code)
-                    if z and z["zone"] == "sell":
-                        reasons.append(f"1년 범위의 {z['pos']}% 지점 — 매도구간(고점권)")
-                except Exception:
-                    pass
-                try:
-                    from services.checklist_advice import _candles
-                    cn = _candles(db, code)
-                    if (cn.get("blues") or 0) >= 3 and pnl > 0:
-                        reasons.append(f"상승 후 파란 캔들 {cn['blues']}개 연속 — 고점 지나 하락 시작")
-                except Exception:
-                    pass
-                if reasons:
-                    _mk_sug(st, code, name, "SELL", reasons, px, lot["qty"], score)
-            # ---- BUY scan (not already held here, no pending) ----
+
+            # ---- SELL: we hold it, 알고3 has closed it ----
+            if lot and not a_hold:
+                if ("SELL", code) in pending_codes:
+                    continue
+                if time.time() - st["cool"].get(f"SELL:{code}", 0) <= _SELL_COOLDOWN:
+                    continue
+                rws = view.get("rows") or []
+                last = None
+                for r in rws:
+                    if last is None or str(r.get("sell_t") or "") > str(last.get("sell_t") or ""):
+                        last = r
+                _mk_sug(st, code, name, "SELL",
+                        _why_sell(code, lot, last, px), px, lot["qty"], score)
+                continue
+
+            # ---- BUY: 알고3 holds it, we do not ----
             if lot or ("BUY", code) in pending_codes:
+                continue
+            if not a_hold:
                 continue
             if time.time() - st["cool"].get(f"BUY:{code}", 0) < _BUY_COOLDOWN:
                 continue
-            if score is None or float(score) < 55:
-                continue
-            from services.checklist_reco import _year_zone
-            z = _year_zone(code)
-            if not z or z["zone"] == "sell":
-                continue
             try:
                 from services.checklist_advice import _fresh_stamps
-                if any(str(s.get("stamp")) in ("위험", "악재")
-                       for s in _fresh_stamps(code, limit=2)):
-                    continue
+                if any(str(x.get("stamp")) in ("위험", "악재")
+                       for x in _fresh_stamps(code, limit=2)):
+                    continue            # danger news still vetoes, as before
             except Exception:
                 pass
-            reasons = [f"100 체크리스트 {score}점 — 기준(55점) 통과"]
-            zk = "매수구간 (1년 중 바닥권)" if z["zone"] == "buy" else f"1년 범위의 {z['pos']}% 지점 (과열 아님)"
-            reasons.append(f"역사 데이터 확인: {zk}")
-            r, tv = _vol_ratio(code)
-            if r is not None and r >= 1.2:
-                reasons.append(f"거래량 평소의 {r:.1f}배 — 관심 몰림 (실측)")
-            from services.chat_trade import advise_qty, smart_price
-            sp = smart_price(code, px)
-            qty = advise_qty(px)
-            reasons.append(f"제안: ₩{sp:,.0f}에 {qty:,}주 (예산 ₩{10_000_000:,} 기준)")
-            _mk_sug(st, code, name, "BUY", reasons, sp, qty, score)
+            reasons = _why_buy(code, name, a_hold)
+            _bq = a_hold.get("qty") or 0
+            try:
+                _bp = float(a_hold.get("base") or a_hold.get("entry") or px)
+            except Exception:
+                _bp = px
+            if not _bq:
+                from services.chat_trade import advise_qty
+                _bq = advise_qty(px)
+            reasons.append(f"제안: ₩{_bp:,.0f} · {int(_bq):,}주 "
+                           f"(알고3의 진입가와 수량 그대로)")
+            _mk_sug(st, code, name, "BUY", reasons, _bp, int(_bq), score)
         except Exception as e:
             log.warning(f"approval scan {code}: {str(e)[:80]}")
+
     _save(st)
     return st
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 알고3 ITSELF DECIDES (boss 2026-09-02 18:0x: "menu 3 must implement all buying
+# and selling cases of 알고3, and say the reason why"). The scanner used to carry
+# its OWN three-line rule - score>=55, not selling zone, no bad news - which
+# shared nothing with the engine: no 3rd-red door, no 제1조, no gap guard, no
+# chop fence, no average gate, no trail, no shelf break. Menu 2 and Menu 3 could
+# therefore disagree on the same stock in the same minute.
+# Now the popup asks the ENGINE. run_desk replays today's tape under the real D3
+# book; whatever position it holds is what Menu 3 offers. Zero duplicated law,
+# so the two menus can never drift apart.
+def _algo3_view(code: str, name: str) -> dict:
+    """What 알고3 is doing in this stock right now, and why."""
+    out = {"hold": None, "rows": [], "err": None}
+    try:
+        from services.kiwoom_rules import trades as _tr
+        d = _tr("D3", tick=5, period=60, bars=10, limit=500, codes=code,
+                use_gate=True, allow_fallback=True, rank_gate=True)
+        if not d.get("ok"):
+            out["err"] = "engine returned no board"
+            return out
+        out["hold"] = next((h for h in (d.get("holding") or [])
+                            if str(h.get("code")) == code), None)
+        out["rows"] = [r for r in (d.get("rows") or [])
+                       if str(r.get("code")) == code]
+    except Exception as e:
+        out["err"] = str(e)[:120]
+    return out
+
+
+def _why_buy(code: str, name: str, hold: dict) -> list:
+    """The reasons in the boss's own language: the checklist first, then the
+    exact 알고3 law that opened the door, then the two average gates."""
+    R = []
+    try:
+        from services.checklist_reco import _ranking
+        rows = (_ranking() or {}).get("rows") or []
+        me = next((r for r in rows if str(r.get("code")) == code), None)
+        if me:
+            rank = sorted(rows, key=lambda r: -(r.get("score") or 0)).index(me) + 1
+            R.append(f"100 체크리스트 {me.get('score')}점 · 전체 {len(rows)}종목 중 {rank}등")
+            if me.get("mid") is not None:
+                R.append(f"1개월 평균선 대비 {me.get('mid'):+.2f}% — 평균 아래 (매수 게이트 1 통과)")
+            if me.get("midy") is not None:
+                R.append(f"1년 평균선 대비 {me.get('midy'):+.2f}% — 평균 아래 (매수 게이트 2 통과)")
+    except Exception:
+        pass
+    try:
+        from services.checklist_reco import _year_zone
+        z = _year_zone(code)
+        if z:
+            zk = ("매수구간 (1년 중 바닥 20%)" if z["zone"] == "buy"
+                  else f"1년 범위의 {z['pos']}% 지점 — 매도구간(85%↑) 아님")
+            R.append(f"과거 1년 데이터 확인: {zk}")
+    except Exception:
+        pass
+    bt = str((hold or {}).get("buy_t") or "")[:5]
+    R.append(f"알고3 진입 법칙 충족 ({bt}) — 급락 후 하락이 멈추고 3번째 양봉, "
+             f"제1조(바닥 3봉 이상·바닥 1.5% 이내·최근 3봉 중 2회 상승·0.3% 성장) 통과")
+    R.append("차단 규칙 전부 통과: 갭상승 금지 · 30봉 고가 0.3% 이내 금지 · "
+             "매도존 금지 · 20봉 변동 0.7% 미만 금지 · 매도 후 추격 금지 · "
+             "1개월/1년 평균 위 금지")
+    return R
+
+
+def _why_sell(code: str, lot: dict, row: dict, px: float) -> list:
+    """Name the law that closed it - the engine's own words, then the money."""
+    R = []
+    why = str((row or {}).get("exit_why") or "")
+    law = ("고점 대비 1.5% 하락 (종가 확인) — 큰 파도 청산" if "고점" in why else
+           "고점 후 횡보 지지선(12봉 최저) 이탈 — 이익 중 청산" if "지지선" in why else
+           "-1% 손절 (종가 확인)" if "-1%" in why else
+           "15:19 장 마감 전량 정리" if "마감" in why else
+           "상승 후 연속 음봉 — 파도 종료" if "음봉" in why else why or "알고3 청산 신호")
+    R.append(f"알고3 청산 법칙: {law}")
+    try:
+        entry = float(lot["price"])
+        pnl = (px / entry - 1) * 100
+        R.append(f"매수가 ₩{entry:,.0f} → 현재 ₩{px:,.0f} ({pnl:+.2f}%)")
+        if 0 < pnl <= 0.23:
+            R.append("주의: 수수료 구간(0~0.23%) — 알고3는 이 구간에서 팔지 않습니다")
+    except Exception:
+        pass
+    R.append("보류 법칙 확인: 매수구간(1년 바닥권 또는 5일 최저) 인내 규칙에 해당하지 않음")
+    return R
 
 
 def decide(db, sid: int, ok: bool) -> dict:

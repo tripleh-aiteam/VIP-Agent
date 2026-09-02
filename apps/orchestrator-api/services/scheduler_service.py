@@ -2727,6 +2727,30 @@ def init_scheduler():
         id="ollama-keep-warm",
         replace_existing=True, max_instances=1, coalesce=True,
     )
+    # PRE-OPEN DESK REFRESH (boss 2026-09-02 18:3x audit: three of Menu 3's
+    # four new rooms had ZERO tape - 현대로템, 한화시스템, 한국항공우주 - because
+    # refresh_watch() is only ever called by hand through /daily-pick?refresh=1.
+    # Nothing scheduled it, so the collector kept yesterday's stocks and any
+    # newly-picked room would have been blind at the bell. Runs 08:30 KST on
+    # weekdays: recomputes today's picks and re-points the collector while the
+    # market is still shut, which is the only time a swap is safe.
+    def _pre_open_desk():
+        try:
+            from services.daily_pick import save_picks, _today
+            from services.kiwoom_tape import refresh_watch, WATCH
+            save_picks(_today())
+            refresh_watch(force=True)
+            log.info(f"pre-open desk refresh: watching {len(WATCH)} stocks",
+                     extra={"action": "desk.preopen"})
+        except Exception as e:
+            log.warning(f"pre-open desk refresh failed: {str(e)[:120]}",
+                        extra={"action": "desk.preopen.fail"})
+    _scheduler.add_job(
+        _pre_open_desk,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=30, timezone=_KST_TZ),
+        id="pre-open-desk-refresh",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
     # DESK-HISTORY KEEP-WARM (boss 2026-09-02 14:5x: "trading history is not
     # loading"). /live/warm existed but NOTHING EVER CALLED IT - only Ollama had
     # a keep-warm - so the family-trades cache was filled only by a real page

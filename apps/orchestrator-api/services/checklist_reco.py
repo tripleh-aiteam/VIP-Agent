@@ -108,9 +108,18 @@ def _ranking() -> Optional[dict]:
         rows = d.get("rows") or []
         out = []
         for x in rows:
-            c9 = (x.get("cats") or {}).get("avg")
-            if c9 is not None:
-                x = dict(x, score=round(float(c9), 1))
+            # THE REBUILT RANKING WINS (boss 2026-09-02 17:3x/18:0x). This used
+            # to overwrite the score with cats.avg - the 100-item weighted sum,
+            # the number measured to rank stocks BACKWARDS (its top-10 made
+            # -0.794%/day against a -0.314% baseline while its bottom-10 made
+            # -0.008%). daily-pick now carries the validated score in `score`
+            # and the old sum in `score_100`, so the platform's one scorer is
+            # the one where a high number means a better stock. Anything the
+            # two morning gates rejected (above its 1-month or 1-year average,
+            # or already rising) is dropped from the ranking entirely, so no
+            # desk - Menu 3 included - can be handed a stock Menu 2 refuses.
+            if x.get("rising"):
+                continue
             out.append(x)
         out.sort(key=lambda x: -(x.get("score") or 0))
         return out
