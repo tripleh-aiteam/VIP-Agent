@@ -3086,10 +3086,10 @@ export default function LiveDeskPage() {
            ["d2", t("② 알고리즘 2 — 10% 계단", "② Algorithm 2 — 10% drip"),
             t("같은 다섯 문·같은 레이어 판정 → +1%마다 10%씩 매도, 한 계단 내려오면 그 조각 되사기(핑퐁) · 바닥 20% +2% 밸브 · -1% 전량 후 3양봉, 2회면 종목 종료 · 15:19 전량 — 연간 성적 1위",
               "same five doors & judges -> sells 10% per +1% rung, buys the slice back one step lower (ping-pong) · bottom-fifth +2% valve · -1% stop + 3-red, 2 stops = done · 15:19 all out - the year's best earner")],
-           ["d3", t("③ 알고리즘 3 — 큰 파도 전량 (08-31 재탄생)", "③ Algorithm 3 — big-wave rides (reborn 08-31)"),
-            t("사장님 설계: 급락 → 하락 멈춤 → 3번째 양봉에 매수 → +1%여도 팔지 않고 정점까지 보유 → 상승이 끝나고 연속 3번째 음봉(순수 청청청)에 전량 매도 → 하락 멈춤 후 3번째 양봉에 재매수 · -1% 전량 스톱 · 매수존 매도금지·매도존 매수금지 · 하루 2-5% 큰 파도 3-4번을 노린다",
-              "the boss's design: sharp fall -> stop -> buy at the 3rd red -> hold past +1%, ride to the peak -> sell ALL at the 3rd consecutive blue -> re-buy at the 3rd red · -1% full stop · zone laws · hunts the day's 3-4 big 2-5% waves")],
-           ["d4", t("④ 알고리즘 4 — 알고2+갭상승 룰", "④ Algorithm 4 — Algo2 + gap rule"),
+           ["d3", t("③ 알고리즘 3 — 큰 파도 전량", "③ Algorithm 3 — big-wave rides"),
+            t("사장님 설계 + 09-01 밤 4대 원칙: 급락 → 하락 멈춤 → 3번째 양봉에 매수(단 30봉 고가 0.3% 이내에서는 매수 금지 — 늦은 추격) · 시초 5분 강세(시가 +0.5%↑)는 별도 진입 허용 · +1%에 팔지 않고 정점까지 보유, 정점 대비 1.5% 하락이 '종가로' 확인될 때 전량(꼬리만으로는 안 판다) · -1% 종가 확인 손절 · 갭상승 매수 금지 · 매도존(연중 85%↑) 매수 금지 · 매수존(연중 20%↓) 매도 금지",
+              "the boss's design + his four rules of 09-01: sharp fall -> stop -> buy the 3rd red (but never within 0.3% of the 30-bar high - that is a late chase) · an opening door for the first 5 min (0.5% above its own open) · hold past +1% and ride to the peak, sell ALL when a 1.5% fall from the peak is confirmed ON THE CLOSE (a wick alone never ends a ride) · -1% close-confirmed stop · no buying a gap-up · no buying in the selling zone (>=85% of the year) · no selling in the buying zone (<=20%)")],
+           ["d4", t("④ 알고리즘 4 · 예비 (긴급 시)", "④ Algorithm 4 · backup (urgent)"),
             t("알고리즘 2와 완전히 같은 책 + 갭상승 규칙 하나: 시가가 전일 종가보다 +2% 이상 높게 출발한 종목은 가격이 자기 시가 아래로 내려올 때까지 신규 매수 금지 (하락을 기다렸다 진짜 바닥을 산다) · 연간 측정 +18.2M — 오늘의 하이닉스 +5.2% 갭 아침이 증거",
               "exactly Algo 2's book + ONE gap rule: a stock that opened >=2% above yesterday's close takes no NEW buys until its price falls below its own open (wait the decrease, buy the real bottom) · measured +18.2M/yr - today's +5.2% 하이닉스 gap morning is the exhibit")]] as const)
           .map(([k, lab, tip]) => (
@@ -3101,9 +3101,17 @@ export default function LiveDeskPage() {
                              // the old algorithm's last request must not ride
                              // the refresher into the new board
                              lastReqRef.current = null; }}
-            className="text-[11.5px] font-bold px-3 py-1 rounded-md border"
-            style={way === k ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
-                             : { borderColor: "#6a1b9a", color: "#6a1b9a", background: "transparent" }}>
+            className={"text-[11.5px] font-bold px-3 py-1 rounded-md border"
+              + (k === "d4" ? " border-dashed" : "")}
+            style={way === k
+              ? { background: k === "d4" ? "#6d4c41" : "#6a1b9a", color: "#fff",
+                  borderColor: k === "d4" ? "#6d4c41" : "#6a1b9a" }
+              // 알고4 is the RESERVE (boss 2026-09-02: "Algo 4 is for back up in
+              // urgent case") - dashed and stepped back, one click away, still
+              // fully live when opened
+              : { borderColor: k === "d4" ? "#a1887f" : "#6a1b9a",
+                  color: k === "d4" ? "#8d6e63" : "#6a1b9a",
+                  background: "transparent", opacity: k === "d4" ? 0.75 : 1 }}>
             {way === k ? "● " : ""}{lab}
           </button>
         ))}
