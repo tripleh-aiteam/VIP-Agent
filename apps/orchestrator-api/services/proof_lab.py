@@ -837,6 +837,15 @@ for _v2 in VARIANTS:
         _v2["derisk_free"] = False
         _v2["drip"] = dict(_v2["drip"])
         _v2["drip"]["retreat"] = {"big": 999.0, "arm": 999.0, "blues": 999}
+        # AND THE RUNG MUST BE A REAL +1% (boss 09-02 10:0x, second pass:
+        # "make sure in Algo 2 also, like Algo 3, wait until -1% decrease" -
+        # and he listed the PROFITABLE slices as wrong too). They were not
+        # retreat sales: the `early` band armed each rung 0.15% low, so
+        # 삼성SDI sold at +0.89% and 메리츠 at +0.87% - under the +1% they
+        # were supposed to wait for. COLLISION ON RECORD: this reverses his
+        # own 08-31 15:0x band ("if it increases between 0.85 and 1.05 we can
+        # sell 10%"); his newer word wins and the band is closed on 알고2.
+        _v2["drip"]["early"] = 0.0
 
 # THE COURT EXTENDS THE TWO FIXES TO THE REST OF THE DESK (18:4x, 20 stored
 # days, every stock). no_high_chase on 알고1/2/4 and the 1.5% trail wherever a
