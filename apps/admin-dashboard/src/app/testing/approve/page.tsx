@@ -5,6 +5,7 @@
    room = watch the agent work with real numbers, popups carry easy-word reasons,
    nothing trades without the human click." Simple on purpose — it is a stage. */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useLanguage } from "@/components/i18n";
 import { API } from "../../../components/api";
 
 type Zone = { pos: number; zone: "buy" | "sell" | "mid" } | null;
@@ -54,7 +55,17 @@ function MiniCandles({ bars }: { bars: CBar[] }) {
 
 export default function ApprovePage() {
   const base = API.replace(/\/$/, "");
+  const { t } = useLanguage();
   const [feed, setFeed] = useState<Feed | null>(null);
+  // THE AGENT, THINKING OUT LOUD (boss 2026-09-03 #9): above the rooms the
+  // agent visibly walks the whole universe gate by gate and keeps choosing
+  // the five; a gated stock - the six included - wears a bold NO BUY.
+  type Gate = { k: string; en: string; v: string; bad: boolean };
+  type BrainRow = { code: string; name: string; score?: number; gates: Gate[];
+                    pass: boolean; no_buy?: string | null; chosen?: boolean };
+  type Brain = { ok: boolean; universe: BrainRow[]; six: BrainRow[]; five: string[] };
+  const [brain, setBrain] = useState<Brain | null>(null);
+  const [thinkIdx, setThinkIdx] = useState(0);
   const [open, setOpen] = useState<string | null>(null);          // opened room code
   const [steps, setSteps] = useState<Step[]>([]);
   const [shown, setShown] = useState(0);                          // animated step count
@@ -76,6 +87,16 @@ export default function ApprovePage() {
     fetch(`${base}/approval/feed`).then((r) => r.json()).then(setFeed).catch(() => {});
   }, [base]);
   useEffect(() => { pull(); const t = setInterval(pull, 5000); return () => clearInterval(t); }, [pull]);
+  useEffect(() => {
+    const load = () =>
+      fetch(`${base}/approval/brain`).then((r) => r.json()).then(setBrain).catch(() => {});
+    load(); const t = setInterval(load, 7000); return () => clearInterval(t);
+  }, []);
+  // the "thinking" cursor walks one stock per beat, never stopping in market hours
+  useEffect(() => {
+    const t = setInterval(() => setThinkIdx((i) => i + 1), 1600);
+    return () => clearInterval(t);
+  }, []);
 
   const openRoom = useCallback((code: string) => {
     setOpen((cur) => (cur === code ? null : code));
@@ -129,6 +150,58 @@ export default function ApprovePage() {
         {feed && <span style={{ marginLeft: 8 }}>{feed.market_open ? "🟢 장중" : "🌙 장 마감 — 제안은 장중에만 나옵니다"}</span>}
       </div>
 
+      {/* ─ THE AGENT, above the rooms, thinking in the open ─ */}
+      {brain?.ok && (() => {
+        const uni = brain.universe || [];
+        const cur = uni.length ? uni[thinkIdx % uni.length] : null;
+        return (
+          <div style={{ margin: "12px 0", padding: "12px 14px", borderRadius: 10,
+                        border: "2px solid #6a1b9a", background: "rgba(106,27,154,0.05)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <b style={{ fontSize: 15 }}>🤖 {t("에이전트가 생각하는 중", "THE AGENT IS THINKING")}</b>
+              <span className="pulse-dot" style={{ width: 8, height: 8, borderRadius: 4,
+                background: "#6a1b9a", display: "inline-block", animation: "pulse 1.2s infinite" }} />
+              <span style={{ fontSize: 12, opacity: 0.75 }}>
+                {t(`${uni.length}개 후보를 쉬지 않고 검사 → 고정 6 + 최적 5 선택`,
+                   `scanning ${uni.length} candidates non-stop → the fixed 6 + the best 5`)}
+              </span>
+            </div>
+            {cur && (
+              <div style={{ marginTop: 10, fontSize: 13 }}>
+                <b>🔎 {t("지금 검사 중", "now checking")}: {cur.name}</b>
+                <span style={{ marginLeft: 8, opacity: 0.7 }}>{t("점수", "score")} {cur.score}</span>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                  {cur.gates.map((g, i) => (
+                    <span key={i} style={{ fontSize: 12, padding: "3px 9px", borderRadius: 6,
+                        border: `1px solid ${g.bad ? "#c62828" : "#2e7d32"}`,
+                        color: g.bad ? "#c62828" : "#2e7d32",
+                        background: g.bad ? "rgba(198,40,40,0.07)" : "rgba(46,125,50,0.07)" }}>
+                      {g.bad ? "✗" : "✓"} {t(g.k, g.en)} {g.v}
+                    </span>
+                  ))}
+                </div>
+                <div style={{ marginTop: 6, fontWeight: 700, fontSize: 13,
+                              color: cur.pass ? "#2e7d32" : "#c62828" }}>
+                  {cur.pass
+                    ? t("→ 통과 — 매수 후보", "→ PASSES — buy candidate")
+                    : t(`→ 매수 금지! ${cur.no_buy}`, `→ NO BUY! ${cur.no_buy}`)}
+                </div>
+              </div>
+            )}
+            <div style={{ marginTop: 10, fontSize: 13 }}>
+              <b>🏆 {t("지금의 최적 5", "the current best five")}:</b>{" "}
+              {(brain.five || []).map((n, i) => (
+                <span key={i} style={{ margin: "0 4px", padding: "3px 10px", borderRadius: 999,
+                    background: "#6a1b9a", color: "#fff", fontSize: 12.5, fontWeight: 700 }}>{n}</span>
+              ))}
+              <span style={{ marginLeft: 6, fontSize: 11.5, opacity: 0.65 }}>
+                {t("(장중 계속 갱신)", "(re-chosen continuously through the session)")}
+              </span>
+            </div>
+            <style>{`@keyframes pulse{0%{opacity:.25}50%{opacity:1}100%{opacity:.25}}`}</style>
+          </div>
+        );
+      })()}
       {/* ─ the ten rooms ─ */}
       {!feed && <div style={{ padding: "26px 0", fontSize: 13.5, opacity: 0.7 }}>
         ⏳ 데스크를 깨우는 중입니다 — 10개 방을 준비하고 있어요… (첫 로딩은 몇 초 걸릴 수 있습니다)</div>}
