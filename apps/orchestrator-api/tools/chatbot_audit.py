@@ -65,7 +65,8 @@ TESTS = [
      # BOTH stocks answered; dates checked dynamically (a hardcoded "Aug 25/26"
      # went stale overnight and failed a correct answer, 2026-08-27)
      lambda i, r: (i == "stock_history" and "NAVER" in r and "삼성전자" in r
-                   and len(re.findall(r"Aug \d\d|\d\d-\d\d", r)) >= 2, i)),
+                   # ANY month name — the 'Aug' version went stale on Sep 1 (2026-09-02)
+                   and len(re.findall(r"[A-Z][a-z]{2} \d{1,2}|\d\d-\d\d", r)) >= 2, i)),
     ("multi", "skhynix open, close and volume yesterday", None,
      lambda i, r: (i in ("stock_history", "stock_price") and no_refusal(r), i)),
     ("multi", "최근 6개월 에코프로비엠 최저가 최고가 거래량", None,

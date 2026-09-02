@@ -898,6 +898,10 @@ def verb_only_side(transcript: Optional[str]) -> Optional[str]:
     tl = t.lower()
     if not t or len(t) > 60 or any(w in tl for w in _ADVICE_BLOCK):
         return None
+    # '공매도가 뭐야?' asked WHICH STOCK TO SELL (2026-09-02 exam): 공매도 contains
+    # 매도 but is a CONCEPT, and Korean question shapes are never orders
+    if re.search(r"공매도|뭐야|뭔가요|뭔가|무엇|설명|이란\b|이 뭐|란\s*\?", t):
+        return None
     side = None
     m = _CMD_EN.match(tl) or _CMD_EN2.search(tl)
     if m:
@@ -949,6 +953,20 @@ def stock_reply(db, transcript: Optional[str], lang: str) -> Optional[str]:
     except Exception:
         code = name = None
     if not code:
+        return None
+    # the reply must be (nearly) JUST the name — a full question that merely
+    # CONTAINS a stock ('what is samsung electronics price now') was swallowed
+    # by a stale which-stock pending and answered with a sell prompt (2026-09-02)
+    rest = transcript or ""
+    try:
+        from services import stock_resolver as _sr
+        _sr._build()
+        for run in set(re.findall(r"[가-힣A-Za-z0-9-]+", rest)):
+            if run.lower() in _sr._ALIAS:
+                rest = rest.replace(run, " ")
+    except Exception:
+        pass
+    if len(re.findall(r"[A-Za-z가-힣]", rest)) > 10:
         return None
     p = dict(_PENDING)
     return _make_preview(db, code, name or code, p.get("side") or "BUY", None,
