@@ -2911,6 +2911,17 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 _bb9 = v.get("band_break")
                 if (_bb9 and pos["qty"] > 0 and pos.get("qty_add", 0) <= 0
                         and i > int(_bb9) + 1
+                        # ONLY OUT OF A PROFIT (boss 2026-09-02 11:4x, the
+                        # 메리츠 09:22 case: he watched a +3.28% holding turn
+                        # into a closed -0.16% and asked why it sold without
+                        # waiting for -1%). The shelf break was firing BELOW
+                        # cost, doing the stop's job two-thirds of a percent
+                        # early - and it took us out of a ride that reached
+                        # +7.00% (125,700 -> 134,500). Below the fee line the
+                        # -1% stop alone ends a ride, which is his standing
+                        # law; the shelf break may now only harvest a real
+                        # gain, which is all the 삼성전기 09:40 order needed.
+                        and c > pos.get("base", 0) * (1 + FEE_PCT / 100)
                         and pos.get("pr_pk", 0) >= pos.get("base", 0)
                         * (1 + float((v.get("trail_all") or {}).get("arm", 1.0))
                            / 100)
