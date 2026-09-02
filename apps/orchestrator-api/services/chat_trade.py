@@ -1283,6 +1283,8 @@ def _desk_links(en: bool) -> str:
     it should offer both')."""
     if en:
         return ("[📡 Menu 1 — Live Kiwoom Desk](nav:/testing/live) · "
-                "[📡 Menu 2 — Checklist Reco Desk](nav:/testing/reco)")
+                "[📡 Menu 2 — Checklist Reco Desk](nav:/testing/reco) · "
+                "[🤝 Menu 3 — Approval Desk](nav:/testing/approve)")
     return ("[📡 메뉴1 — Live Kiwoom Desk](nav:/testing/live) · "
-            "[📡 메뉴2 — 체크리스트 추천 데스크](nav:/testing/reco)")
+            "[📡 메뉴2 — 체크리스트 추천 데스크](nav:/testing/reco) · "
+            "[🤝 메뉴3 — 승인 데스크](nav:/testing/approve)")

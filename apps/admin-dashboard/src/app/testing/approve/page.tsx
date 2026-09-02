@@ -71,6 +71,12 @@ export default function ApprovePage() {
 
   return (
     <div style={{ maxWidth: 1080, margin: "0 auto", padding: 16, fontFamily: "inherit" }}>
+      <div style={{ fontSize: 11.5, marginBottom: 6, display: "flex", gap: 12, opacity: 0.85 }}>
+        <a href="/testing" style={{ color: "inherit" }}>← 모의투자 메뉴</a>
+        <a href="/testing/live" style={{ color: "#00838f" }}>📡 메뉴1 실시간 키움</a>
+        <a href="/testing/reco" style={{ color: "#e65100" }}>🎯 메뉴2 추천 (자동)</a>
+        <b style={{ color: "#2e7d32" }}>🤝 메뉴3 승인 (반자동)</b>
+      </div>
       <h1 style={{ fontSize: 22, fontWeight: 800 }}>🤝 세미오토 승인 데스크
         <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 10, opacity: 0.7 }}>
           Semi-Auto Approval Desk — 에이전트가 제안하고, 사람이 승인합니다</span></h1>

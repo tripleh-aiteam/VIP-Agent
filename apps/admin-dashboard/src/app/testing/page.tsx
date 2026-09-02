@@ -55,6 +55,24 @@ export default function TestingIndex() {
           </div>
         </div>
 
+        {/* ---- 🤝 Menu 3 — Semi-Auto Approval Desk (boss 2026-09-02: "tomorrow I
+             wanna trade with both — menu 2 automatic without asking, menu 3 takes
+             our approve then will do it") ---- */}
+        <div className="rounded-2xl border-2 p-5" style={{ borderColor: "#2e7d32", background: "rgba(46,125,50,0.04)" }}>
+          <div className="text-[18px] font-extrabold" style={{ color: "#2e7d32" }}>
+            🤝 {t("세미오토 승인 데스크 — 사람이 최종 결정", "Semi-Auto Approval Desk — the human decides")}
+          </div>
+          <p className="mt-2 text-[13px] leading-relaxed text-[var(--text-secondary)]">
+            {t("메뉴2가 자동으로 매매하는 동안, 여기서는 같은 두뇌(100문항·1년 역사 데이터·호가창·거래량·뉴스)가 종목·가격·수량까지 제안만 하고 — 승인 버튼을 눌러야만 실행됩니다. 10개 방(고정 6 + 오늘의 추천 4)을 클릭하면 에이전트가 실제로 검사하는 과정이 그대로 보입니다. 팝업의 이유를 읽고 ✅ 승인 또는 취소 — 매매마다 사람의 손가락이 들어갑니다.",
+               "While Menu 2 trades automatically, here the same brain (100 items, 1-year history, order book, volume, news) only SUGGESTS — company, price and share count — and nothing executes until you press Approve. Click any of the 10 rooms (the six + today's top 4) to watch the agent actually working. Read the popup's reasons, then ✅ Approve or Cancel — a human finger on every trade.")}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link prefetch={true} href="/testing/approve" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: "#2e7d32" }}>
+              {t("승인 데스크 열기", "Open the approval desk")}
+            </Link>
+          </div>
+        </div>
+
         {/* 🎭 Demo Theater card removed at the boss's order (2026-08-27:
             "remove Demo Theater - only keep Live Order Room in menu 1, 2").
             The real-trade 🎞 replay lives inside each menu's Order Room. */}
