@@ -309,7 +309,14 @@ def _daily20(code: str, before_day: str) -> tuple:
         # percentile cannot see it - 두산 is 0.31 of its year but BELOW its
         # 5-day low)
         low5 = min(closes[d2] for d2 in days[-5:])
-        out = (prev_close, low20, low5)
+        # the two average lines the boss's gates run on (2026-09-02 17:5x:
+        # "in the buying block case add today's rule - if it is higher than
+        # average do not buy"): month and year means of the closes
+        _cl9 = [closes[d2] for d2 in days]
+        ma20 = sum(_cl9[-20:]) / 20 if len(_cl9) >= 20 else None
+        _yl9 = min(len(_cl9), 246)
+        mayr = sum(_cl9[-_yl9:]) / _yl9 if _yl9 >= 60 else None
+        out = (prev_close, low20, low5, ma20, mayr)
     _D20_CACHE[key] = out
     return out
 
@@ -744,6 +751,8 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                          "prev_close": _daily20(code, d or _kd0())[0],
                          "low20": _daily20(code, d or _kd0())[1],
                          "low5": _daily20(code, d or _kd0())[2],
+                         "ma20": _daily20(code, d or _kd0())[3],
+                         "mayr": _daily20(code, d or _kd0())[4],
                          "open_vol_med": _open_vol_med(code),
                          "daily_pos": _daily_pos(code,
                                                  tp["cs"][-1]["close"]
@@ -969,6 +978,8 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          "prev_close": _daily20(c_code, d or _kd0())[0],
                          "low20": _daily20(c_code, d or _kd0())[1],
                          "low5": _daily20(c_code, d or _kd0())[2],
+                         "ma20": _daily20(c_code, d or _kd0())[3],
+                         "mayr": _daily20(c_code, d or _kd0())[4],
                          "open_vol_med": _open_vol_med(c_code),
                          "daily_pos": _daily_pos(c_code,
                                                  cs[-1]["close"] if cs else 0),

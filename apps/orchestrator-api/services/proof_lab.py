@@ -823,6 +823,7 @@ _D3r["trail_all"] = {"arm": 1.0, "drop": 1.5}
 # exempt (at 09:01 the session high IS the current bar). Measured: +4.08% ->
 # +5.96%, win 52% -> 60%, and 한미's late 13:49 -1.27% chase disappears.
 _D3r["no_high_chase"] = 0.3
+_D3r["avg_gate"] = True
 
 # 알고2 STOPS SELLING PIECES INTO A DIP (boss 2026-09-02 09:5x, live: "algo 2
 # still running with old rule - if it decrease 2 blue sell, no, we should wait
@@ -1918,6 +1919,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     # COUNTS in a live run; only a falling close breaks it. v["soft_up"]
     # variants (알고4 bench) use this for the 3-red re-entry count.
     up_soft = [0] * n
+    red_mag = [None] * n   # size of the last rising bar, for soft_blue_rel
     reb_pk = [None] * n        # re-board anchor (boss 2026-08-21: "after the 2nd
                                # blue sell, THEN AGAIN BUY" - a ride's old peak;
                                # price back above it = the climb resumed)
@@ -2053,6 +2055,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
         if c > prev:
             up[si], dn[si] = up[si] + 1, 0
             up_soft[si] += 1
+            red_mag[si] = ((c - prev) / prev * 100) if prev else None
         elif c < prev:
             # A SMALL BLUE IS A PAUSE, NOT A BREAK (boss 2026-09-02 10:2x: "if
             # there is one red then small blue then again one red, consider them
@@ -2062,13 +2065,23 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             # dn[] - the stop and the blues-form exits stay honest - only the
             # RED RUN survives it.
             _sbl = v.get("soft_blue")
-            if (_sbl and up_soft[si] > 0 and prev
-                    and (prev - c) / prev * 100 <= float(_sbl)):
+            _fall9 = ((prev - c) / prev * 100) if prev else 0.0
+            # HIS RELATIVE RULE (boss 2026-09-02 12:2x): "if one red then blue
+            # and if this blue lower or equal to the red we can ignore this...
+            # then we will have total 3 red (even they are not sequentially)".
+            # An ignored blue neither counts nor resets - the reds simply keep
+            # their tally across it.
+            if (v.get("soft_blue_rel") and up_soft[si] > 0
+                    and red_mag[si] is not None and _fall9 <= red_mag[si]):
+                up[si], dn[si] = 0, dn[si] + 1
+            elif (_sbl and up_soft[si] > 0 and prev
+                    and _fall9 <= float(_sbl)):
                 up[si], dn[si] = 0, dn[si] + 1
                 up_soft[si] += 1
             else:
                 up[si], dn[si] = 0, dn[si] + 1
                 up_soft[si] = 0
+                red_mag[si] = None
         elif up_soft[si] > 0:
             up_soft[si] += 1   # a flat close continues AND counts (boss's law)
         # the fade-first lock opens once a real decrease showed itself
@@ -2219,6 +2232,21 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            # anyway): after a full exit NOTHING boards more
                            # than 1.5% above the post-exit low, whichever door
                            # asks. 제1조: a late confirmation is a chase.
+            elif (v.get("avg_gate") and (s.get("ma20") or s.get("mayr"))
+                  and not ((s.get("ma20") is None or c <= s["ma20"])
+                           and (s.get("mayr") is None or c <= s["mayr"]))):
+                pass       # ABOVE ITS OWN AVERAGE - NO BUYING (boss 2026-09-02
+                           # 17:5x: "in the buying block case add today's rule -
+                           # if it is higher than average do not buy"). The same
+                           # two gates his checklist already uses, now inside
+                           # the engine so both halves of the desk agree.
+                           # Measured, 알고3 over 20 sessions:
+                           #   no average rule   365tr win 44.4%  -70.78%
+                           #   above month only  127tr win 43.3%  -18.38%
+                           #   above year only   133tr win 47.4%  -26.40%
+                           #   below BOTH         38tr win 50.0%   -5.83%
+                           # It cuts the loss by 92% and lifts the win rate to
+                           # 50% - largely by trading a tenth as often.
             elif (v.get("no_high_chase") and i >= 30
                   and not (v.get("open_door")
                            and _open_entry(s, v, i, closes))
