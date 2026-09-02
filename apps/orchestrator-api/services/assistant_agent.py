@@ -8066,14 +8066,9 @@ def _run_agent_impl(
             from routers.paper_desk import live_family_trades as _lft_ah
             _res_ah = _lft_ah(family=_fam_ah, tick=5, period=0, day="", frm="", to="",
                               gate=1, auto=1, codes=",".join(_codes_ah))
-            if _res_ah.get("computing"):
-                import time as _tm_ah
-                for _w9 in range(6):
-                    _tm_ah.sleep(3)
-                    _res_ah = _lft_ah(family=_fam_ah, tick=5, period=0, day="", frm="",
-                                      to="", gate=1, auto=1, codes=",".join(_codes_ah))
-                    if not _res_ah.get("computing"):
-                        break
+            # NO retry loop (2026-09-02: poking a computing desk repeatedly while
+            # the approval scanner also replays crashed the whole server) — one
+            # ask; still computing → the honest wait message below
             from services.chat_trade import text_lang_en as _tle_ah
             _en_ah = _tle_ah(transcript, lang)
             _an = _m_ah.group(1)
@@ -8128,8 +8123,9 @@ def _run_agent_impl(
     _t_uni = (transcript or "").lower()
     if (not confirmed_tool and not attachment_ids and transcript
             # "Please SELL all stocks: <pasted row>" is an ORDER, not a list ask
-            # (2026-09-02: the universe lane answered a sell command)
-            and not _re.search(r"\b(?:buy|sell)\b|사줘|팔아|매수|매도", _t_uni)
+            # (2026-09-02: the universe lane answered a sell command); and
+            # "어떤 종목 추천해?" is a RECO ask, not the universe list
+            and not _re.search(r"\b(?:buy|sell)\b|사줘|팔아|매수|매도|추천|recommend", _t_uni)
             and (any(k in _t_uni for k in ("all stocks", "list of stocks", "stock list",
                                            "trading universe", "which stocks", "전체 종목",
                                            "종목 리스트", "종목 목록", "거래하는 종목", "거래 종목",
@@ -8467,6 +8463,12 @@ def _run_agent_impl(
             _ctb = _ct.breakeven_reply(db, transcript, lang, ctx_code=_ctx_code9)
             if _ctb:
                 return {"intent": "chat_trade", "language": lang, "reply": _ctb,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "chat_trade"}
+            # 🧾 multi-stock order ("buy samsung and naver 10 shares", 2026-09-02)
+            _ctm9 = _ct.multi_preview(db, transcript, lang)
+            if _ctm9:
+                return {"intent": "chat_trade_confirm", "language": lang, "reply": _ctm9,
                         "action": None, "speak": True, "transcript": transcript,
                         "tool_used": "chat_trade"}
             # 🪜 split-buy ladder FIRST ("1000주를 10가지 다른 가격으로", 2026-09-02) —
@@ -9166,9 +9168,10 @@ def _run_agent_impl(
     if (not confirmed_tool and not attachment_ids and transcript
             and len(transcript) <= 110
             and _re.search(r"\b(?:buy|sell|order|remove|delete)\b|사줘|팔아|매수|매도|주문"
-                           r"|사려|팔려|삭제|지워", _t_cl)
+                           r"|사려|팔려|삭제|지워", _t_cl.replace("공매도", " "))
             and not _re.search(r"\b(?:should|how|why|what|when|which|can|could)\b"
-                               r"|할까|살까|팔까|어떻|왜|언제|어느|뭐가|무엇", _t_cl)):
+                               r"|할까|살까|팔까|어떻|왜|언제|어느|뭐가|무엇|뭐야|뭔가|설명|이란",
+                               _t_cl)):
         _cl_stk = _all_stocks_in_query(transcript)
         _en_cl = not _re.search(r"[가-힣]", transcript)
         _nm_cl = _cl_stk[0][1] if _cl_stk else ("삼성전자" if not _en_cl else "samsung")

@@ -1023,6 +1023,77 @@ def ladder_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
     return "\n".join(L)
 
 
+def multi_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
+    """MULTI-STOCK order (boss 2026-09-02: "we could buy or sell multiple stock
+    also"): 'buy samsung and naver 10 shares each' → ONE confirmation listing
+    every stock, '네' executes them all as market orders. A stated qty applies
+    to EACH stock; none → budget size per stock."""
+    t = (transcript or "").strip()
+    tl = t.lower()
+    if not t or len(t) > 140 or any(w in tl for w in _ADVICE_BLOCK):
+        return None
+    side = None
+    m = _CMD_EN.match(tl) or _CMD_EN2.search(tl)
+    if m:
+        side = "BUY" if m.group(1).lower() == "buy" else "SELL"
+    elif any(k in t for k in _KO_SELL):
+        side = "SELL"
+    elif any(k in t for k in _KO_BUY):
+        side = "BUY"
+    if not side:
+        return None
+    from services.assistant_agent import _all_stocks_in_query
+    stocks = _all_stocks_in_query(t)
+    if len(stocks) < 2 or len(stocks) > 5:
+        return None
+    en = text_lang_en(transcript, lang)
+    try:
+        from services.kiwoom_tape import market_open
+        if not market_open():
+            _PENDING.clear()
+            return closed_reply(side, en)
+    except Exception:
+        pass
+    qm = re.search(r"(\d[\d,]*)\s*(?:주|shares?|stocks?|개)", tl)
+    qty_each = max(1, int(qm.group(1).replace(",", ""))) if qm else None
+    from services.paper_desk import _live_price
+    orders, total = [], 0.0
+    for code, name in stocks:
+        px, _n = _live_price(code)
+        if not px:
+            continue
+        q = qty_each or advise_qty(px)
+        if side == "SELL":
+            pos = _position_qty(db, code)
+            if pos <= 0:
+                orders.append({"code": code, "name": name, "qty": 0, "px": float(px),
+                               "skip": "보유 없음" if not en else "not held"})
+                continue
+            q = min(q, pos) if qty_each else pos
+        orders.append({"code": code, "name": name, "qty": int(q), "px": float(px)})
+        total += float(px) * q
+    live = [o for o in orders if o["qty"] > 0]
+    if not live:
+        return ("⚠️ 매도할 보유 종목이 없습니다." if not en else "⚠️ None of those stocks are held.")
+    _PENDING.clear()
+    _PENDING.update({"multi": True, "side": side, "orders": live, "ts": time.time(), "en": en})
+    _save_pending()
+    sk = "매수" if side == "BUY" else "매도"
+    L = [(f"🧾 **복수 종목 {sk} 확인 — {len(live)}종목**" if not en else
+          f"🧾 **Multi-stock {side} confirmation — {len(live)} stocks**")]
+    for o in orders:
+        if o.get("skip"):
+            L.append(f"· ⚠️ {o['name']} — {o['skip']}")
+        else:
+            L.append(f"· {o['name']}: {o['qty']:,}" + ("주" if not en else " sh")
+                     + f" @ ₩{o['px']:,.0f} (시장가)" if not en else
+                     f"· {o['name']}: {o['qty']:,} sh @ ₩{o['px']:,.0f} (market)")
+    L.append((f"예상 총액 ~₩{total:,.0f} · **정말 {sk}할까요?** \"네\" = 전부 실행 · \"아니요\" = 취소"
+              if not en else
+              f"Est. total ~₩{total:,.0f} · **Really {side} all?** \"yes\" = execute all · \"no\" = cancel"))
+    return "\n".join(L)
+
+
 def verb_only_side(transcript: Optional[str]) -> Optional[str]:
     """'I wanna buy' / '팔아줘' with NO stock named (boss 2026-09-01: 'if I did
     not [name] any stock it should ask me which stock do you wanna') — returns
@@ -1143,6 +1214,34 @@ def finish(db, word: str) -> Optional[str]:
                     else "Please tell me the stock name — e.g. \"삼성전자\".")
         return ("가격을 먼저 정해주세요 — \"시장가\" · \"151,600원에\" · \"제안가\"." if not en
                 else "Please pick the price first — \"market\" · \"at 151,600\" · \"best price\".")
+    # 🧾 MULTI-STOCK order waiting for its "네": market-execute each
+    if p.get("multi"):
+        if word == "no":
+            return ("🚫 취소했습니다 — 복수 종목 주문은 실행되지 않았습니다." if not en
+                    else "🚫 Cancelled — the multi-stock order was NOT executed.")
+        try:
+            from services.kiwoom_tape import market_open
+            if not market_open():
+                return closed_reply(p.get("side") or "BUY", en)
+        except Exception:
+            pass
+        from services.paper_desk import place_order
+        lines = []
+        for o in p.get("orders") or []:
+            try:
+                res = place_order(db, o["code"], p["side"], int(o["qty"]),
+                                  order_type="market", source="chatbot", direct=True)
+                if res.get("ok"):
+                    f9 = float(res.get("fill_price") or o.get("px") or 0)
+                    lines.append(f"· ✅ {o['name']}: {int(o['qty']):,}"
+                                 + ("주" if not en else " sh") + f" @ ₩{f9:,.0f}")
+                else:
+                    lines.append(f"· ⚠️ {o['name']}: {res.get('error') or 'failed'}")
+            except Exception as e:
+                lines.append(f"· ⚠️ {o['name']}: {str(e)[:40]}")
+        head = (f"🧾 **복수 종목 {'매수' if p['side'] == 'BUY' else '매도'} 결과**" if not en
+                else f"🧾 **Multi-stock {p['side']} results**")
+        return "\n".join([head] + lines + ["", _desk_links(en)])
     # 🪜 a LADDER waiting for its "네": queue every slice as its own limit order
     if p.get("ladder"):
         if word == "no":
