@@ -861,6 +861,10 @@ for _v2 in VARIANTS:
 for _v3 in VARIANTS:
     if _v3.get("id") in ("D1", "D2", "D3", "D4"):
         _v3["soft_blue"] = 0.2
+        # patience at the recent low, 0.5% band above the 5-day low (boss's
+        # 두산 order, 09-02 11:0x). Deployed on his word; the 20-day court on
+        # it runs behind and its number goes on the record either way.
+        _v3["bot_recent"] = 0.5
 
 # THE COURT EXTENDS THE TWO FIXES TO THE REST OF THE DESK (18:4x, 20 stored
 # days, every stock). no_high_chase on 알고1/2/4 and the 1.5% trail wherever a
@@ -2875,12 +2879,51 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # The LOSS stop stays close-confirmed (the SDI 260-won law);
                 # the PROFIT-protect line fills on touch - two lines, two
                 # correct behaviors.
+                # THE BAND BREAK (boss 2026-09-02 10:5x, the 삼성전기 case:
+                # "at 09:27 was pick and after that little decrease and until
+                # 09:38 was oscillation and again dropped and at 09:40 I think
+                # is best time to sell"). After the peak the price built a
+                # shelf - 09:30..09:39 held a floor of 1,426,000 - and 09:40
+                # CLOSED THROUGH it at 1,420,000. The trail at -1.5% only
+                # reached its line at 09:48, eight bars and 0.28% later. So the
+                # lesson he asked for: a post-peak consolidation that breaks
+                # its own floor has ended the wave; we do not need to know the
+                # top in advance, only that the shelf gave way.
+                _bb9 = v.get("band_break")
+                if (_bb9 and pos["qty"] > 0 and pos.get("qty_add", 0) <= 0
+                        and i > int(_bb9) + 1
+                        and pos.get("pr_pk", 0) >= pos.get("base", 0)
+                        * (1 + float((v.get("trail_all") or {}).get("arm", 1.0))
+                           / 100)
+                        and c < min(closes[i - int(_bb9):i])
+                        and not (pos.get("base", 0) < c
+                                 <= pos.get("base", 0) * (1 + FEE_PCT / 100))):
+                    _dsell(pos["qty"], c, "지지선 이탈 전량")
+                    _drow(f"고점 후 횡보 지지선({int(_bb9)}봉 최저) 이탈 · 전량 매도 "
+                          f"· 조각 {len(pos['slices'])}회")
+                    reb_pk[si] = c
+                    reb_wait[si] = None
+                    poss[si] = None
+                    continue
                 _tline9 = (pos.get("pr_pk", 0)
                            * (1 - float((_ta9 or {}).get("drop", 1.0)) / 100))
                 _tlo9 = (s.get("lows") or closes)[i]
                 _dpz9 = s.get("daily_pos")
                 _bot_zone9 = (_dpz9 is not None
                               and _dpz9 <= (v.get("ctx") or {}).get("sell_bot", 0.20))
+                # THE RECENT-LOW BUYING ZONE (boss 2026-09-02 11:0x, the 두산
+                # 09:09->09:55 case: "두산 is in the buying zone (in the down)
+                # so we should be patient and not sell - we can sell urgent if
+                # -1% decrease, otherwise we can wait"). The year percentile
+                # said 0.31 and no zone law protected the ride; but 두산 was
+                # trading BELOW its own 5-day low, which is what his eye reads
+                # as "the down". A stock at or under its recent low keeps the
+                # same patience the year-bottom already had: the trail stands
+                # aside and only the -1% stop (or the bell) may end the ride.
+                _lo5 = s.get("low5")
+                if (not _bot_zone9 and v.get("bot_recent") and _lo5
+                        and c <= _lo5 * (1 + float(v["bot_recent"]) / 100)):
+                    _bot_zone9 = True
                 if (_ta9 and pos["qty"] > 0 and pos.get("qty_add", 0) <= 0
                         # ZONE-GATED TRAIL (boss 16:5x, the 스퀘어 09:32 case:
                         # "it is in the buying zone, it can increase again -
@@ -3102,8 +3145,18 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     if _dps9 is not None and _sc9.get("sell_top") is not None \
                             and _dps9 >= _sc9["sell_top"]:
                         _blues9 = _sc9.get("top_blues", max(2, _blues9 - 1))
-                    elif _dps9 is not None and _sc9.get("sell_bot") is not None \
-                            and _dps9 <= _sc9["sell_bot"]:
+                    elif ((_dps9 is not None and _sc9.get("sell_bot") is not None
+                           and _dps9 <= _sc9["sell_bot"])
+                          # THE RECENT LOW IS THE BUYING ZONE HERE TOO (boss
+                          # 09-02 11:0x, the 두산 09:55 case): it was the 2음봉
+                          # retreat that sold him out, NOT the trail, so
+                          # standing the trail aside was not enough - the blues
+                          # law must consult the same widened zone. 두산's year
+                          # percentile reads 0.31, yet it was trading UNDER its
+                          # own 5-day low (81,400) at 78,600.
+                          or (v.get("bot_recent") and s.get("low5")
+                              and c <= s["low5"]
+                              * (1 + float(v["bot_recent"]) / 100))):
                         _blues9 = _sc9.get("bot_blues", _blues9 + 1)
                         # THE BOTTOM TAKE (boss 2026-08-21 night: "should we
                         # sell if we gain 2% even though we cannot reach the

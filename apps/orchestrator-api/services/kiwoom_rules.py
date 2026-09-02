@@ -304,7 +304,12 @@ def _daily20(code: str, before_day: str) -> tuple:
     else:
         prev_close = closes[days[-1]]
         low20 = min(closes[d2] for d2 in days[-20:])
-        out = (prev_close, low20)
+        # the RECENT low as well (boss 2026-09-02 11:0x, the 두산 case: he
+        # reads "in the buying zone" from the last few days, and the year
+        # percentile cannot see it - 두산 is 0.31 of its year but BELOW its
+        # 5-day low)
+        low5 = min(closes[d2] for d2 in days[-5:])
+        out = (prev_close, low20, low5)
     _D20_CACHE[key] = out
     return out
 
@@ -738,6 +743,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                                      else "calm"),
                          "prev_close": _daily20(code, d or _kd0())[0],
                          "low20": _daily20(code, d or _kd0())[1],
+                         "low5": _daily20(code, d or _kd0())[2],
                          "open_vol_med": _open_vol_med(code),
                          "daily_pos": _daily_pos(code,
                                                  tp["cs"][-1]["close"]
@@ -962,6 +968,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                                      if (d or _kd0()) == _kd0() else "calm"),
                          "prev_close": _daily20(c_code, d or _kd0())[0],
                          "low20": _daily20(c_code, d or _kd0())[1],
+                         "low5": _daily20(c_code, d or _kd0())[2],
                          "open_vol_med": _open_vol_med(c_code),
                          "daily_pos": _daily_pos(c_code,
                                                  cs[-1]["close"] if cs else 0),
