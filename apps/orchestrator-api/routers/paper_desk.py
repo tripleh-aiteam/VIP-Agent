@@ -1992,12 +1992,26 @@ def live_warm():
     # Only what the page's default view actually asks for: the three live
     # families + old, 1분 clock. Everything else earns its cache on first
     # click through the vital lane.
-    _sixw = ["000660", "005930", "017670", "034020", "035420", "042660"]
+    # WARM THE KEYS THE PAGE ACTUALLY ASKS FOR (boss 2026-09-02 14:5x: "trading
+    # history is not loading"). It was warming the ORIGINAL six and the
+    # checklist's five - neither of which the board has requested since the
+    # desk changed: menu 1 now sends its eight (the six + SK스퀘어 + S-Oil) and
+    # menu 2 sends the FULL watch list. Every warmed key missed, so after each
+    # backend restart the first view paid a ~20s cold replay, and today we
+    # restarted a dozen times deploying his rules.
+    _sixw = ["000660", "005930", "017670", "034020", "035420", "042660",
+             "402340", "010950"]
     try:
-        from services.daily_pick import score_five as _sfw
-        _recow = sorted(c for c, _n in (_sfw() or []))
+        from services.kiwoom_tape import WATCH as _WW
+        _recow = sorted(c for c, _n in (_WW or []))
     except Exception:
         _recow = []
+    if not _recow:
+        try:
+            from services.daily_pick import score_five as _sfw
+            _recow = sorted(c for c, _n in (_sfw() or []))
+        except Exception:
+            _recow = []
     for _cw in ([_sixw, _recow] if _recow else [_sixw]):
         _ncw = ",".join(sorted(_cw))
         for fam in ("d1", "d2", "d3", "d4"):

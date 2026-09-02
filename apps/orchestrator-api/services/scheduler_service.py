@@ -2727,6 +2727,27 @@ def init_scheduler():
         id="ollama-keep-warm",
         replace_existing=True, max_instances=1, coalesce=True,
     )
+    # DESK-HISTORY KEEP-WARM (boss 2026-09-02 14:5x: "trading history is not
+    # loading"). /live/warm existed but NOTHING EVER CALLED IT - only Ollama had
+    # a keep-warm - so the family-trades cache was filled only by a real page
+    # view. After every backend restart the first reader paid a full cold replay
+    # (~17-20s on the 17-stock desk, per view), and a day of deploying his rule
+    # changes restarts the backend a dozen times. Warmed right after boot and
+    # kept alive through the session; the 20s stale-serve does the rest.
+    def _desk_history_warm():
+        try:
+            from routers.paper_desk import live_warm as _lw
+            _lw()
+        except Exception as _we:
+            log.warning(f"desk warm failed: {str(_we)[:120]}",
+                        extra={"action": "desk.warm.fail"})
+    _scheduler.add_job(
+        _desk_history_warm,
+        _IvT(minutes=10),
+        next_run_time=_dtw.now() + _tdw(seconds=45),   # warm right after boot
+        id="desk-history-warm",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
     # Paper trader — every 5 min during market: virtual execution of the bot's signals
     # (readiness-gate evidence at 10x speed). Morning scorecard at 08:20 KST.
     _scheduler.add_job(
