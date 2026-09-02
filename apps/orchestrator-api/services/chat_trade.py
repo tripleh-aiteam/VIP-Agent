@@ -73,7 +73,9 @@ _CMD_EN2 = re.compile(r"\b(?:i\s+wanna|i\s+want\s+to|i'?d\s+like\s+to|i\s+would\
                       r"|(?:can|could)\s+you(?:\s+please)?(?:\s+help\s+(?:me|us)(?:\s+to)?)?"
                       r"|please)\s+(buy|sell)\b", re.I)
 _KO_BUY = ("사줘", "사 줘", "사자", "매수해", "매수 해", "매수해줘", "매수하자", "매수",
-           "사고 싶", "사고싶", "매수하고 싶")
+           "사고 싶", "사고싶", "매수하고 싶",
+           # "사려고 하는데 … 주문해줘" was answered with a PRICE CARD (2026-09-02)
+           "사려고", "사려는", "사고자", "주문해줘", "주문 해줘", "주문해 줘")
 _KO_SELL = ("팔아줘", "팔아 줘", "팔아", "팔자", "매도해", "매도해줘", "매도하자", "매도",
             "전량매도", "팔고 싶", "팔고싶", "매도하고 싶")
 # question/advice phrasings are NEVER a command ("매수해도 돼?", "should I buy...")
@@ -854,15 +856,25 @@ def qty_reply(db, transcript: Optional[str]) -> Optional[str]:
                          "ts": time.time(), "en": en2})
         _save_pending()
         _pxs = f"₩{float(_px2):,.0f}" if _px2 else "?"
+        # the SMART suggestion from our own data (boss 2026-09-02: "it has our
+        # historical data and current prices — suggest efficient, like cheaper")
+        _sm2 = smart_price(p["code"], float(_px2)) if _px2 else None
+        _sm2s = f"₩{_sm2:,.0f}" if _sm2 else "?"
+        _lo2 = _today_low(p["code"])
+        _lo2s = f"₩{_lo2:,.0f}" if _lo2 else "?"
         if en2:
             return (f"💰 **{qty:,} shares — got it.** And the price?\n"
                     f"· **\"market\"** — fills instantly at the live price ({_pxs})\n"
-                    f"· **\"at 151,600\"** — your own limit price\n"
-                    f"· **\"best\"** — I take the order-book best (front of the biggest wall)")
+                    f"· **\"at 1,626,000\"** — your own limit price\n"
+                    f"· **\"best\"** — order-book best (front of the biggest wall)\n"
+                    f"· **\"smart\"** — my suggestion **{_sm2s}** (today's range {_lo2s}~{_pxs}: "
+                    f"waits for a small dip, cheaper entry)")
         return (f"💰 **{qty:,}주 — 확인했습니다.** 가격은 어떻게 할까요?\n"
                 f"· **\"시장가\"** — 현재가({_pxs})로 즉시 체결\n"
-                f"· **\"151,600원에\"** — 원하시는 지정가\n"
-                f"· **\"제안가\"** — 호가창 기준 최적가로 제가 제안")
+                f"· **\"1,626,000원에\"** — 원하시는 지정가\n"
+                f"· **\"제안가\"** — 호가창 기준 최적가\n"
+                f"· **\"추천가\"** — 오늘 데이터 기준 제 추천 **{_sm2s}** "
+                f"(오늘 저가 {_lo2s} ~ 현재가 {_pxs} 사이, 살짝 눌릴 때 싸게 삽니다)")
     return _make_preview(db, p["code"], p.get("name") or p["code"],
                          p.get("side") or "BUY", qty, False, bool(p.get("en")))
 
@@ -881,7 +893,17 @@ def price_reply(db, transcript: Optional[str]) -> Optional[str]:
     if re.search(r"시장가|\bmarket\b", t):
         return _make_preview(db, p["code"], p.get("name") or p["code"], "BUY",
                              int(p["qty"]), False, en, market_flag=True)
-    if re.search(r"제안|추천|최적|알아서|아무|그냥|\bbest\b|\bbook\b|propose", t):
+    if re.search(r"추천|스마트|\bsmart\b|efficient|유리|싸게|cheap", t):
+        try:
+            from services.paper_desk import _live_price
+            _pxr, _ = _live_price(p["code"])
+            if _pxr:
+                return _make_preview(db, p["code"], p.get("name") or p["code"], "BUY",
+                                     int(p["qty"]), False, en,
+                                     price_asked=smart_price(p["code"], float(_pxr)))
+        except Exception:
+            pass
+    if re.search(r"제안|최적|알아서|아무|그냥|\bbest\b|\bbook\b|propose", t):
         return _make_preview(db, p["code"], p.get("name") or p["code"], "BUY",
                              int(p["qty"]), False, en)
     pm = re.search(r"(\d[\d,]{3,})\s*(?:원|won)?", t)
@@ -893,6 +915,112 @@ def price_reply(db, transcript: Optional[str]) -> Optional[str]:
         return _make_preview(db, p["code"], p.get("name") or p["code"], "BUY",
                              int(p["qty"]), False, en, price_asked=_pr)
     return None
+
+
+def _today_low(code: str) -> Optional[float]:
+    try:
+        from services.naver_stock import realtime_quote
+        q = realtime_quote(code)
+        if q and q.get("low"):
+            return float(q["low"])
+    except Exception:
+        pass
+    try:                     # realtime feed drops fields sometimes — candle has it
+        from services.naver_stock import daily_history
+        h = daily_history(code, days=2)
+        if h and h[0].get("low"):
+            return float(h[0]["low"])
+    except Exception:
+        pass
+    return None
+
+
+def smart_price(code: str, px: float) -> float:
+    """An EFFICIENT (cheaper) buy price from today's own data (boss 2026-09-02:
+    "chatbot need suggest price — it has our historical data and current prices,
+    suggest efficient like cheaper"): wait a small dip — halfway between the
+    live price and today's low, never further than -0.7%, tick-rounded."""
+    lo = _today_low(code) or px * 0.99
+    target = max((px + lo) / 2, px * 0.993)
+    tk = _tick(target)
+    return float(int(target // tk) * tk)
+
+
+def ladder_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
+    """'1000주를 10가지 다른 가격으로 최적화해서 주문' → a SPLIT BUY: N limit
+    slices laddered from just under the live price down toward today's low.
+    One confirmation covers the whole ladder; '네' queues every slice."""
+    t = transcript or ""
+    tl = t.lower()
+    m = re.search(r"(\d{1,2})\s*가지|(\d{1,2})\s*(?:different|다른)\s*(?:prices?|가격)"
+                  r"|(\d{1,2})\s*개(?:의)?\s*가격", tl)
+    if not m:
+        return None
+    n = max(2, min(20, int(m.group(1) or m.group(2) or m.group(3))))
+    if not (any(k in t for k in _KO_BUY) or re.search(r"\bbuy\b", tl)) \
+            or any(w in tl for w in _ADVICE_BLOCK):
+        return None
+    from services.assistant_agent import _all_stocks_in_query
+    stocks = _all_stocks_in_query(t)
+    if len(stocks) != 1:
+        return None
+    code, name = stocks[0]
+    en = text_lang_en(transcript, lang)
+    # total quantity — "1000주" / "1000 stocks"; the ladder count (10가지) is
+    # already consumed by its own pattern, so a bare big number is the qty
+    qm = (re.search(r"(\d[\d,]{2,})\s*(?:주|shares?|stocks?|개)", tl)
+          or re.search(r"\b(\d{3,6})\b", re.sub(m.re.pattern, " ", tl)))
+    if not qm:
+        return None
+    qty = max(n, int(qm.group(1).replace(",", "")))
+    try:
+        from services.kiwoom_tape import market_open
+        if not market_open():
+            _PENDING.clear()
+            return closed_reply("BUY", en)
+    except Exception:
+        pass
+    from services.paper_desk import _live_price
+    px, _nm = _live_price(code)
+    if not px:
+        return ("⚠️ 현재가를 가져올 수 없어 주문을 만들 수 없습니다." if not en
+                else "⚠️ No live price — cannot build the ladder.")
+    px = float(px)
+    lo = _today_low(code) or px * 0.99
+    top = px - _tick(px)                       # first slice just under the market
+    floor = min(top - _tick(px), max(lo, px * 0.99))
+    step = (top - floor) / max(1, n - 1)
+    slices, seen_p = [], set()
+    per = qty // n
+    for i in range(n):
+        raw = top - step * i
+        tk = _tick(raw)
+        p = float(int(raw // tk) * tk)
+        while p in seen_p:                     # ticks collapsed two levels → step one down
+            p -= tk
+        seen_p.add(p)
+        q_i = per + (qty - per * n if i == 0 else 0)
+        slices.append([p, int(q_i)])
+    total = sum(p * q for p, q in slices)
+    _PENDING.clear()
+    _PENDING.update({"ladder": True, "code": code, "name": name, "ts": time.time(),
+                     "en": en, "slices": slices})
+    _save_pending()
+    L = [(f"🪜 **분할 매수 확인 — {name} 총 {qty:,}주 · {n}단계**" if not en else
+          f"🪜 **Split-buy confirmation — {name}, {qty:,} shares over {n} price levels**"),
+         (f"현재가 ₩{px:,.0f} 바로 아래부터 오늘 저가(₩{lo:,.0f}) 방향으로 사다리를 놓습니다:"
+          if not en else
+          f"Laddered from just under the live price ₩{px:,.0f} toward today's low ₩{lo:,.0f}:")]
+    for i, (p, q) in enumerate(slices, 1):
+        L.append(f"  {i}. ₩{p:,.0f} × {q:,}" + ("주" if not en else " sh"))
+    L.append((f"예상 총액 ~₩{total:,.0f} · 전부 지정가 대기 — 가격이 내려올수록 아래 단계가 "
+              f"차례로 체결되고, 체결마다 이 채팅으로 ✅ 알림이 옵니다. 취소: \"{name} 주문 취소\""
+              if not en else
+              f"Est. total ~₩{total:,.0f} · all LIMIT orders — deeper slices fill as the "
+              f"price dips, each fill ✅-announced here. Cancel: \"cancel {name} orders\""))
+    L.append(("**정말 주문할까요?** \"네\" = 전체 접수 · \"아니요\" = 취소" if not en else
+              "**Place the whole ladder?** \"yes\" = queue all · \"no\" = cancel"))
+    return "\n".join(L)
 
 
 def verb_only_side(transcript: Optional[str]) -> Optional[str]:
@@ -1015,6 +1143,45 @@ def finish(db, word: str) -> Optional[str]:
                     else "Please tell me the stock name — e.g. \"삼성전자\".")
         return ("가격을 먼저 정해주세요 — \"시장가\" · \"151,600원에\" · \"제안가\"." if not en
                 else "Please pick the price first — \"market\" · \"at 151,600\" · \"best price\".")
+    # 🪜 a LADDER waiting for its "네": queue every slice as its own limit order
+    if p.get("ladder"):
+        if word == "no":
+            return ("🚫 취소했습니다 — 분할 매수는 접수되지 않았습니다." if not en
+                    else "🚫 Cancelled — the split buy was NOT placed.")
+        try:
+            from services.kiwoom_tape import market_open
+            if not market_open():
+                return closed_reply("BUY", en)
+        except Exception:
+            pass
+        from services.paper_desk import place_order
+        ok_n, fill_n, fail_n = 0, 0, 0
+        for pr, q in p.get("slices") or []:
+            try:
+                res = place_order(db, p["code"], "BUY", int(q), order_type="limit",
+                                  limit_price=float(pr), source="chatbot", direct=True)
+                if res.get("ok"):
+                    ok_n += 1
+                    if res.get("status") == "FILLED":
+                        fill_n += 1
+                else:
+                    fail_n += 1
+            except Exception:
+                fail_n += 1
+        wait_n = ok_n - fill_n
+        if en:
+            return (f"🪜 **Ladder placed — {p['name']}**: {ok_n} orders queued"
+                    + (f" ({fill_n} filled instantly)" if fill_n else "")
+                    + (f" · {fail_n} failed" if fail_n else "")
+                    + f". {wait_n} waiting in the book — each fill ✅-announced here. "
+                    f"\"order status\" shows the ladder; \"cancel {p['name']} orders\" pulls it.\n\n"
+                    + _desk_links(True))
+        return (f"🪜 **분할 매수 접수 — {p['name']}**: {ok_n}건 접수"
+                + (f" (즉시 체결 {fill_n}건)" if fill_n else "")
+                + (f" · 실패 {fail_n}건" if fail_n else "")
+                + f". 대기 {wait_n}건 — 체결될 때마다 이 채팅에 ✅ 알림이 옵니다. "
+                f"\"주문 상태\"로 확인, \"{p['name']} 주문 취소\"로 전체 회수.\n\n"
+                + _desk_links(False))
     # a CONDITIONAL rule waiting for its "네" (Step 3): yes stores the standing
     # rule (no order yet — the watchdog fires it at the trigger), no drops it
     if p.get("cond"):

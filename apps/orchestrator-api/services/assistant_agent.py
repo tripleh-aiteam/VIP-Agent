@@ -8419,6 +8419,13 @@ def _run_agent_impl(
                 return {"intent": "chat_trade", "language": lang, "reply": _ctb,
                         "action": None, "speak": True, "transcript": transcript,
                         "tool_used": "chat_trade"}
+            # 🪜 split-buy ladder FIRST ("1000주를 10가지 다른 가격으로", 2026-09-02) —
+            # the plain parser would read it as one order and drop the ladder
+            _ctl9 = _ct.ladder_preview(db, transcript, lang)
+            if _ctl9:
+                return {"intent": "chat_trade_confirm", "language": lang, "reply": _ctl9,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "chat_trade"}
             _ctp = _ct.build_preview(db, transcript, lang)
             # bare "I wanna buy" with NO stock and no it/this reference → ask
             # WHICH stock (boss 2026-09-01), never guess from context
