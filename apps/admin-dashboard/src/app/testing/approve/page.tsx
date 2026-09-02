@@ -21,6 +21,37 @@ type Step = { icon: string; t: string; d: string };
 
 const W = (n?: number | null) => (n == null ? "-" : "₩" + Math.round(n).toLocaleString());
 
+type CBar = { t: string; o?: number | null; h?: number | null; l?: number | null; c?: number | null };
+/* tiny self-contained candle chart — red up / blue down, like the desks */
+function MiniCandles({ bars }: { bars: CBar[] }) {
+  const bs = bars.filter((b) => b.h != null && b.l != null && b.o != null && b.c != null);
+  if (!bs.length) return <div style={{ fontSize: 12, opacity: 0.6, padding: 10 }}>차트 데이터 없음</div>;
+  const Wd = 760, H = 220, pad = 4;
+  const hi = Math.max(...bs.map((b) => b.h as number));
+  const lo = Math.min(...bs.map((b) => b.l as number));
+  const y = (v: number) => H - pad - ((v - lo) / Math.max(1, hi - lo)) * (H - pad * 2);
+  const bw = Math.max(1.5, Math.min(9, (Wd - 40) / bs.length - 1));
+  const step = (Wd - 40) / bs.length;
+  const lbl = (i: number) => (i === 0 || i === bs.length - 1 || i === Math.floor(bs.length / 2));
+  return (
+    <svg viewBox={`0 0 ${Wd} ${H + 16}`} style={{ width: "100%", height: "auto" }}>
+      <text x={2} y={12} fontSize={10} fill="#888">{W(hi)}</text>
+      <text x={2} y={H - 2} fontSize={10} fill="#888">{W(lo)}</text>
+      {bs.map((b, i) => {
+        const up = (b.c as number) >= (b.o as number);
+        const col = up ? "#e53935" : "#1e88e5";
+        const x = 38 + i * step + step / 2;
+        return (<g key={i}>
+          <line x1={x} x2={x} y1={y(b.h as number)} y2={y(b.l as number)} stroke={col} strokeWidth={1} />
+          <rect x={x - bw / 2} width={bw}
+                y={y(Math.max(b.o as number, b.c as number))}
+                height={Math.max(1, Math.abs(y(b.o as number) - y(b.c as number)))} fill={col} />
+          {lbl(i) && <text x={x} y={H + 12} fontSize={9} fill="#888" textAnchor="middle">{b.t}</text>}
+        </g>);
+      })}
+    </svg>);
+}
+
 export default function ApprovePage() {
   const base = API.replace(/\/$/, "");
   const [feed, setFeed] = useState<Feed | null>(null);
@@ -30,6 +61,16 @@ export default function ApprovePage() {
   const [busy, setBusy] = useState<number | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const stepTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [cMode, setCMode] = useState<"min" | "month" | "year">("min");
+  const [cBars, setCBars] = useState<CBar[]>([]);
+  const [cBusy, setCBusy] = useState(false);
+
+  const loadChart = useCallback((code: string, mode: "min" | "month" | "year") => {
+    setCMode(mode); setCBusy(true);
+    fetch(`${base}/approval/chart/${code}?mode=${mode}`).then((r) => r.json())
+      .then((d) => setCBars(d?.bars || [])).catch(() => setCBars([]))
+      .finally(() => setCBusy(false));
+  }, [base]);
 
   const pull = useCallback(() => {
     fetch(`${base}/approval/feed`).then((r) => r.json()).then(setFeed).catch(() => {});
@@ -40,6 +81,7 @@ export default function ApprovePage() {
     setOpen((cur) => (cur === code ? null : code));
     setSteps([]); setShown(0);
     if (stepTimer.current) clearInterval(stepTimer.current);
+    loadChart(code, "min");
     fetch(`${base}/approval/process/${code}`).then((r) => r.json()).then((d) => {
       const ss: Step[] = d?.steps || [];
       setSteps(ss); setShown(0);
@@ -49,7 +91,7 @@ export default function ApprovePage() {
                           return Math.min(ss.length, v + 1); });
       }, 700);
     }).catch(() => {});
-  }, [base]);
+  }, [base, loadChart]);
 
   const decide = useCallback((sid: number, ok: boolean) => {
     setBusy(sid);
@@ -132,6 +174,21 @@ export default function ApprovePage() {
               <div style={{ fontSize: 12.5, marginTop: 6, color: "#e6a817" }}>
                 👀 감시 계속 중 — 조건이 맞으면 이 화면과 팝업으로 제안합니다.</div>}
           </div>
+          {/* ─ charts: 분 / 월 / 연 (boss 2026-09-02) ─ */}
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+              {(["min", "month", "year"] as const).map((m) => (
+                <button key={m} onClick={(e) => { e.stopPropagation(); if (open) loadChart(open, m); }}
+                  style={{ fontSize: 11.5, padding: "3px 10px", borderRadius: 8, cursor: "pointer",
+                           border: "1px solid rgba(128,128,128,0.4)",
+                           background: cMode === m ? "#e6a817" : "transparent",
+                           color: cMode === m ? "#000" : "inherit", fontWeight: 700 }}>
+                  {m === "min" ? "분봉 (오늘)" : m === "month" ? "일봉 1개월" : "일봉 1년"}
+                </button>))}
+            </div>
+            {cBusy ? <div style={{ fontSize: 12, opacity: 0.6, padding: 8 }}>⏳ 차트 로딩…</div>
+                   : <MiniCandles bars={cBars} />}
+          </div>
           {/* ─ this room's own trading history (semi-auto decisions) ─ */}
           {(() => {
             const lot = feed?.held?.find((h) => h.code === open);
@@ -152,17 +209,52 @@ export default function ApprovePage() {
         </div>
       )}
 
-      {/* ─ decision log ─ */}
-      {(feed?.log?.length || 0) > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <b style={{ fontSize: 13 }}>📜 오늘의 결정 기록</b>
-          {feed!.log.slice(0, 12).map((l, i) => (
-            <div key={i} style={{ fontSize: 12, padding: "3px 0", opacity: 0.9 }}>
-              {l.at} · {l.side === "BUY" ? "🔴 매수" : "🔵 매도"} {l.name} {l.qty.toLocaleString()}주
-              — <b>{l.decision}</b>{l.fill ? ` @ ${W(l.fill)}` : ""}
-            </div>))}
-        </div>
-      )}
+      {/* ─ 📦 HOLDING LIST — always visible, even empty (boss 2026-09-02:
+          "in any case please make a trading history and holding list") ─ */}
+      <div style={{ marginTop: 18, border: "1px solid rgba(46,125,50,0.5)", borderRadius: 10, padding: 12 }}>
+        <b style={{ fontSize: 13.5 }}>📦 보유 목록 <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6 }}>
+          이 메뉴에서 승인한 매수만 여기 담깁니다</span></b>
+        {(feed?.held?.length || 0) === 0
+          ? <div style={{ fontSize: 12.5, opacity: 0.6, padding: "8px 0" }}>
+              아직 보유 없음 — 첫 매수 제안을 ✅ 승인하면 여기 나타납니다.</div>
+          : <table style={{ width: "100%", fontSize: 12.5, marginTop: 6, borderCollapse: "collapse" }}>
+              <thead><tr style={{ opacity: 0.6, textAlign: "left" }}>
+                <th>종목</th><th>수량</th><th>매수가</th><th>현재가</th><th>평가</th><th>승인 시각</th></tr></thead>
+              <tbody>{feed!.held.map((h, i) => {
+                const room = feed!.rooms.find((r) => r.code === h.code);
+                const pnl = room?.pnl;
+                return (<tr key={i} style={{ borderTop: "1px solid rgba(128,128,128,0.2)" }}>
+                  <td style={{ padding: "4px 0" }}><b>{h.name}</b></td>
+                  <td>{h.qty.toLocaleString()}주</td><td>{W(h.price)}</td>
+                  <td>{W(room?.price)}</td>
+                  <td style={{ color: (pnl ?? 0) >= 0 ? "#e53935" : "#1e88e5", fontWeight: 700 }}>
+                    {pnl != null ? `${pnl >= 0 ? "+" : ""}${pnl}%` : "-"}</td>
+                  <td style={{ opacity: 0.7 }}>{h.at}</td></tr>);
+              })}</tbody>
+            </table>}
+      </div>
+
+      {/* ─ 📜 TRADING HISTORY — always visible ─ */}
+      <div style={{ marginTop: 12, border: "1px solid rgba(128,128,128,0.35)", borderRadius: 10, padding: 12 }}>
+        <b style={{ fontSize: 13.5 }}>📜 매매 기록 <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6 }}>
+          모든 제안과 결정 (승인·취소)</span></b>
+        {(feed?.log?.length || 0) === 0
+          ? <div style={{ fontSize: 12.5, opacity: 0.6, padding: "8px 0" }}>
+              아직 기록 없음 — 장중에 제안이 오고 결정을 내리면 전부 여기 쌓입니다.</div>
+          : <table style={{ width: "100%", fontSize: 12.5, marginTop: 6, borderCollapse: "collapse" }}>
+              <thead><tr style={{ opacity: 0.6, textAlign: "left" }}>
+                <th>시각</th><th>구분</th><th>종목</th><th>수량</th><th>제안가</th><th>결정</th><th>체결가</th></tr></thead>
+              <tbody>{feed!.log.slice(0, 25).map((l, i) => (
+                <tr key={i} style={{ borderTop: "1px solid rgba(128,128,128,0.2)" }}>
+                  <td style={{ padding: "4px 0", opacity: 0.7 }}>{l.at}</td>
+                  <td style={{ color: l.side === "BUY" ? "#e53935" : "#1e88e5", fontWeight: 700 }}>
+                    {l.side === "BUY" ? "매수" : "매도"}</td>
+                  <td><b>{l.name}</b></td><td>{l.qty.toLocaleString()}주</td>
+                  <td>{W(l.price)}</td>
+                  <td style={{ fontWeight: 700 }}>{l.decision}</td>
+                  <td>{l.fill ? W(l.fill) : "-"}</td></tr>))}</tbody>
+            </table>}
+      </div>
 
       {/* ─ suggestion POPUPS ─ */}
       <div style={{ position: "fixed", right: 16, bottom: 16, width: 340, zIndex: 60,
