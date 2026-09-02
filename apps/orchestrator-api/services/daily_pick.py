@@ -254,6 +254,21 @@ def condition(day: str, codes: list[str]) -> dict[str, dict]:
         if len(rows) < 61:
             continue
         cl = [r[4] for r in rows]; vol = [r[5] for r in rows]
+        # ALREADY-RISING CHECK (boss 2026-09-02 16:0x: "if it is increasing do
+        # not recommend stock - if stock is increasing from last days according
+        # to monthly and daily chart then it should not be recommended").
+        # up3 = how many of the last 3 sessions closed higher; upm = how many of
+        # the last 2 months finished higher. Measured on our OWN 알고3 trades
+        # over 20 sessions: a stock up 3 days straight averaged -0.354%/trip
+        # against -0.087% for one falling three days - four times worse, over
+        # 77 trades. (The monthly half did not discriminate: -0.178% either
+        # way; it is carried because he asked for both charts.)
+        _up3 = sum(1 for _k in (1, 2, 3) if len(cl) > _k and cl[-_k] > cl[-_k - 1])
+        _mo: dict = {}
+        for _r in rows:
+            _mo.setdefault(_r[0].strftime("%Y-%m"), []).append(_r[4])
+        _mm = [v for v in _mo.values() if len(v) >= 5][-2:]
+        _upm = sum(1 for v in _mm if v[-1] > v[0])
         s5 = sum(cl[-5:]) / 5; s20 = sum(cl[-20:]) / 20; s60 = sum(cl[-60:]) / 60
         w20 = cl[-20:]; m = sum(w20) / 20
         sd = (sum((x - m) ** 2 for x in w20) / 20) ** 0.5
@@ -280,6 +295,7 @@ def condition(day: str, codes: list[str]) -> dict[str, dict]:
             "macd_cross": 1 if macd_prev <= 0 < macd_now else (0.5 if macd_now > 0 else 0),
             "bb_pos": (cl[-1] - m) / (2 * sd) if sd else 0,
             "vs_close": (cl[-1] / cl[-2] - 1) * 100 if cl[-2] else 0,
+            "up3": _up3, "upm": _upm,
             "vol_surge": (vol[-1] / (sum(vol[-21:-1]) / 20)) if sum(vol[-21:-1]) else 1,
             "foreign3": sum(x[0] for x in fl),
             "inst3": sum(x[1] for x in fl),
@@ -405,7 +421,12 @@ def pick(day: str, n: int | None = None, refresh_character: bool = False) -> dic
                  "s": round(_pct(B["short_ratio"], b["short_ratio"], hi=False)),
                  "w": 10}],
         }
+        # ALREADY-RISING (boss 09-02 16:0x) - a stock up 3 sessions running, or
+        # up both of the last 2 months, may not be RECOMMENDED. It still scores
+        # and still shows in the table, marked, so the room can see why.
+        _ris = (b.get("up3", 0) >= 3) or (b.get("upm", 0) >= 2)
         rows.append({"code": c, "name": nm, "score": round(score, 1),
+                     "rising": _ris, "up3": b.get("up3"), "upm": b.get("upm"),
                      "groups": {k: round(v) for k, v in g.items()},
                      "detail": detail,
                      "tick_pct": round(a["tick_pct"], 3), "rsi": round(b["rsi"]),
@@ -418,7 +439,10 @@ def pick(day: str, n: int | None = None, refresh_character: bool = False) -> dic
     # WHICH DESK TRADES. "fixed" = his six in his order; "score" = the day's top n from
     # the checklist. Only one is ever live, and `by_score` always marks the checklist's
     # own answer so the board can show what the other desk would have done.
-    earned = rows[:n]
+    # THE RISING ARE NOT RECOMMENDED (boss 09-02 16:0x). They keep their rank
+    # and stay visible; they simply cannot take one of the checklist's seats.
+    _elig = [r for r in rows if not r.get("rising")]
+    earned = _elig[:n]
     mode = desk_mode()
     if mode == "score":
         chosen = list(earned)
@@ -432,7 +456,7 @@ def pick(day: str, n: int | None = None, refresh_character: bool = False) -> dic
         # the desk now fills to 6+n every day.
         chosen = [r for r in rows if r["code"] in DESK]
         chosen.sort(key=lambda r: DESK.index(r["code"]))
-        chosen += [r for r in rows if r["code"] not in DESK][:n]
+        chosen += [r for r in _elig if r["code"] not in DESK][:n]
     else:
         chosen = [r for r in rows if r["code"] in DESK]
         chosen.sort(key=lambda r: DESK.index(r["code"]))   # his order, not the score's
