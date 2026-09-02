@@ -755,6 +755,10 @@ _STOCK_FUZZY_STOP = {
     "technologies", "motors", "motor", "chemical", "chem", "energy", "solution",
     "solutions", "전자", "전기", "주식", "주가", "현재가", "시세", "가격", "그룹",
     "지주", "화학", "에너지", "현재",
+    # trading verbs from pasted rows fuzzy-matched stock names — "sold" hit
+    # "soil"=S-OIL at 0.75 and a pasted 삼성전기 holding became a 2-stock order
+    # that broke parse (2026-09-02)
+    "sold", "sell", "sells", "hold", "buys", "bought", "selling", "buying",
 }
 
 
@@ -8013,6 +8017,9 @@ def _run_agent_impl(
     # would steal it into the picks table). ===
     _t_uni = (transcript or "").lower()
     if (not confirmed_tool and not attachment_ids and transcript
+            # "Please SELL all stocks: <pasted row>" is an ORDER, not a list ask
+            # (2026-09-02: the universe lane answered a sell command)
+            and not _re.search(r"\b(?:buy|sell)\b|사줘|팔아|매수|매도", _t_uni)
             and (any(k in _t_uni for k in ("all stocks", "list of stocks", "stock list",
                                            "trading universe", "which stocks", "전체 종목",
                                            "종목 리스트", "종목 목록", "거래하는 종목", "거래 종목",

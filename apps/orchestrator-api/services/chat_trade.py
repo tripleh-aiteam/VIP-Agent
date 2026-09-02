@@ -184,6 +184,11 @@ def is_status_q(transcript: Optional[str]) -> bool:
     t = (transcript or "").lower()
     if not t:
         return False
+    # an IMPERATIVE order is never a status question — "Please sell them:
+    # 🎞 삼성전기 … holding — not sold yet" matched 'sold yet' from the PASTED ROW
+    # and answered 'no chatbot order on record' instead of selling (2026-09-02)
+    if _CMD_EN.match(t) or _CMD_EN2.search(t):
+        return False
     # "did my naver sell order fill?" got an ML decision card (2026-09-01) —
     # any did/is + my/the + order phrasing is a record question
     if re.search(r"(?:did|is|has|have)\s+(?:my|the)\b.*\border\b"
