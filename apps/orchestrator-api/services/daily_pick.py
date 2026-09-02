@@ -264,6 +264,17 @@ def condition(day: str, codes: list[str]) -> dict[str, dict]:
         # 77 trades. (The monthly half did not discriminate: -0.178% either
         # way; it is carried because he asked for both charts.)
         _up3 = sum(1 for _k in (1, 2, 3) if len(cl) > _k and cl[-_k] > cl[-_k - 1])
+        # THE MIDDLE LINE (boss 2026-09-02 16:2x: "if average monthly price is
+        # higher than middle then we should not buy - give 0 score and even
+        # directly cancel; we should buy stock below the middle line or in the
+        # middle"). _mid is the price's distance from its own 20-day average.
+        # MEASURED on our OWN 417 알고3 trades over 20 sessions - the strongest
+        # single filter found so far: entries made 2%+ ABOVE the middle line
+        # were 279 trips at -0.194%/trip, -54.22% in total - 85% of everything
+        # the desk lost. Entries BELOW the middle were the only bucket that did
+        # not lose (+0.001%/trip).
+        _ma20 = sum(cl[-20:]) / 20 if len(cl) >= 20 else (cl[-1] if cl else 0)
+        _mid = (100.0 * (cl[-1] / _ma20 - 1)) if _ma20 else 0.0
         _mo: dict = {}
         for _r in rows:
             _mo.setdefault(_r[0].strftime("%Y-%m"), []).append(_r[4])
@@ -295,7 +306,7 @@ def condition(day: str, codes: list[str]) -> dict[str, dict]:
             "macd_cross": 1 if macd_prev <= 0 < macd_now else (0.5 if macd_now > 0 else 0),
             "bb_pos": (cl[-1] - m) / (2 * sd) if sd else 0,
             "vs_close": (cl[-1] / cl[-2] - 1) * 100 if cl[-2] else 0,
-            "up3": _up3, "upm": _upm,
+            "up3": _up3, "upm": _upm, "mid": round(_mid, 2),
             "vol_surge": (vol[-1] / (sum(vol[-21:-1]) / 20)) if sum(vol[-21:-1]) else 1,
             "foreign3": sum(x[0] for x in fl),
             "inst3": sum(x[1] for x in fl),
@@ -424,9 +435,13 @@ def pick(day: str, n: int | None = None, refresh_character: bool = False) -> dic
         # ALREADY-RISING (boss 09-02 16:0x) - a stock up 3 sessions running, or
         # up both of the last 2 months, may not be RECOMMENDED. It still scores
         # and still shows in the table, marked, so the room can see why.
-        _ris = (b.get("up3", 0) >= 3) or (b.get("upm", 0) >= 2)
+        # ABOVE THE MIDDLE LINE = NOT RECOMMENDED (his 16:2x rule), alongside
+        # the already-rising test from 16:0x
+        _ris = ((b.get("up3", 0) >= 3) or (b.get("upm", 0) >= 2)
+                or (b.get("mid", 0) > 0))
         rows.append({"code": c, "name": nm, "score": round(score, 1),
                      "rising": _ris, "up3": b.get("up3"), "upm": b.get("upm"),
+                     "mid": b.get("mid"),
                      "groups": {k: round(v) for k, v in g.items()},
                      "detail": detail,
                      "tick_pct": round(a["tick_pct"], 3), "rsi": round(b["rsi"]),
