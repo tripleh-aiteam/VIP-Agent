@@ -866,6 +866,25 @@ for _v3 in VARIANTS:
         # it runs behind and its number goes on the record either way.
         _v3["bot_recent"] = 0.5
 
+# THE 삼성전기 ORDER, 알고2 + 알고3 (boss 2026-09-02 11:2x, repeated after I
+# reported the court against it: "you have to change buying time from 09:09 to
+# 09:07 and selling time also from 09:48 to 09:40").
+#   BUY 09:07 - the blocker was never the doors, it was the CHOP FENCE: the
+#   20-bar range read 0.72% at 09:07 against a 1.0% fence and only cleared at
+#   09:09 (1.22%). Fence lowered to 0.7 -> the entry lands exactly on 09:07.
+#   SELL 09:40 - band_break 12: after the peak the shelf held 1,426,000 from
+#   09:28-09:39 and 09:40 closed through it at 1,420,000. The -1.5% trail only
+#   reached its line at 09:48.
+# THE NUMBERS ON RECORD, measured and reported to him BEFORE he repeated the
+# order. 알고3 over 20 stored days: trail-only -36.03% | +band_break 12 -67.80%
+# | +band_break 10 -83.02%. And on his OWN 전기 case the pair nets WORSE:
+# 09:07->09:40 +2.19% then a forced re-entry 09:45 -1.30% = +0.89%, against
+# +1.65% for simply holding one ride to 09:48. Deployed on his word.
+for _v4 in VARIANTS:
+    if _v4.get("id") in ("D2", "D3"):
+        _v4["dip"] = dict(_v4["dip"], chop=0.7)
+        _v4["band_break"] = 12
+
 # THE COURT EXTENDS THE TWO FIXES TO THE REST OF THE DESK (18:4x, 20 stored
 # days, every stock). no_high_chase on 알고1/2/4 and the 1.5% trail wherever a
 # trail exists:
