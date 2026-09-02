@@ -6492,6 +6492,10 @@ _SPELL_VOCAB = (
     "much", "many", "good", "best", "queue", "limit", "trade", "trading", "bought",
     "sold", "please", "again", "change", "changes", "money", "increase", "decrease",
     "last", "past", "recent", "first",
+    # boss 2026-09-02 "do something for grammar errors": his real vocabulary
+    "briefing", "portfolio", "understand", "remove", "delete", "restore", "modify",
+    "different", "condition", "conditional", "status", "watch", "monitor", "smart",
+    "suggest", "efficient", "cheaper", "selling", "buying", "answer", "question",
 )
 _SPELL_SET = frozenset(_SPELL_VOCAB)
 # stubborn frequent typos that score below the 0.8 fuzzy bar ("lasy 4 days" answered
@@ -6501,7 +6505,17 @@ _SPELL_DIRECT = {"lasy": "last", "laast": "last", "yersterday": "yesterday",
                  "prise": "price", "prive": "price", "shuld": "should",
                  "yiu": "you", "yuo": "you", "wjo": "who", "whu": "who",
                  "delet": "delete", "delte": "delete", "deleet": "delete",
-                 "remvoe": "remove", "rmove": "remove"}
+                 "remvoe": "remove", "rmove": "remove",
+                 # boss 2026-09-02: his own frequent fingers
+                 "sel": "sell", "stok": "stock", "stocs": "stocks", "stokc": "stock",
+                 "stokcs": "stocks", "shres": "shares", "shre": "share",
+                 "mrket": "market", "markt": "market", "marekt": "market",
+                 "prce": "price", "brifing": "briefing", "brefing": "briefing",
+                 "recomend": "recommend", "recommand": "recommend",
+                 "cancl": "cancel", "cnacel": "cancel", "cancle": "cancel",
+                 "holdimg": "holding", "tradimg": "trading", "tradimngs": "trading",
+                 "tradimngs": "trading", "portpolio": "portfolio",
+                 "aks": "ask", "mustt": "must", "somthing": "something"}
 
 
 def _spell_normalize(q: Optional[str]) -> Optional[str]:
@@ -9105,6 +9119,38 @@ def _run_agent_impl(
                         "tool_used": "checklist_reco", "process": _cr2.get("process")}
         except Exception as e:
             log.warning(f"checklist_reco (candidates route) failed: {str(e)[:120]}")
+
+    # ===== 🤔 NOT-UNDERSTOOD CLARIFY (boss 2026-09-02: "if I do not write
+    # properly it must understand, or need ask if chatbot do not understand") —
+    # a NON-QUESTION with order words that survived every deterministic lane is
+    # a trading intent we failed to parse. It must NEVER fall to the ML decide
+    # chain below (a garbled order got a 'final decision: SELL' card); asking
+    # is the smart move. Question shapes (should/왜/how…) pass through. =====
+    _t_cl = (transcript or "").lower()
+    if (not confirmed_tool and not attachment_ids and transcript
+            and len(transcript) <= 110
+            and _re.search(r"\b(?:buy|sell|order)\b|사줘|팔아|매수|매도|주문|사려|팔려", _t_cl)
+            and not _re.search(r"\b(?:should|how|why|what|when|which|can|could)\b"
+                               r"|할까|살까|팔까|어떻|왜|언제|어느|뭐가|무엇", _t_cl)):
+        _cl_stk = _all_stocks_in_query(transcript)
+        _en_cl = not _re.search(r"[가-힣]", transcript)
+        _nm_cl = _cl_stk[0][1] if _cl_stk else ("삼성전자" if not _en_cl else "samsung")
+        _rep_cl = ((f"🤔 주문 말씀 같은데 정확히 이해하지 못했어요 — 이렇게 말씀해 주시면 바로 실행합니다:\n"
+                    f"· 매수: **\"{_nm_cl} 10주 사줘\"** (시장가는 \"시장가\" 추가)\n"
+                    f"· 매도: **\"{_nm_cl} 10주 팔아줘\"** · 분할: **\"{_nm_cl} 100주 10가지 가격으로\"**\n"
+                    f"· 조건: **\"{_nm_cl} 250,000원 되면 사줘\"** · 취소: **\"{_nm_cl} 주문 취소\"**\n"
+                    f"어떤 걸 원하셨나요?") if not _en_cl else
+                   (f"🤔 That sounds like an order, but I didn't fully understand. "
+                    f"Say it like one of these and I'll do it right away:\n"
+                    f"· Buy: **\"buy {_nm_cl} 10 shares\"** (add \"market\" for instant)\n"
+                    f"· Sell: **\"sell {_nm_cl} 10 shares\"** · Split: **\"buy {_nm_cl} 100 shares "
+                    f"at 10 different prices\"**\n"
+                    f"· Conditional: **\"buy {_nm_cl} when it hits 250,000\"** · "
+                    f"Cancel: **\"cancel {_nm_cl} order\"**\n"
+                    f"Which one did you mean?"))
+        return {"intent": "clarify", "language": lang, "reply": _rep_cl,
+                "action": None, "speak": True, "transcript": transcript,
+                "tool_used": "clarify"}
 
     # ===== TRADE-INTENT FIRST (order beats guards): any buy/sell ask on a resolvable
     # stock — even misspelled ('skynix') — goes to the 3-method decide composer BEFORE
