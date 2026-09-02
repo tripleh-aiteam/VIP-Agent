@@ -60,9 +60,11 @@ export default function ApprovePage() {
   // THE AGENT, THINKING OUT LOUD (boss 2026-09-03 #9): above the rooms the
   // agent visibly walks the whole universe gate by gate and keeps choosing
   // the five; a gated stock - the six included - wears a bold NO BUY.
-  type Gate = { k: string; en: string; v: string; bad: boolean };
+  type Gate = { k: string; en: string; v: string; bad: boolean;
+                why?: string; why_en?: string };
   type BrainRow = { code: string; name: string; score?: number; gates: Gate[];
-                    pass: boolean; no_buy?: string | null; chosen?: boolean };
+                    pass: boolean; no_buy?: string | null; no_buy_en?: string | null;
+                    blocked_n?: number; chosen?: boolean };
   type Brain = { ok: boolean; universe: BrainRow[]; six: BrainRow[]; five: string[] };
   const [brain, setBrain] = useState<Brain | null>(null);
   const [thinkIdx, setThinkIdx] = useState(0);
@@ -198,7 +200,10 @@ export default function ApprovePage() {
                 const win = isFinal && (brain.five || []).includes(u.name);
                 return (
                   <span key={u.code}
-                    title={u.gates.map((x) => `${t(x.k, x.en)} ${x.v}`).join("  ·  ")}
+                    title={u.gates.map((x) =>
+                        (x.bad ? "✗ " : "✓ ") + t(x.k, x.en) + " " + x.v
+                        + (x.bad ? "  → " + t(x.why || "", x.why_en || "") : "")
+                      ).join(" | ")}
                     style={{
                       fontSize: 11.5, padding: "4px 9px", borderRadius: 7,
                       fontWeight: bad ? 800 : 600,
@@ -213,6 +218,15 @@ export default function ApprovePage() {
                 );
               })}
             </div>
+            {/* the sentence for whoever the current gate just rejected */}
+            {!isFinal && failed.length > 0 && (
+              <div style={{ marginTop: 9, fontSize: 12.5, color: "#c62828",
+                            fontWeight: 600, lineHeight: 1.5 }}>
+                ✗ <b>{failed[thinkIdx % failed.length].name}</b> —{" "}
+                {t(failed[thinkIdx % failed.length].gates[ph.g]?.why || "",
+                   failed[thinkIdx % failed.length].gates[ph.g]?.why_en || "")}
+              </div>
+            )}
             {/* the six, called out by name when they are barred */}
             {(brain.six || []).some((x) => !x.pass) && (
               <div style={{ marginTop: 11, padding: "9px 11px", borderRadius: 8,
@@ -221,9 +235,9 @@ export default function ApprovePage() {
                   ⛔ {t("고정 6종목 중 매수 금지", "NO BUY among the fixed six")}
                 </b>
                 {(brain.six || []).filter((x) => !x.pass).map((x) => (
-                  <div key={x.code} style={{ fontSize: 13, marginTop: 4 }}>
-                    <b style={{ color: "#c62828", fontSize: 14 }}>NO BUY! {x.name}</b>
-                    <span style={{ marginLeft: 8 }}>{x.no_buy}</span>
+                  <div key={x.code} style={{ fontSize: 13, marginTop: 6, lineHeight: 1.5 }}>
+                    <b style={{ color: "#c62828", fontSize: 14.5 }}>NO BUY! {x.name}</b>
+                    <span style={{ marginLeft: 8 }}>— {t(x.no_buy || "", x.no_buy_en || x.no_buy || "")}</span>
                   </div>
                 ))}
               </div>

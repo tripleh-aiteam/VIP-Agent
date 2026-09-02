@@ -136,24 +136,65 @@ def brain():
     five = []
     for r in sorted(rows, key=lambda x: -(x.get("score") or 0)):
         code = str(r.get("code"))
+        # EVERY VERDICT CARRIES A REASON A PERSON CAN READ (boss 2026-09-03
+        # 09:1x: "after the stock name there should be a one line explanation
+        # WHY not buy - currently explanations are not good and not catchable").
+        # The chip keeps the short number; `why` is the sentence, and it is the
+        # sentence that appears beside a NO BUY.
         gates = []
         gv, gbad = (_gap(code) if code in watch_codes else (None, None))
-        gates.append({"k": "갭상승", "en": "gap-up open",
-                      "v": (f"{gv:+.1f}%" if gv is not None else "대기/wait"),
-                      "bad": bool(gbad)})
-        gates.append({"k": "1개월 평균", "en": "vs 1-month avg",
-                      "v": f"{r.get('mid'):+.2f}%" if r.get("mid") is not None else "-",
-                      "bad": (r.get("mid") or 0) > 0})
-        gates.append({"k": "1년 평균", "en": "vs 1-year avg",
-                      "v": f"{r.get('midy'):+.2f}%" if r.get("midy") is not None else "-",
-                      "bad": (r.get("midy") or 0) > 0})
-        gates.append({"k": "연속 상승", "en": "already rising",
-                      "v": f"{r.get('up3')}일↑/{r.get('upm')}월↑",
-                      "bad": (r.get("up3") or 0) >= 3 or (r.get("upm") or 0) >= 2})
+        gates.append({
+            "k": "갭상승", "en": "gap-up open",
+            "v": (f"{gv:+.1f}%" if gv is not None else "대기/wait"),
+            "bad": bool(gbad),
+            "why": (f"오늘 시가가 어제 종가보다 {gv:+.1f}% 높게 출발했습니다 — "
+                    f"갭상승 종목은 자기 시가 아래로 내려오기 전까지 사지 않습니다."
+                    if gbad else ""),
+            "why_en": (f"It opened {gv:+.1f}% above yesterday's close. We never chase "
+                       f"a gap-up — we wait until it falls back below its own open."
+                       if gbad else "")})
+        _m = r.get("mid")
+        gates.append({
+            "k": "1개월 평균", "en": "vs 1-month avg",
+            "v": f"{_m:+.2f}%" if _m is not None else "-",
+            "bad": (_m or 0) > 0,
+            "why": (f"지금 가격이 1개월 평균보다 {_m:+.2f}% 비쌉니다 — "
+                    f"평균 위에서 산 거래가 우리 손실의 85%였습니다."
+                    if (_m or 0) > 0 else ""),
+            "why_en": (f"The price sits {_m:+.2f}% ABOVE its 1-month average. "
+                       f"Buying above this line caused 85% of our measured losses."
+                       if (_m or 0) > 0 else "")})
+        _my = r.get("midy")
+        gates.append({
+            "k": "1년 평균", "en": "vs 1-year avg",
+            "v": f"{_my:+.2f}%" if _my is not None else "-",
+            "bad": (_my or 0) > 0,
+            "why": (f"지금 가격이 1년 평균보다 {_my:+.2f}% 비쌉니다 — "
+                    f"1개월·1년 두 평균 아래일 때만 수익이 났습니다."
+                    if (_my or 0) > 0 else ""),
+            "why_en": (f"The price sits {_my:+.2f}% ABOVE its 1-year average. "
+                       f"Only stocks below BOTH averages made money over 12 years."
+                       if (_my or 0) > 0 else "")})
+        _u3, _um = (r.get("up3") or 0), (r.get("upm") or 0)
+        _ris9 = _u3 >= 3 or _um >= 2
+        gates.append({
+            "k": "연속 상승", "en": "already rising",
+            "v": f"{_u3}일↑/{_um}월↑", "bad": _ris9,
+            "why": ((f"최근 3일 중 {_u3}일 상승" if _u3 >= 3 else f"최근 2개월 중 {_um}개월 상승")
+                    + " — 이미 오른 종목은 다음에 또 오를 확률이 더 낮습니다 (45% 대 50%)."
+                    if _ris9 else ""),
+            "why_en": ((f"It has risen {_u3} of the last 3 days" if _u3 >= 3
+                        else f"It rose in {_um} of the last 2 months")
+                       + " — a stock that already climbed is LESS likely to climb "
+                         "again (45% vs 50%)." if _ris9 else "")})
         z = (r.get("zone") or "-")
-        gates.append({"k": "1년 구간", "en": "year zone",
-                      "v": f"{z} {r.get('zone_pos')}%",
-                      "bad": z == "sell"})
+        gates.append({
+            "k": "1년 구간", "en": "year zone",
+            "v": f"{z} {r.get('zone_pos')}%", "bad": z == "sell",
+            "why": (f"1년 범위의 {r.get('zone_pos')}% 지점 — 고점권(85% 이상)에서는 "
+                    f"절대 매수하지 않습니다." if z == "sell" else ""),
+            "why_en": (f"It sits at {r.get('zone_pos')}% of its 1-year range — "
+                       f"we never buy in the top zone (85%+)." if z == "sell" else "")})
         news_bad = False
         try:
             from services.checklist_advice import _fresh_stamps
@@ -161,13 +202,24 @@ def brain():
                            for x in _fresh_stamps(code, limit=2))
         except Exception:
             pass
-        gates.append({"k": "위험 뉴스", "en": "danger news",
-                      "v": "있음/yes" if news_bad else "없음/no", "bad": news_bad})
+        gates.append({
+            "k": "위험 뉴스", "en": "danger news",
+            "v": "있음/yes" if news_bad else "없음/no", "bad": news_bad,
+            "why": ("방금 위험·악재 뉴스가 감지되었습니다 — 뉴스가 정리될 때까지 "
+                    "이 종목은 매수하지 않습니다." if news_bad else ""),
+            "why_en": ("A danger/bad-news stamp landed in the last hour — no buying "
+                       "this stock until it clears." if news_bad else "")})
         blocked = [g for g in gates if g["bad"]]
         entry = {"code": code, "name": r.get("name"),
                  "score": r.get("score"), "score_100": r.get("score_100"),
                  "gates": gates, "pass": not blocked,
-                 "no_buy": (blocked[0]["k"] + " — " + blocked[0]["v"]) if blocked else None}
+                 "no_buy": (blocked[0].get("why") or
+                            (blocked[0]["k"] + " — " + blocked[0]["v"]))
+                           if blocked else None,
+                 "no_buy_en": (blocked[0].get("why_en") or
+                               (blocked[0]["en"] + " — " + blocked[0]["v"]))
+                              if blocked else None,
+                 "blocked_n": len(blocked)}
         if code in SIX:
             out["six"].append(entry)
         else:
