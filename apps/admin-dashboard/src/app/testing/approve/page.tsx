@@ -88,6 +88,11 @@ export default function ApprovePage() {
       </div>
 
       {/* ─ the ten rooms ─ */}
+      {!feed && <div style={{ padding: "26px 0", fontSize: 13.5, opacity: 0.7 }}>
+        ⏳ 데스크를 깨우는 중입니다 — 10개 방을 준비하고 있어요… (첫 로딩은 몇 초 걸릴 수 있습니다)</div>}
+      {feed && (feed.rooms || []).length === 0 &&
+        <div style={{ padding: "26px 0", fontSize: 13.5, opacity: 0.7 }}>
+          ⏳ 에이전트가 첫 스캔을 돌리는 중 — 잠시 후 방이 나타납니다 (자동 새로고침).</div>}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(196px,1fr))", gap: 10 }}>
         {(feed?.rooms || []).map((r) => (
           <div key={r.code} onClick={() => openRoom(r.code)}
@@ -127,6 +132,23 @@ export default function ApprovePage() {
               <div style={{ fontSize: 12.5, marginTop: 6, color: "#e6a817" }}>
                 👀 감시 계속 중 — 조건이 맞으면 이 화면과 팝업으로 제안합니다.</div>}
           </div>
+          {/* ─ this room's own trading history (semi-auto decisions) ─ */}
+          {(() => {
+            const lot = feed?.held?.find((h) => h.code === open);
+            const rows = (feed?.log || []).filter((l) => l.code === open);
+            if (!lot && rows.length === 0) return (
+              <div style={{ fontSize: 12, marginTop: 10, opacity: 0.6 }}>
+                📜 이 방의 매매 기록: 아직 없음 — 첫 제안을 승인하면 여기 쌓입니다.</div>);
+            return (<div style={{ marginTop: 10 }}>
+              <b style={{ fontSize: 12.5 }}>📜 이 방의 매매 기록</b>
+              {lot && <div style={{ fontSize: 12, padding: "3px 0", color: "#2e7d32" }}>
+                📦 보유 중: {lot.qty.toLocaleString()}주 @ {W(lot.price)} ({lot.at} 승인 매수)</div>}
+              {rows.map((l, i) => (
+                <div key={i} style={{ fontSize: 12, padding: "2px 0", opacity: 0.9 }}>
+                  {l.at} · {l.side === "BUY" ? "🔴 매수" : "🔵 매도"} {l.qty.toLocaleString()}주
+                  — <b>{l.decision}</b>{l.fill ? ` @ ${W(l.fill)}` : ""}</div>))}
+            </div>);
+          })()}
         </div>
       )}
 

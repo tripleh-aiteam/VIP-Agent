@@ -12,31 +12,31 @@ router = APIRouter(prefix="/approval", tags=["approval-desk"])
 
 @router.get("/feed")
 def feed(db: Session = Depends(get_db)):
-    """One poll = scan + everything the page renders."""
+    """INSTANT: stored meta + live prices; the heavy scan runs in background."""
     from services import approval_desk as ad
     from services.paper_desk import fast_price
-    st = ad.scan(db)
+    ad.scan_async()
+    st = ad._load()
+    meta = st.get("rooms_meta")
+    if not meta:                # very first boot — cheap names only, scan fills in
+        meta = [{"code": c, "name": n, "score": s, "zone": None}
+                for c, n, s in [(c, n, None) for c, n in ad.SIX]]
     rooms = []
     held = {h["code"]: h for h in ad.held(st)}
-    for code, name, score in ad.desk_codes():
+    for m in meta:
+        code = m["code"]
         px = chg = None
         try:
             px, chg, _t, _s = fast_price(code)
-        except Exception:
-            pass
-        zone = None
-        try:
-            from services.checklist_reco import _year_zone
-            z = _year_zone(code)
-            zone = z and {"pos": z["pos"], "zone": z["zone"]}
         except Exception:
             pass
         lot = held.get(code)
         pnl = None
         if lot and px:
             pnl = round((float(px) / float(lot["price"]) - 1) * 100, 2)
-        rooms.append({"code": code, "name": name, "score": score, "price": px,
-                      "chg": chg, "zone": zone, "held": lot, "pnl": pnl})
+        rooms.append({"code": code, "name": m["name"], "score": m.get("score"),
+                      "price": px, "chg": chg, "zone": m.get("zone"),
+                      "held": lot, "pnl": pnl})
     try:
         from services.kiwoom_tape import market_open
         mkt = market_open()

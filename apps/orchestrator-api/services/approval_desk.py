@@ -150,6 +150,35 @@ def _mk_sug(st, code, name, side, reasons, price, qty, score):
     return sug
 
 
+_scan_running = {"on": False, "last": 0.0}
+
+
+def scan_async() -> None:
+    """Fire scan() in a background thread (its own DB session) — the feed must
+    answer INSTANTLY even when caches are cold (boss 2026-09-02: 'if I click
+    Real Time Monitoring nothing is showing' — the first scan pulls a year of
+    history for ten stocks and the page sat blank waiting for it)."""
+    import threading
+    if _scan_running["on"] or time.time() - _scan_running["last"] < 5:
+        return
+
+    def _run():
+        _scan_running["on"] = True
+        try:
+            from db.base import SessionLocal
+            db = SessionLocal()
+            try:
+                scan(db)
+            finally:
+                db.close()
+        except Exception as e:
+            log.warning(f"approval scan_async: {str(e)[:100]}")
+        finally:
+            _scan_running["on"] = False
+            _scan_running["last"] = time.time()
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def scan(db) -> dict:
     """Evaluate all ten rooms; append new suggestions. Called on page poll."""
     st = _load()
@@ -158,6 +187,24 @@ def scan(db) -> dict:
     st.setdefault("cool", {})
     # expire unanswered popups
     st["pending"] = [p for p in st["pending"] if time.time() - p["ts"] < _EXPIRE]
+    # room meta snapshot (score + zone) computed HERE in the background so the
+    # instant feed never blocks on cold caches; the top-4 rotate automatically
+    # as the checklist re-scores (ranking cache ~10 min)
+    try:
+        from services.checklist_reco import _year_zone
+        meta = []
+        for code, name, score in desk_codes():
+            z = None
+            try:
+                z0 = _year_zone(code)
+                z = z0 and {"pos": z0["pos"], "zone": z0["zone"]}
+            except Exception:
+                pass
+            meta.append({"code": code, "name": name, "score": score, "zone": z})
+        st["rooms_meta"] = meta
+        st["meta_at"] = time.time()
+    except Exception:
+        pass
     try:
         from services.kiwoom_tape import market_open
         if not market_open():
