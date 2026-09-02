@@ -7839,6 +7839,66 @@ def _run_agent_impl(
                         "reply": "\n".join(L_ud), "action": None, "speak": True,
                         "transcript": transcript, "tool_used": "realtime_quote"}
 
+    # === ✏️ EDIT A TRADE'S TIME (boss 2026-09-02: "my app late to sale or buy —
+    # change buying time from 09:09 to 09:07"). Display-only override on both
+    # menus, records stay; "수정 복원 / restore edits" undoes. ===
+    _t_ed = (transcript or "").lower()
+    _ed_verb = any(k in _t_ed for k in ("change", "modify", "바꿔", "수정", "고쳐", "변경"))
+    _ed_restore = (any(k in _t_ed for k in ("restore", "복원", "취소", "되돌려", "undo"))
+                   and any(k in _t_ed for k in ("수정", "edit", "time change", "변경")))
+    if (not confirmed_tool and not attachment_ids and transcript
+            and (_ed_restore or (_ed_verb and _re.search(r"\d{1,2}:\d{2}", transcript)))):
+        try:
+            from services import trip_editor as _tped
+            from services.chat_trade import text_lang_en as _tle_ed
+            from services.kiwoom_tape import _day as _kd_ed
+            _en_ed = _tle_ed(transcript, lang)
+            _day_ed = _kd_ed()
+            if _ed_restore:
+                try:
+                    from services.stock_resolver import resolve_one as _ro_ed
+                    _rc_ed, _n_ed0 = _ro_ed(transcript)
+                except Exception:
+                    _rc_ed = None
+                n = _tped.restore(_day_ed, _rc_ed)
+                return {"intent": "trip_edit", "language": lang,
+                        "reply": ((f"♻️ {n}건의 시간 수정을 되돌렸습니다 — 원래 기록대로 표시됩니다."
+                                   if n else "되돌릴 수정이 없습니다.") if not _en_ed else
+                                  (f"♻️ Reverted {n} time edit(s) — the original records show again."
+                                   if n else "No edits to revert.")),
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "trip_editor"}
+            _tm_ed = _re.findall(r"(\d{1,2}:\d{2})", transcript)
+            _stk_ed = _all_stocks_in_query(transcript)
+            if len(_tm_ed) >= 2 and _stk_ed:
+                _frm_ed = _tm_ed[0].zfill(5)
+                _to_ed = _tm_ed[1].zfill(5)
+                _fld_ed = ("sell_t" if _re.search(r"sell|매도|판|selling", _t_ed)
+                           and not _re.search(r"buy|매수|buying|산", _t_ed) else "buy_t")
+                _c_ed, _n_ed = _stk_ed[0]
+                _tped.edit(_day_ed, _c_ed, _fld_ed, _frm_ed, _to_ed)
+                _fko = "매수" if _fld_ed == "buy_t" else "매도"
+                _fen = "buy" if _fld_ed == "buy_t" else "sell"
+                return {"intent": "trip_edit", "language": lang,
+                        "reply": ((f"✏️ **{_n_ed}** — {_fko} 시간 {_frm_ed} → **{_to_ed}** 로 "
+                                   f"두 메뉴에 표시됩니다 (기록 원본은 보존 · "
+                                   f"되돌리려면 \"시간 수정 복원\").") if not _en_ed else
+                                  (f"✏️ **{_n_ed}** — {_fen} time now shows as **{_to_ed}** "
+                                   f"(was {_frm_ed}) on both menus. The raw record is kept — "
+                                   f"say \"restore time edits\" to undo.")),
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "trip_editor"}
+            if _ed_verb and len(_tm_ed) >= 2:
+                return {"intent": "trip_edit", "language": lang,
+                        "reply": ("어느 종목의 시간을 바꿀까요? 예: \"삼성전기 매수 시간 09:09를 "
+                                  "09:07로 바꿔줘\"" if not _en_ed else
+                                  "Which stock's time should I change? e.g. \"change 삼성전기 "
+                                  "buying time from 09:09 to 09:07\""),
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "trip_editor"}
+        except Exception as e:
+            log.warning(f"trip-edit lane failed: {str(e)[:120]}")
+
     # === 🗑 DELETE TRADING-HISTORY ROWS (boss 2026-09-01: "since I am using fake
     # money I wanna even delete trading history — 'remove SK하이닉스 which bought
     # at 10:17' should delete it"). Display-only: the row vanishes from both

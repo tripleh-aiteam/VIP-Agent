@@ -847,11 +847,15 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
     # which bought at 10:17") — display filter only, records stay; "복원해줘" undoes
     try:
         if res.get("ok"):
+            # ✏️ chat time-edits first (boss 2026-09-02: "change buying time from
+            # 09:09 to 09:07"), then the eraser — both display-only, records stay
+            from services.trip_editor import apply_rows as _ted
             from services.trip_eraser import filter_holding as _teh
             from services.trip_eraser import filter_rows as _tef
+            _d9e = day or _kd9()
             res = {**res,
-                   "rows": _tef(list(res.get("rows") or []), day or _kd9()),
-                   "holding": _teh(list(res.get("holding") or []), day or _kd9())}
+                   "rows": _tef(_ted(list(res.get("rows") or []), _d9e), _d9e),
+                   "holding": _teh(_ted(list(res.get("holding") or []), _d9e), _d9e)}
     except Exception:
         pass
     return res
