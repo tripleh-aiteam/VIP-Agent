@@ -2007,8 +2007,21 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             up[si], dn[si] = up[si] + 1, 0
             up_soft[si] += 1
         elif c < prev:
-            up[si], dn[si] = 0, dn[si] + 1
-            up_soft[si] = 0
+            # A SMALL BLUE IS A PAUSE, NOT A BREAK (boss 2026-09-02 10:2x: "if
+            # there is one red then small blue then again one red, consider them
+            # as 3 red and in the last red candle we should buy"). The flat law
+            # of 08-06 already said a flat close continues the run; his new law
+            # extends it to a shallow dip. The fall still counts as a fall for
+            # dn[] - the stop and the blues-form exits stay honest - only the
+            # RED RUN survives it.
+            _sbl = v.get("soft_blue")
+            if (_sbl and up_soft[si] > 0 and prev
+                    and (prev - c) / prev * 100 <= float(_sbl)):
+                up[si], dn[si] = 0, dn[si] + 1
+                up_soft[si] += 1
+            else:
+                up[si], dn[si] = 0, dn[si] + 1
+                up_soft[si] = 0
         elif up_soft[si] > 0:
             up_soft[si] += 1   # a flat close continues AND counts (boss's law)
         # the fade-first lock opens once a real decrease showed itself
