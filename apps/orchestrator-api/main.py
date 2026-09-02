@@ -43,6 +43,7 @@ from routers.telegram import router as telegram_router
 from routers.aiglass import router as aiglass_router
 from routers.chat import router as chat_router
 from routers.chatbot import router as chatbot_router
+from routers.approval import router as approval_router
 from routers.demo import router as demo_router
 from routers.schedules import router as schedules_router
 from routers.users import router as users_router
@@ -307,6 +308,7 @@ app.include_router(telegram_router)
 app.include_router(aiglass_router)
 app.include_router(chat_router)
 app.include_router(chatbot_router)
+app.include_router(approval_router)
 app.include_router(demo_router)
 app.include_router(auth_router)
 app.include_router(users_router)
