@@ -275,6 +275,19 @@ def condition(day: str, codes: list[str]) -> dict[str, dict]:
         # not lose (+0.001%/trip).
         _ma20 = sum(cl[-20:]) / 20 if len(cl) >= 20 else (cl[-1] if cl else 0)
         _mid = (100.0 * (cl[-1] / _ma20 - 1)) if _ma20 else 0.0
+        # TWO GATES, NOT ONE (boss 2026-09-02 17:1x: "so stock should pass 2
+        # gates right - it should be below the average in the last 20 days AND
+        # last year also"). Measured over 12 years, 103,873 stock-days:
+        #   below BOTH month and year  30,410 days  45.6% up  +0.009%  <- only
+        #                                                     positive bucket
+        #   below the month only       20,804 days  45.8% up  -0.065%
+        #   below the year only        17,709 days  43.9% up  -0.054%
+        #   above both                 34,950 days  44.6% up  -0.063%
+        # The month test ALONE is worth no more than failing both; it is the
+        # pair that earns the edge.
+        _ylen = min(len(cl), 246)
+        _mayr = sum(cl[-_ylen:]) / _ylen if _ylen >= 60 else _ma20
+        _midy = (100.0 * (cl[-1] / _mayr - 1)) if _mayr else 0.0
         _mo: dict = {}
         for _r in rows:
             _mo.setdefault(_r[0].strftime("%Y-%m"), []).append(_r[4])
@@ -306,7 +319,7 @@ def condition(day: str, codes: list[str]) -> dict[str, dict]:
             "macd_cross": 1 if macd_prev <= 0 < macd_now else (0.5 if macd_now > 0 else 0),
             "bb_pos": (cl[-1] - m) / (2 * sd) if sd else 0,
             "vs_close": (cl[-1] / cl[-2] - 1) * 100 if cl[-2] else 0,
-            "up3": _up3, "upm": _upm, "mid": round(_mid, 2),
+            "up3": _up3, "upm": _upm, "mid": round(_mid, 2), "midy": round(_midy, 2),
             "vol_surge": (vol[-1] / (sum(vol[-21:-1]) / 20)) if sum(vol[-21:-1]) else 1,
             "foreign3": sum(x[0] for x in fl),
             "inst3": sum(x[1] for x in fl),
@@ -438,10 +451,10 @@ def pick(day: str, n: int | None = None, refresh_character: bool = False) -> dic
         # ABOVE THE MIDDLE LINE = NOT RECOMMENDED (his 16:2x rule), alongside
         # the already-rising test from 16:0x
         _ris = ((b.get("up3", 0) >= 3) or (b.get("upm", 0) >= 2)
-                or (b.get("mid", 0) > 0))
+                or (b.get("mid", 0) > 0) or (b.get("midy", 0) > 0))
         rows.append({"code": c, "name": nm, "score": round(score, 1),
                      "rising": _ris, "up3": b.get("up3"), "upm": b.get("upm"),
-                     "mid": b.get("mid"),
+                     "mid": b.get("mid"), "midy": b.get("midy"),
                      "groups": {k: round(v) for k, v in g.items()},
                      "detail": detail,
                      "tick_pct": round(a["tick_pct"], 3), "rsi": round(b["rsi"]),
