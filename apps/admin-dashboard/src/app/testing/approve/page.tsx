@@ -94,7 +94,7 @@ export default function ApprovePage() {
   }, []);
   // the "thinking" cursor walks one stock per beat, never stopping in market hours
   useEffect(() => {
-    const t = setInterval(() => setThinkIdx((i) => i + 1), 1600);
+    const t = setInterval(() => setThinkIdx((i) => i + 1), 1400);
     return () => clearInterval(t);
   }, []);
 
@@ -150,55 +150,96 @@ export default function ApprovePage() {
         {feed && <span style={{ marginLeft: 8 }}>{feed.market_open ? "🟢 장중" : "🌙 장 마감 — 제안은 장중에만 나옵니다"}</span>}
       </div>
 
-      {/* ─ THE AGENT, above the rooms, thinking in the open ─ */}
+      {/* ─ THE AGENT, above the rooms, working on ALL stocks at once ─ */}
       {brain?.ok && (() => {
-        const uni = brain.universe || [];
-        const cur = uni.length ? uni[thinkIdx % uni.length] : null;
+        const uni = [...(brain.six || []), ...(brain.universe || [])];
+        // THE PHASE SWEEP (boss 2026-09-03 09:0x: "like when we ask ChatGPT it
+        // says thinking… searching… preparing… - and show the agent checks ALL
+        // stocks in parallel, not one by one"). The old cursor walked a single
+        // stock per beat, which showed the opposite of parallel. Now the agent
+        // announces ONE GATE and every stock is judged by it simultaneously.
+        const PH = [
+          { k: "갭상승 검사 중", en: "Checking gap-up opens", g: 0, ico: "📈" },
+          { k: "1개월 평균선과 비교 중", en: "Comparing to the 1-month average", g: 1, ico: "📊" },
+          { k: "1년 평균선과 비교 중", en: "Comparing to the 1-year average", g: 2, ico: "🗓" },
+          { k: "연속 상승 여부 확인 중", en: "Checking for an already-rising run", g: 3, ico: "🔺" },
+          { k: "1년 구간(매수/매도존) 판정 중", en: "Judging the 1-year zone", g: 4, ico: "🎯" },
+          { k: "위험 뉴스 스캔 중", en: "Scanning for danger news", g: 5, ico: "📰" },
+          { k: "최적 5종목 선정 중", en: "Selecting the best five", g: -1, ico: "🏆" },
+        ];
+        const ph = PH[thinkIdx % PH.length];
+        const dots = ".".repeat((thinkIdx % 3) + 1);
+        const isFinal = ph.g < 0;
+        const failed = isFinal ? [] : uni.filter((u) => u.gates[ph.g]?.bad);
         return (
-          <div style={{ margin: "12px 0", padding: "12px 14px", borderRadius: 10,
+          <div style={{ margin: "12px 0", padding: "14px 16px", borderRadius: 12,
                         border: "2px solid #6a1b9a", background: "rgba(106,27,154,0.05)" }}>
+            {/* the status line, the way an assistant narrates itself */}
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <b style={{ fontSize: 15 }}>🤖 {t("에이전트가 생각하는 중", "THE AGENT IS THINKING")}</b>
-              <span className="pulse-dot" style={{ width: 8, height: 8, borderRadius: 4,
-                background: "#6a1b9a", display: "inline-block", animation: "pulse 1.2s infinite" }} />
-              <span style={{ fontSize: 12, opacity: 0.75 }}>
-                {t(`${uni.length}개 후보를 쉬지 않고 검사 → 고정 6 + 최적 5 선택`,
-                   `scanning ${uni.length} candidates non-stop → the fixed 6 + the best 5`)}
+              <span style={{ fontSize: 20 }}>🤖</span>
+              <b style={{ fontSize: 16, color: "#6a1b9a" }}>
+                {ph.ico} {t(ph.k, ph.en)}{dots}
+              </b>
+              <span style={{ fontSize: 12.5, fontWeight: 700, padding: "2px 10px",
+                             borderRadius: 999, background: "#6a1b9a", color: "#fff" }}>
+                {t(`${uni.length}개 종목 동시 검사`, `${uni.length} stocks in parallel`)}
               </span>
+              {!isFinal && failed.length > 0 && (
+                <span style={{ fontSize: 13, fontWeight: 800, color: "#c62828" }}>
+                  {t(`${failed.length}개 탈락`, `${failed.length} rejected`)}
+                </span>
+              )}
             </div>
-            {cur && (
-              <div style={{ marginTop: 10, fontSize: 13 }}>
-                <b>🔎 {t("지금 검사 중", "now checking")}: {cur.name}</b>
-                <span style={{ marginLeft: 8, opacity: 0.7 }}>{t("점수", "score")} {cur.score}</span>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
-                  {cur.gates.map((g, i) => (
-                    <span key={i} style={{ fontSize: 12, padding: "3px 9px", borderRadius: 6,
-                        border: `1px solid ${g.bad ? "#c62828" : "#2e7d32"}`,
-                        color: g.bad ? "#c62828" : "#2e7d32",
-                        background: g.bad ? "rgba(198,40,40,0.07)" : "rgba(46,125,50,0.07)" }}>
-                      {g.bad ? "✗" : "✓"} {t(g.k, g.en)} {g.v}
-                    </span>
-                  ))}
-                </div>
-                <div style={{ marginTop: 6, fontWeight: 700, fontSize: 13,
-                              color: cur.pass ? "#2e7d32" : "#c62828" }}>
-                  {cur.pass
-                    ? t("→ 통과 — 매수 후보", "→ PASSES — buy candidate")
-                    : t(`→ 매수 금지! ${cur.no_buy}`, `→ NO BUY! ${cur.no_buy}`)}
-                </div>
+            {/* every stock, judged together, right now */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 11 }}>
+              {uni.map((u, n) => {
+                const g = isFinal ? null : u.gates[ph.g];
+                const bad = isFinal ? !u.pass : !!g?.bad;
+                const win = isFinal && (brain.five || []).includes(u.name);
+                return (
+                  <span key={u.code}
+                    title={u.gates.map((x) => `${t(x.k, x.en)} ${x.v}`).join("  ·  ")}
+                    style={{
+                      fontSize: 11.5, padding: "4px 9px", borderRadius: 7,
+                      fontWeight: bad ? 800 : 600,
+                      animation: `fadeIn .35s ease ${(n % 12) * 0.03}s both`,
+                      border: `1.5px solid ${win ? "#6a1b9a" : bad ? "#c62828" : "#2e7d32"}`,
+                      background: win ? "#6a1b9a" : bad ? "rgba(198,40,40,0.10)" : "rgba(46,125,50,0.08)",
+                      color: win ? "#fff" : bad ? "#c62828" : "#2e7d32",
+                    }}>
+                    {win ? "🏆 " : bad ? "✗ " : "✓ "}{u.name}
+                    <b style={{ marginLeft: 5, opacity: 0.9 }}>{isFinal ? (u.score ?? "") : g?.v}</b>
+                  </span>
+                );
+              })}
+            </div>
+            {/* the six, called out by name when they are barred */}
+            {(brain.six || []).some((x) => !x.pass) && (
+              <div style={{ marginTop: 11, padding: "9px 11px", borderRadius: 8,
+                            border: "2px solid #c62828", background: "rgba(198,40,40,0.07)" }}>
+                <b style={{ color: "#c62828", fontSize: 13.5 }}>
+                  ⛔ {t("고정 6종목 중 매수 금지", "NO BUY among the fixed six")}
+                </b>
+                {(brain.six || []).filter((x) => !x.pass).map((x) => (
+                  <div key={x.code} style={{ fontSize: 13, marginTop: 4 }}>
+                    <b style={{ color: "#c62828", fontSize: 14 }}>NO BUY! {x.name}</b>
+                    <span style={{ marginLeft: 8 }}>{x.no_buy}</span>
+                  </div>
+                ))}
               </div>
             )}
-            <div style={{ marginTop: 10, fontSize: 13 }}>
-              <b>🏆 {t("지금의 최적 5", "the current best five")}:</b>{" "}
-              {(brain.five || []).map((n, i) => (
-                <span key={i} style={{ margin: "0 4px", padding: "3px 10px", borderRadius: 999,
-                    background: "#6a1b9a", color: "#fff", fontSize: 12.5, fontWeight: 700 }}>{n}</span>
+            <div style={{ marginTop: 11, fontSize: 13.5 }}>
+              <b>🏆 {t("현재 최적 5종목", "the current best five")}:</b>{" "}
+              {(brain.five || []).map((n2, i2) => (
+                <span key={i2} style={{ margin: "0 4px", padding: "4px 11px", borderRadius: 999,
+                    background: "#6a1b9a", color: "#fff", fontSize: 13, fontWeight: 800 }}>{n2}</span>
               ))}
               <span style={{ marginLeft: 6, fontSize: 11.5, opacity: 0.65 }}>
-                {t("(장중 계속 갱신)", "(re-chosen continuously through the session)")}
+                {t("장중 4초마다 다시 선정 — 고정 6종목은 항상 유지",
+                   "re-chosen every 4s through the session — the fixed six always stay")}
               </span>
             </div>
-            <style>{`@keyframes pulse{0%{opacity:.25}50%{opacity:1}100%{opacity:.25}}`}</style>
+            <style>{`@keyframes fadeIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}`}</style>
           </div>
         );
       })()}
