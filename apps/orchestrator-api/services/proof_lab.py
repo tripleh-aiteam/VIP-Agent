@@ -824,6 +824,20 @@ _D3r["trail_all"] = {"arm": 1.0, "drop": 1.5}
 # +5.96%, win 52% -> 60%, and 한미's late 13:49 -1.27% chase disappears.
 _D3r["no_high_chase"] = 0.3
 
+# 알고2 STOPS SELLING PIECES INTO A DIP (boss 2026-09-02 09:5x, live: "algo 2
+# still running with old rule - if it decrease 2 blue sell, no, we should wait
+# until -1%"). His exhibits, all three minutes after entry: 하이닉스 09:09 ->
+# 09:12 -0.42% (83주), 삼성SDI 09:06 -> 09:12 (833주), KB금융 09:02 -> 09:11
+# -0.06% (833주). Those are retreat slices - `arm 0.0` let a 0.9% blue sell a
+# piece with NO profit required, and derisk_free allowed it below cost. The
+# downside now belongs to the stop alone; the +1% rungs (알고2's 10% drip) are
+# untouched, so it still harvests on the way UP.
+for _v2 in VARIANTS:
+    if _v2.get("id") == "D2":
+        _v2["derisk_free"] = False
+        _v2["drip"] = dict(_v2["drip"])
+        _v2["drip"]["retreat"] = {"big": 999.0, "arm": 999.0, "blues": 999}
+
 # THE COURT EXTENDS THE TWO FIXES TO THE REST OF THE DESK (18:4x, 20 stored
 # days, every stock). no_high_chase on 알고1/2/4 and the 1.5% trail wherever a
 # trail exists:
