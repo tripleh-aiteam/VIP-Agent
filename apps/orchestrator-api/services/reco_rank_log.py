@@ -222,8 +222,21 @@ def _fast_cycle() -> None:
         c = b.get("code")
         if c not in watch:
             continue
-        base = ((b.get("cats") or {}).get("avg")
-                or b.get("live_total") or b.get("score") or 0)
+        # THE AGENT'S OWN SCORE RULES THE LIVE SEATS (boss 2026-09-03 08:4x:
+        # "in menu 2 and menu 3 also 6 fixed and 5 selected automatically by
+        # the agent"). This read cats.avg - the 100-item weighted sum measured
+        # to rank stocks BACKWARDS (its top-10 made -0.794%/day against a
+        # -0.314% baseline). Menu 2's five were therefore chosen live by the
+        # wrong number while Menu 3 used the rebuilt one. Now both read the
+        # validated score, and a stock the morning gates rejected (above its
+        # 1-month or 1-year average, or already rising) cannot hold a seat at
+        # all - so Menu 2 can never buy what Menu 3 refuses.
+        if b.get("rising"):
+            continue
+        base = (b.get("score")
+                if b.get("score") is not None
+                else ((b.get("cats") or {}).get("avg")
+                      or b.get("live_total") or 0))
         px = kt.last_price(c)
         adj = 0.0
         dp9 = None      # recorded in the snapshot: the bench law reads it
@@ -322,12 +335,16 @@ def _cycle() -> None:
     r = json.load(urllib.request.urlopen(
         "http://127.0.0.1:8000/paper-desk/daily-pick", timeout=60))
     rows = r.get("rows") or []
-    rows = sorted(rows, key=lambda x: -(((x.get("cats") or {}).get("avg"))
+    rows = [x for x in rows if not x.get("rising")]        # gated names hold no seat
+    rows = sorted(rows, key=lambda x: -((x.get("score"))
+                                        or ((x.get("cats") or {}).get("avg"))
                                         or x.get("live_total")
                                         or x.get("score") or 0))
     slim = [{"code": x.get("code"), "name": x.get("name"),
-             "avg": ((x.get("cats") or {}).get("avg")
-                     or x.get("live_total") or x.get("score"))}
+             "avg": (x.get("score")
+                     if x.get("score") is not None
+                     else (((x.get("cats") or {}).get("avg"))
+                           or x.get("live_total")))}
             for x in rows[:10]]
     now = datetime.now(KST).strftime("%H:%M:%S")
     p = log_path()
