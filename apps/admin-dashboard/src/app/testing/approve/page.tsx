@@ -16,9 +16,14 @@ type Sug = { id: number; hhmm: string; code: string; name: string; side: "BUY" |
              reasons: string[]; reasons_en?: string[]; price: number; qty: number; score?: number | null };
 type LogRow = Sug & { decision: string; fill?: number | null; at: string; dealt?: boolean;
                       gave_up?: boolean; giveup_note?: string };
+type Stats = { trips: number; wins: number; losses: number; win_pct: number;
+               net_won: number; invested: number; open_n: number; open_unreal: number;
+               best?: { name: string; pct: number } | null;
+               worst?: { name: string; pct: number } | null };
 type Feed = { ok: boolean; market_open: boolean; rooms: Room[]; pending: Sug[];
-              held: { code: string; name: string; qty: number; price: number; at: string }[];
-              log: LogRow[] };
+              held: { code: string; name: string; qty: number; price: number; at: string;
+                      sug_at?: string }[];
+              log: LogRow[]; stats?: Stats | null };
 type Step = { icon: string; t: string; d: string; t_en?: string; d_en?: string };
 
 const W = (n?: number | null) => (n == null ? "-" : "₩" + Math.round(n).toLocaleString());
@@ -77,6 +82,10 @@ export default function ApprovePage() {
   const [brain, setBrain] = useState<Brain | null>(null);
   const [thinkIdx, setThinkIdx] = useState(0);
   const [edits, setEdits] = useState<Record<number, { qty?: number; price?: number }>>({});
+  // history filters (boss 2026-09-03 12:0x: "some filters like per price, day and others")
+  const [fStock, setFStock] = useState("");
+  const [fDec, setFDec] = useState("");
+  const [fDeal, setFDeal] = useState("");
   const [guOpen, setGuOpen] = useState<number | null>(null);   // opened give-up detail row
   const [open, setOpen] = useState<string | null>(null);          // opened room code
   const [steps, setSteps] = useState<Step[]>([]);
@@ -496,7 +505,7 @@ export default function ApprovePage() {
               {t("아직 보유 없음 — 첫 매수 제안을 ✅ 승인하면 여기 나타납니다.", "No holdings yet — ✅ approve the first buy proposal and it appears here.")}</div>
           : <table style={{ width: "100%", fontSize: 12.5, marginTop: 6, borderCollapse: "collapse" }}>
               <thead><tr style={{ opacity: 0.6, textAlign: "left" }}>
-                <th>{t("종목", "Stock")}</th><th>{t("수량", "Qty")}</th><th>{t("매수가", "Entry")}</th><th>{t("현재가", "Now")}</th><th>{t("평가", "P&L")}</th><th>{t("승인 시각", "Approved at")}</th></tr></thead>
+                <th>{t("종목", "Stock")}</th><th>{t("수량", "Qty")}</th><th>{t("매수가", "Entry")}</th><th>{t("현재가", "Now")}</th><th>{t("평가", "P&L")}</th><th>{t("제안 시각", "Suggested at")}</th><th>{t("승인 시각", "Approved at")}</th></tr></thead>
               <tbody>{feed!.held.map((h, i) => {
                 const room = feed!.rooms.find((r) => r.code === h.code);
                 const pnl = room?.pnl;
@@ -506,11 +515,54 @@ export default function ApprovePage() {
                   <td>{W(room?.price)}</td>
                   <td style={{ color: (pnl ?? 0) >= 0 ? "#e53935" : "#1e88e5", fontWeight: 700 }}>
                     {pnl != null ? `${pnl >= 0 ? "+" : ""}${pnl}%` : "-"}</td>
+                  {/* when the AGENT proposed it vs when the human clicked (boss
+                      2026-09-03 12:0x: "I wanna show exactly what time it suggested") */}
+                  <td style={{ opacity: 0.7 }}>{h.sug_at || "-"}</td>
                   <td style={{ opacity: 0.7 }}>{h.at}</td></tr>);
               })}</tbody>
             </table>}
       </div>
 
+      {/* ─ 📊 SCOREBOARD + FILTERS (boss 2026-09-03 12:0x: "like menu 1 and
+          menu 2 we need winning %, gaining price and some filters") ─ */}
+      {feed?.stats && (() => {
+        const S = feed.stats!;
+        const box = (label: string, value: string, colour?: string) => (
+          <div style={{ flex: "1 1 128px", background: "var(--card,#fff)",
+                        border: "1px solid rgba(128,128,128,0.3)", borderRadius: 9,
+                        padding: "9px 11px" }}>
+            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".04em",
+                          textTransform: "uppercase", opacity: 0.65 }}>{label}</div>
+            <div style={{ fontSize: 18, fontWeight: 800, marginTop: 2,
+                          color: colour || "inherit" }}>{value}</div>
+          </div>);
+        const money = (n: number) => (n >= 0 ? "+" : "") + W(Math.round(n));
+        return (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {box(t("승률", "Win rate"),
+                   S.trips ? `${S.win_pct}%` : "—",
+                   S.win_pct >= 50 ? "#2e7d32" : S.trips ? "#c62828" : undefined)}
+              {box(t("거래 (승/패)", "Trips (W/L)"),
+                   S.trips ? `${S.trips} (${S.wins}/${S.losses})` : "0")}
+              {box(t("실현 손익", "Realised P&L"), money(S.net_won),
+                   S.net_won > 0 ? "#c62828" : S.net_won < 0 ? "#1565c0" : undefined)}
+              {box(t("평가 손익 (보유)", "Open P&L"), money(S.open_unreal),
+                   S.open_unreal > 0 ? "#c62828" : S.open_unreal < 0 ? "#1565c0" : undefined)}
+              {box(t("투자 금액", "Invested"), W(S.invested))}
+              {box(t("보유 종목", "Open positions"), String(S.open_n))}
+            </div>
+            {(S.best || S.worst) && (
+              <div style={{ fontSize: 12, marginTop: 7, opacity: 0.85 }}>
+                {S.best && <span style={{ marginRight: 14 }}>
+                  🥇 {t("최고", "best")} <b>{S.best.name}</b>{" "}
+                  <b style={{ color: "#c62828" }}>{S.best.pct >= 0 ? "+" : ""}{S.best.pct}%</b></span>}
+                {S.worst && <span>
+                  🥉 {t("최저", "worst")} <b>{S.worst.name}</b>{" "}
+                  <b style={{ color: "#1565c0" }}>{S.worst.pct >= 0 ? "+" : ""}{S.worst.pct}%</b></span>}
+              </div>)}
+          </div>);
+      })()}
       {/* ─ 📜 TRADING HISTORY — always visible ─ */}
       <div style={{ marginTop: 12, border: "1px solid rgba(128,128,128,0.35)", borderRadius: 10, padding: 12 }}>
         <b style={{ fontSize: 13.5 }}>{t("📜 매매 기록", "📜 Trading history")} <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6 }}>
@@ -521,7 +573,12 @@ export default function ApprovePage() {
           : <table style={{ width: "100%", fontSize: 12.5, marginTop: 6, borderCollapse: "collapse" }}>
               <thead><tr style={{ opacity: 0.6, textAlign: "left" }}>
                 <th>{t("시각", "Time")}</th><th>{t("구분", "Side")}</th><th>{t("종목", "Stock")}</th><th>{t("수량", "Qty")}</th><th>{t("제안가", "Proposed")}</th><th>{t("결정", "Decision")}</th><th>{t("체결 여부", "Dealt?")}</th><th>{t("체결가", "Fill")}</th></tr></thead>
-              <tbody>{feed!.log.slice(0, 25).map((l, i) => {
+              <tbody>{feed!.log.filter((l) => (
+                  (fStock === "" || l.code === fStock) &&
+                  (fDec === "" || (fDec === "ok" ? l.decision === "승인" : l.decision !== "승인")) &&
+                  (fDeal === "" || (fDeal === "y" ? !!(l.dealt === true || l.fill)
+                                                  : !(l.dealt === true || l.fill)))
+                )).slice(0, 25).map((l, i) => {
                 // THE GIVE-UP LAW, per stock (boss 2026-09-03 11:5x: "remove the
                 // give-up table; inside trading history make give-up cases
                 // clickable and show the limitation, like SK하이닉스 2000") —

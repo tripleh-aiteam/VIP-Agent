@@ -321,6 +321,13 @@ def scan(db) -> dict:
             except Exception:
                 pass
             reasons, reasons_en = _why_buy(code, name, a_hold)
+            # THE ENGINE'S OWN ENTRY TIME TRAVELS WITH THE SUGGESTION (boss
+            # 2026-09-03 12:1x, the 한화오션 row: he wants to see 09:12, when
+            # 알고3 entered, not only 09:46 when he approved). Both are true and
+            # both matter - the engine's clock shows whether Menu 3 is keeping
+            # up with Menu 2, the approval clock shows when the money actually
+            # moved - so the row carries both instead of overwriting either.
+            _algo_t = str((a_hold or {}).get('buy_t') or '')[:5]
             # WHY THIS COMPANY (boss 2026-09-03 10:5x: "for company name also
             # add why this company with explanation") - stated before the price
             _six9 = {"000660", "005930", "035420", "017670", "042660", "034020"}
@@ -352,8 +359,9 @@ def scan(db) -> dict:
 
             reasons_en.append(f"Proposal: ₩{_bp:,.0f} · {int(_bq):,} shares "
                               f"(Algo 3's own entry price and size)")
-            _mk_sug(st, code, name, "BUY", reasons, _bp, int(_bq), score,
-                    reasons_en=reasons_en)
+            _sg9 = _mk_sug(st, code, name, "BUY", reasons, _bp, int(_bq), score,
+                           reasons_en=reasons_en)
+            _sg9['algo_t'] = _algo_t
         except Exception as e:
             log.warning(f"approval scan {code}: {str(e)[:80]}")
 
@@ -412,6 +420,79 @@ def _algo3_view(code: str, name: str, board: dict | None = None) -> dict:
     return {"hold": (b.get("hold") or {}).get(code),
             "rows": (b.get("rows") or {}).get(code) or [],
             "err": b.get("err")}
+
+
+def semi_stats(db, day8: str = "") -> dict:
+    """THE SAME SCOREBOARD MENU 2 CARRIES (boss 2026-09-03 12:0x). Realised
+    round trips from the approved (source='semi') orders, FIFO per stock, plus
+    what is still open. Money is net of the 0.23% round-trip fee, the way every
+    other board on this desk counts it."""
+    from datetime import timedelta, timezone, datetime
+    from sqlalchemy import text as _sqt
+    KST = timezone(timedelta(hours=9))
+    d8 = day8 or datetime.now(KST).strftime("%Y%m%d")
+    out = {"trips": 0, "wins": 0, "losses": 0, "win_pct": 0.0,
+           "net_won": 0, "invested": 0, "open_n": 0, "open_unreal": 0,
+           "best": None, "worst": None, "day": d8}
+    try:
+        rows = db.execute(_sqt(
+            "SELECT ticker, name, side, qty, fill_price, created_at "
+            "FROM paper_desk_orders WHERE COALESCE(source,'')='semi' "
+            "AND status='FILLED' ORDER BY id")).fetchall()
+    except Exception:
+        return out
+    FEE = 0.23
+    books: dict = {}
+    trips = []
+    for tk, nm, side, qty, fill, ts in rows:
+        if not fill or not qty:
+            continue
+        try:
+            if ts and ts.astimezone(KST).strftime("%Y%m%d") != d8:
+                continue
+        except Exception:
+            pass
+        b = books.setdefault(tk, {"name": nm or tk, "lots": []})
+        if str(side).upper() == "BUY":
+            b["lots"].append([float(fill), int(qty)])
+        else:
+            left = int(qty)
+            while left > 0 and b["lots"]:
+                px0, q0 = b["lots"][0]
+                take = min(left, q0)
+                gross = (float(fill) / px0 - 1) * 100
+                trips.append({"code": tk, "name": b["name"], "qty": take,
+                              "buy": px0, "sell": float(fill),
+                              "pct": round(gross - FEE, 3),
+                              "won": int(round((float(fill) - px0) * take
+                                               - px0 * take * FEE / 100))})
+                left -= take
+                if take >= q0:
+                    b["lots"].pop(0)
+                else:
+                    b["lots"][0][1] = q0 - take
+    out["trips"] = len(trips)
+    out["wins"] = sum(1 for t in trips if t["pct"] > 0)
+    out["losses"] = sum(1 for t in trips if t["pct"] <= 0)
+    out["win_pct"] = round(100.0 * out["wins"] / out["trips"], 1) if trips else 0.0
+    out["net_won"] = sum(t["won"] for t in trips)
+    out["invested"] = sum(int(t["buy"] * t["qty"]) for t in trips)
+    if trips:
+        out["best"] = max(trips, key=lambda t: t["pct"])
+        out["worst"] = min(trips, key=lambda t: t["pct"])
+    # what is still open, valued live
+    try:
+        from services.paper_desk import fast_price
+        for tk, b in books.items():
+            for px0, q0 in b["lots"]:
+                out["open_n"] += 1
+                px, _c, _t, _s = fast_price(tk)
+                if px:
+                    out["open_unreal"] += int(round((float(px) - px0) * q0))
+                out["invested"] += int(px0 * q0)
+    except Exception:
+        pass
+    return out
 
 
 def _book_price(code: str, side: str, fallback: float):
@@ -603,7 +684,7 @@ def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
         if p["side"] == "BUY":
             st.setdefault("held", []).append({"code": p["code"], "name": p["name"],
                                               "qty": int(p["qty"]), "price": fill,
-                                              "at": _hhmm()})
+                                              "sug_at": p.get("hhmm"), "at": _hhmm()})
         else:
             st["held"] = [h for h in st.get("held") or [] if h["code"] != p["code"]]
     st.setdefault("log", []).append({**p, "decision": "승인", "at": _hhmm(),
@@ -636,7 +717,7 @@ def _reconcile_fills(db, st) -> None:
                 if l.get("side") == "BUY":
                     st.setdefault("held", []).append(
                         {"code": l["code"], "name": l["name"], "qty": int(l["qty"]),
-                         "price": float(row[1]), "at": _hhmm()})
+                         "price": float(row[1]), "sug_at": l.get("hhmm"), "at": _hhmm()})
                 else:
                     st["held"] = [h for h in st.get("held") or []
                                   if h["code"] != l["code"]]
