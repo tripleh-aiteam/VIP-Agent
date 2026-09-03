@@ -121,9 +121,35 @@ export default function ApprovePage() {
       .finally(() => setCBusy(false));
   }, [base]);
 
+  // recent price samples per stock, from our own 5s polls — the holding
+  // reason judges LIVE movement with these (boss 2026-09-03 17:5x: "tell if
+  // the stock price is continuously increasing, or if it stopped and is
+  // decreasing but not yet -1%")
+  const pxHist = useRef<Record<string, { t: number; px: number }[]>>({});
   const pull = useCallback(() => {
-    fetch(`${base}/approval/feed`).then((r) => r.json()).then(setFeed).catch(() => {});
+    fetch(`${base}/approval/feed`).then((r) => r.json()).then((d) => {
+      try {
+        const now = Date.now();
+        for (const r of d?.rooms || []) {
+          if (!r?.code || r?.price == null) continue;
+          const a = (pxHist.current[r.code] = pxHist.current[r.code] || []);
+          a.push({ t: now, px: r.price });
+          while (a.length && now - a[0].t > 360000) a.shift();
+        }
+      } catch { /* trend is a bonus, never break the feed */ }
+      setFeed(d);
+    }).catch(() => {});
   }, [base]);
+  // +1 rising · -1 falling · 0 steady/unknown, judged vs ~2-4 minutes ago
+  const trendOf = (code: string, live?: number | null) => {
+    const a = pxHist.current[code] || [];
+    if (live == null || a.length < 3) return 0;
+    const now = Date.now();
+    const past = a.find((s) => now - s.t <= 240000 && now - s.t >= 90000) || a[0];
+    if (!past || now - past.t < 60000) return 0;
+    const tk = live >= 500000 ? 1000 : live >= 200000 ? 500 : live >= 50000 ? 100 : 50;
+    return live - past.px >= tk ? 1 : past.px - live >= tk ? -1 : 0;
+  };
   useEffect(() => { pull(); const t = setInterval(pull, 5000); return () => clearInterval(t); }, [pull]);
   useEffect(() => {
     // NEVER LET THE AGENT PANEL DISAPPEAR (boss 2026-09-03: "agent thinking and
@@ -744,13 +770,22 @@ export default function ApprovePage() {
                       const holdKo: string[] = [];
                       const holdEn: string[] = [];
                       if (live != null) {
-                        const rising = (chg9 ?? 0) > 0 && (pnl ?? 0) > 0;
+                        // LIVE movement, from our own recent price samples
+                        // (boss 17:5x: "continuously increasing, OR stopped
+                        // increasing and decreasing but not yet -1%")
+                        const tr9 = trendOf(h.code, live);
+                        const rising = tr9 > 0 || (tr9 === 0 && (chg9 ?? 0) > 0 && (pnl ?? 0) > 0);
+                        const tale = `현재 ${W(live)} · 매수가 ${W(h.price)} (${(pnl ?? 0) >= 0 ? "+" : ""}${pnl}%) · 연중 ${posTxt} 지점${g1m ? ` · 1개월 평균 대비 ${g1m}` : ""}${g1y ? ` · 1년 평균 대비 ${g1y}` : ""}`;
+                        const taleEn = `now ${W(live)} · bought ${W(h.price)} (${(pnl ?? 0) >= 0 ? "+" : ""}${pnl}%) · at ${posTxt} of its year${g1m ? ` · ${g1m} vs the 1-month avg` : ""}${g1y ? ` · ${g1y} vs the 1-year avg` : ""}`;
                         if (rising) {
-                          holdKo.push(`① 계속 오르는 중입니다 — 현재 ${W(live)} · 매수가 ${W(h.price)} (${(pnl ?? 0) >= 0 ? "+" : ""}${pnl}%) · 연중 ${posTxt} 지점${g1m ? ` · 1개월 평균 대비 ${g1m}` : ""}${g1y ? ` · 1년 평균 대비 ${g1y}` : ""}`);
-                          holdEn.push(`① Still rising — now ${W(live)} · bought ${W(h.price)} (${(pnl ?? 0) >= 0 ? "+" : ""}${pnl}%) · at ${posTxt} of its year${g1m ? ` · ${g1m} vs the 1-month avg` : ""}${g1y ? ` · ${g1y} vs the 1-year avg` : ""}`);
+                          holdKo.push(`① 📈 주가가 계속 오르는 중입니다 — ${tale}`);
+                          holdEn.push(`① 📈 The price is continuously increasing — ${taleEn}`);
+                        } else if (tr9 < 0) {
+                          holdKo.push(`① 📉 상승이 멈추고 지금은 내려가는 중입니다 — 하지만 아직 -1%가 아닙니다. ${tale}`);
+                          holdEn.push(`① 📉 The rise has stopped and price is decreasing — but NOT yet at -1%. ${taleEn}`);
                         } else {
-                          holdKo.push(`① 현재 ${W(live)} (${(pnl ?? 0) >= 0 ? "+" : ""}${pnl}%) · 매수가 ${W(h.price)} · 연중 ${posTxt} 지점${g1m ? ` · 1개월 평균 대비 ${g1m}` : ""}${g1y ? ` · 1년 평균 대비 ${g1y}` : ""}`);
-                          holdEn.push(`① Now ${W(live)} (${(pnl ?? 0) >= 0 ? "+" : ""}${pnl}%) · bought ${W(h.price)} · at ${posTxt} of its year${g1m ? ` · ${g1m} vs the 1-month avg` : ""}${g1y ? ` · ${g1y} vs the 1-year avg` : ""}`);
+                          holdKo.push(`① ➡️ 지금은 보합(옆으로 유지) 중입니다 — ${tale}`);
+                          holdEn.push(`① ➡️ Price is holding steady right now — ${taleEn}`);
                         }
                         if (z9?.zone === "buy") {
                           holdKo.push(`② 매수구간(바닥권, 연중 ${posTxt})입니다 — 바닥권에서는 팔지 않습니다.`);
@@ -762,9 +797,9 @@ export default function ApprovePage() {
                           holdKo.push(`② 연중 ${posTxt} — 중간 구간입니다. 파도가 살아 있는 동안 태웁니다.`);
                           holdEn.push(`② At ${posTxt} of the year — mid-range. We ride while the wave is alive.`);
                         }
-                        if ((pnl ?? 0) > -1 && (chg9 ?? 0) <= 0) {
-                          holdKo.push(`③ 상승이 잠시 멈췄지만 -1% 선(${W(trig)})에 닿지 않았습니다 — 서두르지 않고 기다립니다.`);
-                          holdEn.push(`③ The rise has paused but price has NOT reached the -1% line (${W(trig)}) — we stay patient, no hurry to sell.`);
+                        if ((pnl ?? 0) > -1 && (tr9 < 0 || (tr9 === 0 && (chg9 ?? 0) <= 0))) {
+                          holdKo.push(`③ 내려가고는 있지만 아직 -1% 선(${W(trig)})에 닿지 않았습니다 — 서두르지 않고 기다립니다.`);
+                          holdEn.push(`③ It is decreasing but has NOT yet reached the -1% line (${W(trig)}) — we stay patient, no hurry to sell.`);
                         } else if ((pnl ?? 0) > -1) {
                           holdKo.push(`③ -1% 매도선은 ${W(trig)} — 아직 ${W(Math.max(0, live - trig))} 위에 있습니다 → 보유합니다.`);
                           holdEn.push(`③ The -1% sell line is ${W(trig)} — price sits ${W(Math.max(0, live - trig))} above it → we hold.`);
