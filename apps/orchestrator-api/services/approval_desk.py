@@ -344,13 +344,15 @@ def scan(db) -> dict:
                         reasons_en=_rse9)
                 continue
 
-            # ---- BUY: 알고3 holds it, we do not ----
+            # ---- BUY: the gates say yes, and we are flat in this stock ----
             if lot or ("BUY", code) in pending_codes:
-                continue
-            if not a_hold:
-                continue
-            if time.time() - st["cool"].get(f"BUY:{code}", 0) < _BUY_COOLDOWN:
-                continue
+                continue                      # 사기 전에 팔지 않는다 - one at a time
+            if _working_order(db, code):
+                continue                      # our own limit is still in the book
+            if st.get("asked", {}).get(code):
+                continue                      # this opportunity was already answered
+            if not _gates_pass(code):
+                continue                      # the board's own condition, verbatim
             try:
                 from services.checklist_advice import _fresh_stamps
                 if any(str(x.get("stamp")) in ("위험", "악재")
@@ -557,9 +559,35 @@ def set_time_override(code: str, sug_at: str = "", at: str = "") -> dict:
     return o
 
 
+_PXAT_CACHE: dict = {}
+
+
+def _px_at_cached(code: str, hhmm: str):
+    """Market price of code at hhmm today, cached — the feed polls every 5s
+    and the tape files must not be re-scanned each time."""
+    try:
+        from services.kiwoom_tape import _day as _kd
+        d8 = _kd()
+    except Exception:
+        return None
+    k = (code, d8, hhmm)
+    if k not in _PXAT_CACHE:
+        try:
+            from services.trip_editor import _price_at
+            _PXAT_CACHE[k] = _price_at(code, d8, hhmm)
+        except Exception:
+            _PXAT_CACHE[k] = None
+    return _PXAT_CACHE[k]
+
+
 def apply_time_overrides(held: list, log: list) -> None:
     """Stamp the boss's clocks onto whatever the scanner just produced. Called
-    on every feed read, so a background rewrite can never undo his edit."""
+    on every feed read, so a background rewrite can never undo his edit.
+    A HELD lot whose clock moves also wears the REAL market price of that
+    moment (boss 2026-09-03 15:0x, the 한화오션 '▲ 09:11 ₩86,500 +0.23%' case:
+    the edited time next to the untouched price told two different stories —
+    at the real 09:11 the stock traded ~₩83,300, so +0.23% looked absurd
+    beside a +5% day). Display-only: the accounting lot is never rewritten."""
     o = time_overrides()
     if not o:
         return
@@ -571,9 +599,44 @@ def apply_time_overrides(held: list, log: list) -> None:
             row["at"] = ov["at"]
             if "hhmm" in row:
                 row["hhmm"] = ov["at"]
+            if "decision" not in row and row.get("price"):
+                px9 = _px_at_cached(str(row.get("code")), str(ov["at"])[:5])
+                if px9:
+                    row["price"] = float(px9)
+                    row["price_follows_time"] = True
         if ov.get("sug_at"):
             row["sug_at"] = ov["sug_at"]
         row["time_fixed"] = True
+
+
+def _gates_pass(code: str) -> bool:
+    """The board's own BUY condition, read from the same place the board reads
+    it, so the two can never diverge again (boss 2026-09-03 14:3x)."""
+    try:
+        import json as _j, urllib.request as _ur
+        b = _j.load(_ur.urlopen("http://127.0.0.1:8000/approval/brain", timeout=20))
+        for e in (b.get("six") or []) + (b.get("universe") or []):
+            if str(e.get("code")) == code:
+                return bool(e.get("pass"))
+    except Exception:
+        pass
+    return False
+
+
+def _working_order(db, code: str) -> bool:
+    """True while one of OUR semi orders is still live in the book - approving a
+    limit that has not filled must not invite the same question again (boss
+    2026-09-03 14:2x: 'popup is coming even after I clicked buy')."""
+    try:
+        from sqlalchemy import text as _sqt
+        row = db.execute(_sqt(
+            "SELECT COUNT(*) FROM paper_desk_orders "
+            "WHERE ticker=:t AND COALESCE(source,'')='semi' "
+            "AND status NOT IN ('FILLED','CANCELLED','REJECTED') "
+            "AND created_at >= CURRENT_DATE"), {"t": code}).scalar()
+        return bool(row)
+    except Exception:
+        return False
 
 
 def _book_price(code: str, side: str, fallback: float):
@@ -681,7 +744,20 @@ def _why_buy(code: str, name: str, hold: dict):
                  f"두 평균 아래일 때만 수익이 났습니다.")
         E.append(f"③ Still cheap — {mid:+.2f}% vs the 1-month average and {midy:+.2f}% vs the "
                  f"1-year average. Only stocks below BOTH made money.")
-    R.append(f"④ 떨어졌다가 다시 오르기 시작 ({bt}) — 하락이 멈추고 3번째 양봉입니다. "
+    # THE ENGINE'S OWN VIEW, STATED HONESTLY (boss 2026-09-03 14:3x). Menu 3 now
+    # proposes on HIS gate set, which can be ready before 알고3's entry shape is;
+    # rather than hide that, the popup says whether the engine has entered yet.
+    if bt:
+        R.append(f"④ 알고3도 진입했습니다 ({bt}) — 하락이 멈추고 3번째 양봉, 제1조 통과.")
+        E.append(f"④ 알고3 has entered too ({bt}) - the 3rd rise after the fall, 제1조 cleared.")
+    else:
+        R.append("④ 알고3는 아직 진입 신호(급락 후 3번째 양봉)를 기다리는 중입니다 — "
+                 "관문은 모두 열렸고, 승인하시면 지금 들어갑니다.")
+        E.append("④ 알고3 has not taken its entry shape yet (the 3rd rise after a fall) - "
+                 "every gate is open, and approving enters now.")
+    _skip9 = True
+    if False:
+        R.append(f"④ 떨어졌다가 다시 오르기 시작 ({bt}) — 하락이 멈추고 3번째 양봉입니다. "
              f"바닥이 3봉 이상 버텼고, 바닥에서 1.5% 안이며, 최근 3봉 중 2번 올랐습니다.")
     E.append(f"④ It fell, stopped, and started rising ({bt}) — the 3rd rising candle. The bottom "
              f"held 3+ bars, price is within 1.5% of it, 2 of the last 3 bars rose.")
@@ -774,6 +850,11 @@ def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
         return {"ok": False, "error": "suggestion expired or already handled"}
     st["pending"] = [x for x in st["pending"] if x["id"] != sid]
     if not ok:
+        # ANSWERED (boss 2026-09-03 14:3x: "after approve or cancel it should not
+        # show popup again") - marked on the ANSWER, not when the question was
+        # raised, so an unanswered popup that expires can be asked again and the
+        # board never shows BUY without one.
+        st.setdefault("asked", {})[p["code"]] = time.time()
         st.setdefault("log", []).append({**p, "decision": "취소", "at": _hhmm()})
         st["log"] = st["log"][-200:]
         _save(st)
@@ -820,6 +901,10 @@ def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
                          "pnl_pct": round((fill / _bp - 1) * 100, 2),
                          "pnl_won": round((fill - _bp) * int(p["qty"]))}
             st["held"] = [h for h in st.get("held") or [] if h["code"] != p["code"]]
+            # flat again - this stock may be offered once more (his rule: we do
+            # not buy before selling, so the next question waits for the sale)
+            st.setdefault("asked", {}).pop(p["code"], None)
+    st.setdefault("asked", {})[p["code"]] = time.time()
     st.setdefault("log", []).append({**p, **_trip, "decision": "승인", "at": _hhmm(),
                                      "dealt": (not queued),
                                      "fill": (fill if not queued else None),

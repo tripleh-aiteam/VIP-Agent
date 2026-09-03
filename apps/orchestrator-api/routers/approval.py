@@ -22,6 +22,12 @@ def feed(db: Session = Depends(get_db)):
         meta = [{"code": c, "name": n, "score": s, "zone": None}
                 for c, n, s in [(c, n, None) for c, n in ad.SIX]]
     rooms = []
+    # time (and its price) overrides run BEFORE the P&L math, so an edited lot's
+    # displayed entry and its % tell ONE story (boss 2026-09-03 15:0x)
+    try:
+        ad.apply_time_overrides(st.get("held") or [], st.get("log") or [])
+    except Exception:
+        pass
     held = {h["code"]: h for h in ad.held(st)}
     for m in meta:
         code = m["code"]
@@ -42,10 +48,6 @@ def feed(db: Session = Depends(get_db)):
         mkt = market_open()
     except Exception:
         mkt = False
-    try:
-        ad.apply_time_overrides(st.get("held") or [], st.get("log") or [])
-    except Exception:
-        pass
     try:
         from services.approval_desk import semi_stats
         _st9 = semi_stats(db)
@@ -502,10 +504,16 @@ def _brain_compute():
     _own = {r["code"]: r for r in sell_rows}
     # which stocks the ENGINE is actually in right now - the board may only
     # say BUY for these, because only these produce a popup
-    _eng = set()
+    _eng, _answered, _ourown = set(), set(), set()
     try:
-        from services.approval_desk import _algo3_board, desk_codes as _dc9
+        from services.approval_desk import _algo3_board, desk_codes as _dc9, _load as _ld9
         _eng = set((_algo3_board([c for c, _n, _s in _dc9()]).get("hold") or {}).keys())
+        _st9 = _ld9()
+        # what the boss has already answered, and what we already own - the
+        # scanner refuses to ask about either, so the board must not show BUY
+        # for them or the two would disagree again (boss 2026-09-03 14:3x)
+        _answered = set((_st9.get("asked") or {}).keys())
+        _ourown = {h.get("code") for h in (_st9.get("held") or [])}
     except Exception:
         pass
     for e in out["six"] + out["universe"]:
@@ -519,22 +527,29 @@ def _brain_compute():
             e["lane"] = "NOBUY"
             e["lane_why"] = e.get("no_buy")
             e["lane_why_en"] = e.get("no_buy_en")
-        elif e["code"] in _eng:
-            # the engine is in it and a popup is live - this is the only state
-            # that may say BUY (boss 2026-09-03 14:1x)
-            e["lane"] = "BUY"
-            e["lane_why"] = "모든 관문 통과 · 진입 신호 발생 — 팝업으로 승인 요청 중"
-            e["lane_why_en"] = ("all gates passed and the entry signal fired - "
-                                "asking your approval by popup")
         else:
-            e["lane"] = "READY"
-            e["lane_why"] = ("모든 관문 통과 — 진입 신호(급락 후 3번째 양봉)를 "
-                             "기다리는 중입니다")
-            e["lane_why_en"] = ("all gates passed - waiting for the entry signal "
-                                "(the 3rd rise after a fall)")
+            # ONE CONDITION FOR BOTH (boss 2026-09-03 14:3x: "make it BUY", and
+            # "삼성전자 keeps saying BUY but the popup is not coming"). The board
+            # and the scanner now read the SAME test - every gate open - so a
+            # card that says BUY always has its popup. Whether 알고3 has taken
+            # its own entry shape yet is shown INSIDE the popup, not used to
+            # gate the question.
+            if e["code"] in _answered or e["code"] in _ourown:
+                e["lane"] = "DONE"
+                e["lane_why"] = "모든 관문 통과 · 이미 결정하셨습니다 — 매도 후 다시 제안합니다"
+                e["lane_why_en"] = ("all gates passed - already decided; it will be "
+                                    "offered again after we sell")
+                continue
+            e["lane"] = "BUY"
+            e["lane_why"] = ("모든 관문 통과 — 팝업으로 승인 요청"
+                             + (" · 알고3도 진입" if e["code"] in _eng
+                                else " · 알고3는 진입 신호 대기 중"))
+            e["lane_why_en"] = ("all gates passed - asking approval by popup"
+                                + (" · 알고3 is in too" if e["code"] in _eng
+                                   else " · 알고3 still waiting for its entry shape"))
     out["lanes"] = {k: [e["name"] for e in out["six"] + out["universe"]
                         if e.get("lane") == k]
-                    for k in ("BUY", "READY", "NOBUY", "HOLD", "SELL")}
+                    for k in ("BUY", "DONE", "NOBUY", "HOLD", "SELL")}
     out["conditions"] = len(out["six"] + out["universe"]) * 6 + len(sell_rows) * 6
     return out
 
