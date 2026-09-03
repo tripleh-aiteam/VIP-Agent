@@ -87,6 +87,7 @@ export default function ApprovePage() {
   const [brain, setBrain] = useState<Brain | null>(null);
   const [thinkIdx, setThinkIdx] = useState(0);
   const [edits, setEdits] = useState<Record<number, { qty?: number; price?: number }>>({});
+  const [picked, setPicked] = useState<string[]>([]);   // stock picker for the agent grid
   // history filters (boss 2026-09-03 12:0x: "some filters like per price, day and others")
   const [fStock, setFStock] = useState("");
   const [fDec, setFDec] = useState("");
@@ -287,91 +288,132 @@ export default function ApprovePage() {
         {feed && <span style={{ marginLeft: 8 }}>{feed.market_open ? t("🟢 장중", "🟢 market open") : t("🌙 장 마감 — 제안은 장중에만 나옵니다", "🌙 market closed — proposals come only in market hours")}</span>}
       </div>
 
-      {/* ─ THE CONTROL ROOM: four lanes, all 20 at once ─ */}
+      {/* ─ 20 AGENT BLOCKS, ALL STEPPING AT ONCE ─ */}
       {brain?.ok && !brain.computing && (() => {
         const all = [...(brain.six || []), ...(brain.universe || [])];
         const sixSet = new Set((brain.six || []).map((x) => x.code));
-        // A SIMULATION YOU CAN WATCH (boss 2026-09-03 13:0x: "show the agent
-        // analysing all 20 in parallel and telling us which to buy, which not
-        // to buy, which to hold and which to sell"). Every stock is a chip and
-        // every chip sits in the lane its verdict puts it in; as conditions
-        // change the chips MIGRATE between lanes in front of you. Nothing
-        // sweeps and nothing queues - the whole board is judged from one
-        // instant and re-judged every few seconds, which is what parallel
-        // actually looks like.
-        const LANES = [
-          { k: "BUY", ko: "지금 매수 가능", en: "READY TO BUY", c: "#2e7d32", ico: "🟢" },
-          { k: "NOBUY", ko: "매수 금지", en: "DO NOT BUY", c: "#c62828", ico: "🔴" },
-          { k: "HOLD", ko: "보유 유지", en: "HOLD", c: "#1565c0", ico: "🔵" },
-          { k: "SELL", ko: "매도 신호", en: "SELL NOW", c: "#e65100", ico: "🟠" },
+        // TWENTY OF THE SAME BLOCK, RUNNING TOGETHER (boss 2026-09-03 13:2x:
+        // "in the left side we have Agent working, it checks one by one - take
+        // this idea and in the middle make 20 blocks, one for each stock, all
+        // analysing automatically; if one passes all steps the agent sends the
+        // popup"). Every card walks its OWN six gates on the same clock, so the
+        // room sees twenty investigations advancing side by side rather than a
+        // single cursor travelling down a list.
+        const STEP = [
+          { ko: "갭상승 확인", en: "gap-up check" },
+          { ko: "1개월 평균선", en: "1-month average" },
+          { ko: "1년 평균선", en: "1-year average" },
+          { ko: "연속 상승 여부", en: "already-rising run" },
+          { ko: "1년 매수/매도 구간", en: "1-year zone" },
+          { ko: "위험 뉴스", en: "danger news" },
         ];
-        const beat = thinkIdx % 2 === 0;
+        const shown = all.filter((u) => picked.length === 0 || picked.includes(u.code));
+        // one shared clock: every card reveals its steps together
+        const cursor = thinkIdx % (STEP.length + 2);
         return (
-          <div style={{ margin: "12px 0 16px", padding: "13px 15px", borderRadius: 12,
-                        border: "2px solid #6a1b9a", background: "rgba(106,27,154,0.05)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ margin: "12px 0 16px" }}>
+            {/* the picker */}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center",
+                          marginBottom: 9 }}>
               <span style={{ fontSize: 20 }}>🤖</span>
-              <b style={{ fontSize: 16 }}>{t("에이전트 관제실", "AGENT CONTROL ROOM")}</b>
-              <span style={{ fontSize: 12.5, fontWeight: 800, padding: "3px 11px",
-                             borderRadius: 999, background: "#6a1b9a", color: "#fff",
-                             opacity: beat ? 1 : 0.55, transition: "opacity .5s" }}>
-                {t(`${all.length}종목 · ${brain.conditions ?? all.length * 6}개 조건 동시 판정`,
-                   `${all.length} stocks · ${brain.conditions ?? all.length * 6} conditions judged together`)}
-              </span>
+              <b style={{ fontSize: 15.5 }}>
+                {t(`에이전트 ${shown.length}개 동시 분석`, `${shown.length} agents working at once`)}
+              </b>
               <span style={{ fontSize: 12, opacity: 0.72 }}>
-                {t("몇 초마다 전체 재판정 — 한 종목도 순서를 기다리지 않습니다",
-                   "the whole board is re-judged every few seconds — no stock waits its turn")}
+                {t("모든 종목이 같은 순간에 같은 관문을 통과합니다 — 순서를 기다리지 않습니다",
+                   "every stock walks the same gates at the same moment — none waits its turn")}
               </span>
+              <select
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (!v) { setPicked([]); return; }
+                  setPicked((prev) => prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]);
+                  e.target.value = "";
+                }}
+                style={{ fontSize: 12, padding: "4px 8px", borderRadius: 7,
+                         border: "1px solid rgba(128,128,128,0.45)",
+                         background: "var(--card,#fff)", color: "inherit" }}>
+                <option value="">{t("＋ 종목 선택 (전체 보기)", "＋ pick stocks (all shown)")}</option>
+                {all.map((u) => (
+                  <option key={u.code} value={u.code}>
+                    {picked.includes(u.code) ? "✓ " : ""}{u.name}</option>))}
+              </select>
+              {picked.length > 0 && (
+                <>
+                  {picked.map((c) => {
+                    const nm = all.find((x) => x.code === c)?.name || c;
+                    return (
+                      <span key={c} onClick={() => setPicked((p) => p.filter((x) => x !== c))}
+                        style={{ fontSize: 11.5, fontWeight: 700, padding: "3px 9px",
+                                 borderRadius: 999, background: "#6a1b9a", color: "#fff",
+                                 cursor: "pointer" }}>{nm} ✕</span>);
+                  })}
+                  <button onClick={() => setPicked([])}
+                    style={{ fontSize: 11.5, padding: "3px 10px", borderRadius: 7, cursor: "pointer",
+                             border: "1px solid rgba(128,128,128,0.45)", background: "transparent",
+                             color: "inherit", fontWeight: 700 }}>
+                    {t("전체 보기", "show all")}</button>
+                </>)}
             </div>
-            <div style={{ display: "grid", gap: 9, marginTop: 12,
-                          gridTemplateColumns: "repeat(auto-fit,minmax(215px,1fr))" }}>
-              {LANES.map((L) => {
-                const mine = all.filter((x) => (x.lane || (x.pass ? "BUY" : "NOBUY")) === L.k);
+            {/* the blocks */}
+            <div style={{ display: "grid", gap: 8,
+                          gridTemplateColumns: "repeat(auto-fill,minmax(250px,1fr))" }}>
+              {shown.map((u) => {
+                const lane = u.lane || (u.pass ? "BUY" : "NOBUY");
+                const failAt = (u.gates || []).findIndex((g) => g.bad);
+                // a card stops at its first failing gate; a clean one runs the lot
+                const reach = failAt >= 0 ? Math.min(cursor, failAt + 1) : Math.min(cursor, STEP.length);
+                const done = failAt < 0 && cursor >= STEP.length;
+                const colour = lane === "SELL" ? "#e65100" : lane === "HOLD" ? "#1565c0"
+                             : failAt >= 0 ? "#c62828" : done ? "#2e7d32" : "#6a1b9a";
                 return (
-                  <div key={L.k} style={{ border: `2px solid ${L.c}`, borderRadius: 10,
-                                          background: `${L.c}0d`, padding: "9px 10px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between",
-                                  alignItems: "baseline", marginBottom: 7 }}>
-                      <b style={{ fontSize: 13.5, color: L.c }}>{L.ico} {t(L.ko, L.en)}</b>
-                      <b style={{ fontSize: 17, color: L.c }}>{mine.length}</b>
+                  <div key={u.code} style={{ border: `2px solid ${colour}`, borderRadius: 10,
+                      padding: "9px 10px", background: "var(--card,#fff)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                      <b style={{ fontSize: 13 }}>🔍 {sixSet.has(u.code) ? "📌 " : ""}{u.name}</b>
+                      {u.pnl != null
+                        ? <b style={{ fontSize: 11.5, color: u.pnl >= 0 ? "#c62828" : "#1565c0" }}>
+                            {u.pnl >= 0 ? "+" : ""}{u.pnl}%</b>
+                        : <span style={{ fontSize: 10.5, opacity: 0.65 }}>{u.score}{t("점", "pts")}</span>}
                     </div>
-                    {mine.length === 0 && (
-                      <div style={{ fontSize: 11.5, opacity: 0.5 }}>{t("없음", "none")}</div>)}
-                    {mine.map((u) => (
-                      <div key={u.code} style={{ marginBottom: 6, padding: "5px 7px",
-                          borderRadius: 7, background: "var(--card,#fff)",
-                          border: `1px solid ${L.c}55` }}>
-                        <div style={{ display: "flex", justifyContent: "space-between",
-                                      alignItems: "baseline" }}>
-                          <b style={{ fontSize: 12.5 }}>
-                            {sixSet.has(u.code) ? "📌 " : ""}{u.name}</b>
-                          {u.pnl != null
-                            ? <b style={{ fontSize: 11.5,
-                                          color: u.pnl >= 0 ? "#c62828" : "#1565c0" }}>
-                                {u.pnl >= 0 ? "+" : ""}{u.pnl}%</b>
-                            : <span style={{ fontSize: 10.5, opacity: 0.65 }}>
-                                {u.score}{t("점", "pts")}</span>}
-                        </div>
-                        <div style={{ display: "flex", gap: 2, flexWrap: "wrap", margin: "3px 0 2px" }}>
-                          {(u.gates || []).map((g, n) => (
-                            <span key={n} title={t(g.k, g.en) + " " + g.v}
-                              style={{ width: 15, height: 5, borderRadius: 3,
-                                background: g.bad ? "#c62828" : "#2e7d32", opacity: 0.85 }} />))}
-                        </div>
-                        <div style={{ fontSize: 10, lineHeight: 1.35, color: L.c, fontWeight: 600 }}>
-                          {(t(u.lane_why || "", u.lane_why_en || u.lane_why || "") || "").slice(0, 92)}
-                        </div>
-                      </div>))}
+                    <div style={{ marginTop: 5 }}>
+                      {STEP.map((s, i) => {
+                        const g = (u.gates || [])[i];
+                        if (i >= reach) {
+                          return (
+                            <div key={i} style={{ fontSize: 11, padding: "1.5px 0", opacity: 0.35 }}>
+                              ⏳ {t(s.ko, s.en)}</div>);
+                        }
+                        const bad = !!g?.bad;
+                        return (
+                          <div key={i} style={{ fontSize: 11, padding: "1.5px 0",
+                                                color: bad ? "#c62828" : "inherit",
+                                                fontWeight: bad ? 700 : 400 }}>
+                            {bad ? "✗" : "✓"} <b>{t(s.ko, s.en)}</b>{" "}
+                            <span style={{ opacity: 0.8 }}>{g?.v}</span>
+                          </div>);
+                      })}
+                    </div>
+                    {failAt >= 0 && cursor > failAt && (
+                      <div style={{ fontSize: 10.5, marginTop: 4, color: "#c62828",
+                                    fontWeight: 700, lineHeight: 1.4 }}>
+                        {t("매수 금지", "DO NOT BUY")} — {(t(u.lane_why || "", u.lane_why_en || "") || "").slice(0, 84)}
+                      </div>)}
+                    {lane === "HOLD" && (
+                      <div style={{ fontSize: 10.5, marginTop: 4, color: "#1565c0", fontWeight: 700 }}>
+                        {t("🔵 보유 유지 — 매도 조건 미충족", "🔵 HOLD — no exit condition met")}</div>)}
+                    {lane === "SELL" && (
+                      <div style={{ fontSize: 10.5, marginTop: 4, color: "#e65100", fontWeight: 700 }}>
+                        {t("🟠 매도 신호 — 팝업으로 승인 요청", "🟠 SELL — asking approval by popup")}</div>)}
+                    {done && lane === "BUY" && (
+                      <div style={{ fontSize: 10.5, marginTop: 4, color: "#2e7d32", fontWeight: 800 }}>
+                        {t("✅ 모든 관문 통과 — 진입 신호가 나오면 팝업으로 제안합니다",
+                           "✅ ALL GATES PASSED — a popup follows when the entry signal fires")}</div>)}
+                    {!done && failAt < 0 && (
+                      <div style={{ fontSize: 10.5, marginTop: 4, opacity: 0.6 }}>
+                        {t("⏳ 검사 중…", "⏳ checking…")}</div>)}
                   </div>);
               })}
-            </div>
-            <div style={{ marginTop: 10, fontSize: 13 }}>
-              <b>🏆 {t("오늘의 5종목", "today’s five")}:</b>{" "}
-              {(brain.five || []).map((n2, i2) => (
-                <span key={i2} style={{ margin: "0 4px", padding: "3px 10px", borderRadius: 999,
-                    background: "#6a1b9a", color: "#fff", fontSize: 12.5, fontWeight: 800 }}>{n2}</span>))}
-              <span style={{ marginLeft: 6, fontSize: 11.5, opacity: 0.65 }}>
-                {t("고정 6종목 📌 + 에이전트가 고른 5종목", "the fixed six 📌 + the agent’s five")}</span>
             </div>
           </div>);
       })()}
