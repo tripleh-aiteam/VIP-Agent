@@ -690,18 +690,61 @@ export default function ApprovePage() {
                         </div></td>
                       {money3 && <td style={{ width: 110, textAlign: "right", opacity: 0.5 }}>—</td>}
                     </tr>
-                    {rzOpen === `h${i}` && (
+                    {rzOpen === `h${i}` && (() => {
+                      // 🟢 THE HOLDING REASON, live (boss 2026-09-03 16:4x: "in
+                      // the holding case make also explanation — including
+                      // buying, and a holding reason. Make a list"): the desk's
+                      // own law, judged against right-now numbers.
+                      const live = room?.price ?? null;
+                      const trig = h.price * 0.99;
+                      const holdKo: string[] = [];
+                      const holdEn: string[] = [];
+                      if (live != null) {
+                        holdKo.push(`① 현재 ${W(live)} (${(pnl ?? 0) >= 0 ? "+" : ""}${pnl ?? "?"}%) — 매수가 ${W(h.price)} 기준입니다.`);
+                        holdEn.push(`① Now ${W(live)} (${(pnl ?? 0) >= 0 ? "+" : ""}${pnl ?? "?"}%) vs our buy ${W(h.price)}.`);
+                        if ((pnl ?? 0) > -1) {
+                          holdKo.push(`② 매도선은 -1% = ${W(trig)} — 아직 ${W(Math.max(0, live - trig))} 위에 있습니다 → 계속 보유합니다.`);
+                          holdEn.push(`② The sell line is -1% = ${W(trig)} — price sits ${W(Math.max(0, live - trig))} above it → we KEEP HOLDING.`);
+                        } else {
+                          holdKo.push(`② -1% 선(${W(trig)}) 아래입니다 — 매도 제안이 곧 팝업으로 옵니다.`);
+                          holdEn.push(`② Below the -1% line (${W(trig)}) — a SELL proposal is coming as a popup.`);
+                        }
+                      }
+                      holdKo.push("③ 사장님의 매도법 — 이 데스크는 -1% 하락일 때만 팝니다. 오르는 중·버티는 중에는 무조건 보유합니다.");
+                      holdEn.push("③ The boss's selling law — this desk sells ONLY on a -1% fall. Rising or steady means HOLD, always.");
+                      const z9 = room?.zone;
+                      if (z9) {
+                        if (z9.zone === "buy") {
+                          holdKo.push(`④ 연중 ${z9.pos}% — 매수구간(바닥권)입니다. 인내 규칙: 바닥에서는 서두르지 않습니다.`);
+                          holdEn.push(`④ ${z9.pos}% of the year — the BUYING zone (near the bottom). Patience rule: never hurry at the bottom.`);
+                        } else if (z9.zone === "sell") {
+                          holdKo.push(`④ 연중 ${z9.pos}% — 고점권입니다. 그래도 매도는 -1% 법이 결정합니다.`);
+                          holdEn.push(`④ ${z9.pos}% of the year — near the top. Even so, only the -1% law decides the sell.`);
+                        } else {
+                          holdKo.push(`④ 연중 ${z9.pos}% — 중간 구간입니다. 파도가 살아 있는 동안 태웁니다.`);
+                          holdEn.push(`④ ${z9.pos}% of the year — mid-range. We ride while the wave is alive.`);
+                        }
+                      }
+                      const holdL = ko9 ? holdKo : holdEn;
+                      return (
                       <tr><td colSpan={money3 ? 3 : 2} style={{ padding: "4px 6px 8px" }}>
                         <div style={{ borderLeft: "3px solid #e53935", borderRadius: 6,
                                       background: "rgba(229,57,53,0.06)", padding: "6px 9px",
-                                      fontSize: 12, lineHeight: 1.55 }}>
+                                      fontSize: 12, lineHeight: 1.55, marginBottom: 6 }}>
                           <b style={{ color: "#c62828" }}>🔴 {t(`매수 이유 (${h.at})`, `Why we bought (${h.at})`)}</b>
                           {(buyRow ? (ko9 ? buyRow.reasons : (buyRow.reasons_en || buyRow.reasons)) : []).map((x, k2) => (
                             <div key={k2}>· {x}</div>))}
                           {!buyRow && <div style={{ opacity: 0.6 }}>
                             {t("저장된 이유가 없습니다 (이 매수는 팝업 없이 기록되었습니다).", "No saved reasons (this buy was recorded without a popup).")}</div>}
                         </div>
-                      </td></tr>)}
+                        <div style={{ borderLeft: "3px solid #2e7d32", borderRadius: 6,
+                                      background: "rgba(46,125,50,0.06)", padding: "6px 9px",
+                                      fontSize: 12, lineHeight: 1.55 }}>
+                          <b style={{ color: "#2e7d32" }}>🟢 {t("보유 이유 (지금 기준)", "Why we are holding (live)")}</b>
+                          {holdL.map((x, k2) => <div key={k2}>· {x}</div>)}
+                        </div>
+                      </td></tr>);
+                    })()}
                     </Fragment>);
                 })}</tbody>
               </table></>)}
