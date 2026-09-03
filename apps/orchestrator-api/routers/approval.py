@@ -10,6 +10,101 @@ from db.base import get_db
 router = APIRouter(prefix="/approval", tags=["approval-desk"])
 
 
+_NOTE9 = {"t": 0.0, "v": None}
+
+
+def _watch_note(pending: list) -> dict | None:
+    """THE AGENT SAYS SOMETHING EVERY 3 MINUTES, EVEN WHEN IT HAS NOTHING TO
+    PROPOSE (boss 2026-09-03: "from 13:00 there is no popup message so I am
+    worrying. If it is because the condition is not matching it should give
+    another popup every 3 minutes like: agent is analysing 20 stocks and there
+    is no buying or selling time").
+
+    Silence and a dead screen look identical. A real BUY/SELL proposal always
+    wins - this note only exists while there is nothing pending - and it never
+    asks for a decision: it reports how many stocks were judged, how many are
+    blocked and by WHICH gate, how many are already answered or held, so the
+    silence carries its own reason."""
+    import time as _t
+    if pending:
+        _NOTE9["v"] = None            # a real proposal is on screen - hush
+        return None
+    if _NOTE9["v"] and _t.time() - _NOTE9["t"] < 180:
+        return _NOTE9["v"]            # the same note stands for 3 minutes
+    b = _BRAIN_CACHE.get("data") or {}
+    rows = (b.get("six") or []) + (b.get("universe") or [])
+    if not rows:
+        return _NOTE9["v"]
+    lanes = b.get("lanes") or {}
+    import collections as _c
+    gates = _c.Counter()
+    for r in rows:
+        if r.get("lane") != "NOBUY":
+            continue
+        for g in (r.get("gates") or []):
+            if g.get("bad"):
+                gates[str(g.get("k"))] += 1
+    top = gates.most_common(3)
+    n_no = len(lanes.get("NOBUY") or [])
+    n_done = len(lanes.get("DONE") or [])
+    n_hold = len(lanes.get("HOLD") or [])
+    why_ko = ", ".join(f"{k} {v}종목" for k, v in top) or "조건 미충족"
+    why_en = ", ".join(f"{k} {v}" for k, v in top) or "no condition met"
+    lines_ko = [
+        f"🔍 {len(rows)}개 종목을 동시에 검사했습니다 — 지금은 매수·매도 자리가 없습니다.",
+        f"🚫 매수 금지 {n_no}종목 — 막은 관문: {why_ko}.",
+        f"✅ 이미 결정하신 종목 {n_done}개 · 보유 중 {n_hold}개 (매도 후 다시 제안합니다).",
+        "👀 계속 지켜봅니다 — 조건이 맞는 순간 바로 매수/매도 팝업을 띄웁니다.",
+    ]
+    lines_en = [
+        f"🔍 Checked {len(rows)} stocks together — right now there is no place to buy or sell.",
+        f"🚫 {n_no} blocked — the gates that stopped them: {why_en}.",
+        f"✅ {n_done} already decided by you · {n_hold} held (offered again after we sell).",
+        "👀 Still watching — the moment a condition matches, a BUY/SELL popup appears.",
+    ]
+    import datetime as _dt
+    _NOTE9["t"] = _t.time()
+    _NOTE9["v"] = {"id": int(_t.time()), "hhmm": _dt.datetime.now().strftime("%H:%M"),
+                   "kind": "watch", "n": len(rows),
+                   "lines": lines_ko, "lines_en": lines_en}
+    return _NOTE9["v"]
+
+
+def _display_stats(held: list, log: list, rooms: list) -> dict:
+    """THE CARD COUNTS WHAT THE BOARD SHOWS (boss 2026-09-03 16:5x: 'out of 3
+    we are winning 3 so it should be 100%' — the old card read the raw DB,
+    every semi order ever, hidden/deleted/test rows included, so it said 57.1%
+    with 7 trips while the visible history showed 3 clean wins). Computed from
+    the SAME filtered held/log rows the page renders, live prices from rooms."""
+    done = [l for l in log if l.get("side") == "SELL" and l.get("fill")
+            and l.get("decision") == "승인" and l.get("pnl_won") is not None]
+    wins = sum(1 for l in done if (l.get("pnl_won") or 0) > 0)
+    losses = sum(1 for l in done if (l.get("pnl_won") or 0) < 0)
+    net = round(sum(float(l.get("pnl_won") or 0) for l in done))
+    px_of = {r.get("code"): r.get("price") for r in rooms or []}
+    inv = open_unreal = 0.0
+    for h in held:
+        inv += float(h.get("price") or 0) * int(h.get("qty") or 0)
+        _px = px_of.get(h.get("code"))
+        if _px:
+            open_unreal += ((float(_px) - float(h.get("price") or 0))
+                            * int(h.get("qty") or 0))
+    for l in done:
+        if l.get("buy_price"):
+            inv += float(l["buy_price"]) * int(l.get("qty") or 0)
+    best = worst = None
+    if done:
+        _b = max(done, key=lambda l: l.get("pnl_pct") or 0)
+        _w = min(done, key=lambda l: l.get("pnl_pct") or 0)
+        best = {"name": _b.get("name"), "pct": _b.get("pnl_pct")}
+        worst = {"name": _w.get("name"), "pct": _w.get("pnl_pct")}
+    return {"trips": len(done), "wins": wins, "losses": losses,
+            "win_pct": round(wins / (wins + losses) * 100, 1) if (wins + losses) else 0,
+            "net_won": net, "invested": round(inv),
+            "open_n": len(held), "open_unreal": round(open_unreal),
+            "best": best, "worst": worst}
+
+
 @router.get("/feed")
 def feed(db: Session = Depends(get_db)):
     """INSTANT: stored meta + live prices; the heavy scan runs in background."""
@@ -48,11 +143,7 @@ def feed(db: Session = Depends(get_db)):
         mkt = market_open()
     except Exception:
         mkt = False
-    try:
-        from services.approval_desk import semi_stats
-        _st9 = semi_stats(db)
-    except Exception:
-        _st9 = None
+    _st9 = None
     _held9 = st.get("held") or []
     # the WHOLE day's log, not a 40-row window (boss 2026-09-03 16:2x: "before
     # 12:00 there were 3 or 4 completed cases, now only 1" — the log grew past
@@ -71,8 +162,20 @@ def feed(db: Session = Depends(get_db)):
         _log9 = filter_m3_log(_log9, _d8)
     except Exception:
         pass
+    # the stats card judges the SAME rows the boards render (post-filter)
+    try:
+        _st9 = _display_stats(_held9, _log9, rooms)
+    except Exception:
+        try:
+            from services.approval_desk import semi_stats
+            _st9 = semi_stats(db)
+        except Exception:
+            _st9 = None
+    _pend9 = st.get("pending") or []
     return {"ok": True, "market_open": mkt, "rooms": rooms,
-            "pending": st.get("pending") or [],
+            "pending": _pend9,
+            # the agent speaks every 3 minutes even with nothing to propose
+            "note": _watch_note(_pend9),
             "held": _held9,
             # rows the boss struck stay in the record but leave the board
             # (2026-09-03 12:2x, the 현대모비스 09:50 entry: "remove this, it is
