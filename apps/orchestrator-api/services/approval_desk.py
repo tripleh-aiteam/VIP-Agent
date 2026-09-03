@@ -1319,6 +1319,29 @@ def _why_buy(code: str, name: str, hold: dict):
                 score = rm.get("score")
         except Exception:
             pass
+    # ⑥ THE NEWS CHECK, after gap/volume/positions (boss 2026-09-03 18:2x:
+    # "it should check news also after 갭상승 and volume and daily, yearly
+    # position — good news affects the price increasing, like 한화오션's ship
+    # agreement; bad news affects decreasing"): the AI news intern's freshest
+    # stamps join the buy story.
+    try:
+        from services.checklist_advice import _fresh_stamps
+        _st6 = _fresh_stamps(code, limit=3)
+        _bad6 = [s for s in _st6 if str(s.get("stamp")) in ("위험", "악재")]
+        _good6 = [s for s in _st6 if str(s.get("stamp")) == "호재"]
+        if _bad6:
+            _t6 = str(_bad6[-1].get("title") or "")[:42]
+            R.append(f"⑥ 📰 뉴스 확인 — ⚠️ 위험 뉴스: \"{_t6}\" — 가격을 끌어내릴 수 있는 재료라 주의합니다.")
+            E.append(f"⑥ 📰 News check — ⚠️ danger news: \"{_t6}\" — a story that can push the price DOWN, so we stay careful.")
+        elif _good6:
+            _t6 = str(_good6[-1].get("title") or "")[:42]
+            R.append(f"⑥ 📰 뉴스 확인 — 좋은 뉴스가 있습니다: \"{_t6}\" — 가격 상승에 힘을 보태는 재료입니다.")
+            E.append(f"⑥ 📰 News check — GOOD news: \"{_t6}\" — a story that helps push the price UP.")
+        else:
+            R.append("⑥ 📰 뉴스 확인 — 특이 뉴스 없음. 가격을 흔들 재료가 보이지 않습니다.")
+            E.append("⑥ 📰 News check — nothing notable. No story that would shake the price.")
+    except Exception:
+        pass
     # THE CHECKLIST STATEMENT LEADS (boss 2026-09-03 17:2x: "start write we
     # have checked the 100 checklist in the buying case, then second…"): it
     # slots right under the ✅ verdict — the short verdict keeps first place

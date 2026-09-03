@@ -11,7 +11,7 @@ import { API } from "../../../components/api";
 type Zone = { pos: number; zone: "buy" | "sell" | "mid" } | null;
 type Room = { code: string; name: string; score?: number | null; price?: number | null;
               chg?: number | null; zone?: Zone; held?: { qty: number; price: number; at: string } | null;
-              pnl?: number | null };
+              pnl?: number | null; news?: { stamp: string; title: string } | null };
 type ChkItem = { k: string; v: string; s?: number | null; g?: string; bad?: boolean };
 type Sug = { id: number; hhmm: string; code: string; name: string; side: "BUY" | "SELL";
              reasons: string[]; reasons_en?: string[]; price: number; qty: number; score?: number | null;
@@ -832,9 +832,14 @@ export default function ApprovePage() {
                           holdEn.push(`③ Below the -1% line (${W(trig)}) — a SELL proposal is coming as a popup.`);
                         }
                       }
-                      if (newsG && /있음|yes/i.test(String(newsG.v || ""))) {
-                        holdKo.push("④ ⚠️ 서버 뉴스 검사(AI 뉴스 인턴) — 위험 뉴스가 감지되었습니다. 주의해서 지켜보고 있습니다.");
-                        holdEn.push("④ ⚠️ The server's AI news intern flagged danger news — we are watching it closely.");
+                      const nw9 = room?.news;
+                      if ((nw9 && (nw9.stamp === "위험" || nw9.stamp === "악재"))
+                          || (newsG && /있음|yes/i.test(String(newsG.v || "")))) {
+                        holdKo.push(`④ ⚠️ 서버 뉴스 검사(AI 뉴스 인턴) — 위험 뉴스 감지${nw9?.title ? `: "${nw9.title.slice(0, 40)}"` : ""} — 가격을 끌어내릴 수 있어 주의합니다.`);
+                        holdEn.push(`④ ⚠️ The AI news intern flagged danger news${nw9?.title ? `: "${nw9.title.slice(0, 40)}"` : ""} — it can push the price down, we watch closely.`);
+                      } else if (nw9 && nw9.stamp === "호재") {
+                        holdKo.push(`④ 📰 좋은 뉴스가 있습니다: "${nw9.title.slice(0, 40)}" — 가격 상승에 힘을 보태는 재료입니다 (한화오션 선박 계약 같은 경우).`);
+                        holdEn.push(`④ 📰 GOOD news: "${nw9.title.slice(0, 40)}" — a story that helps push the price UP.`);
                       } else {
                         holdKo.push("④ 서버 뉴스 검사(AI 뉴스 인턴, qwen) — 이 종목을 떨어뜨릴 나쁜 뉴스가 없습니다.");
                         holdEn.push("④ Checked the news on our server (the qwen AI news intern) — no bad news that would push this stock down.");

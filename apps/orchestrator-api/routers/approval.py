@@ -12,8 +12,103 @@ router = APIRouter(prefix="/approval", tags=["approval-desk"])
 
 _NOTE9 = {"t": 0.0, "v": None}
 
+_NEWS9 = {"t": 0.0, "by_code": {}}
 
-def _watch_note(pending: list, n_held: int = 0) -> dict | None:
+
+def _stamps_by_code(max_age_h: float = 3.0) -> dict:
+    """The news intern's stamps for EVERY stock, one file read, cached 120s
+    (boss 2026-09-03 18:2x: news joins the agent's judgement — per stock and
+    across the whole 20). {code: [rows newest-last]} limited to fresh rows."""
+    import time as _t, json as _j
+    from datetime import datetime as _dt
+    if _t.time() - _NEWS9["t"] < 120 and _NEWS9["by_code"]:
+        return _NEWS9["by_code"]
+    out: dict = {}
+    try:
+        from pathlib import Path as _P
+        nd = _P(__file__).resolve().parent.parent / "data" / "news_intern"
+        files = sorted(nd.glob("2*.jsonl"))
+        if files:
+            now = _dt.now()
+            for ln in files[-1].read_text(encoding="utf-8").splitlines():
+                try:
+                    r = _j.loads(ln)
+                    ts = _dt.fromisoformat(str(r.get("ts"))[:19])
+                    if (now - ts).total_seconds() > max_age_h * 3600:
+                        continue
+                    out.setdefault(str(r.get("code")), []).append(r)
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    _NEWS9["t"], _NEWS9["by_code"] = _t.time(), out
+    return out
+
+
+def _news_of(code: str):
+    """Latest non-neutral fresh stamp for one stock: {'stamp','title'} or None."""
+    rows = _stamps_by_code().get(str(code)) or []
+    for r in reversed(rows):
+        if str(r.get("stamp")) in ("호재", "위험", "악재"):
+            return {"stamp": str(r.get("stamp")), "title": str(r.get("title") or "")[:60]}
+    return None
+
+
+def _market_move_lines(rooms: list):
+    """MARKET-WIDE MOVE → CHECK THE NEWS (boss 2026-09-03 18:2x: 'today after
+    14:00 ALL stocks decreased — it should check the news what happened,
+    considering the 20 stocks, and according to the news suggest
+    buy/sell/hold'). Returns (ko_lines, en_lines) or None when the board is
+    mixed/normal."""
+    chgs = [float(r.get("chg")) for r in rooms or [] if r.get("chg") is not None]
+    if len(chgs) < 8:
+        return None
+    n_dn = sum(1 for c in chgs if c < 0)
+    n_up = sum(1 for c in chgs if c > 0)
+    avg = sum(chgs) / len(chgs)
+    broad_dn = n_dn >= len(chgs) * 0.75 and avg <= -0.5
+    broad_up = n_up >= len(chgs) * 0.75 and avg >= 0.5
+    if not (broad_dn or broad_up):
+        return None
+    by = _stamps_by_code()
+    bads, goods = [], []
+    for r in rooms:
+        for s in by.get(str(r.get("code"))) or []:
+            st9 = str(s.get("stamp"))
+            if st9 in ("위험", "악재"):
+                bads.append(s)
+            elif st9 == "호재":
+                goods.append(s)
+    if broad_dn:
+        head_ko = f"🚨 시장 전체가 내리고 있습니다 — {len(chgs)}종목 중 {n_dn}개 하락 (평균 {avg:+.2f}%). 뉴스를 확인했습니다."
+        head_en = f"🚨 The whole board is falling — {n_dn} of {len(chgs)} stocks down (avg {avg:+.2f}%). We checked the news."
+        if bads:
+            t9 = str(bads[-1].get("title") or "")[:46]
+            return ([head_ko,
+                     f"📰 위험 뉴스 {len(bads)}건 발견 — 최근: \"{t9}\"",
+                     "→ 판단: 나쁜 뉴스가 시장을 누르고 있습니다 — 신규 매수는 보류(HOLD), 보유 종목은 -1% 규칙 그대로 지킵니다."],
+                    [head_en,
+                     f"📰 {len(bads)} danger stories found — latest: \"{t9}\"",
+                     "→ Verdict: bad news is pressing the market — new buys on HOLD; held stocks keep the -1% rule."])
+        return ([head_ko,
+                 "📰 20종목 뉴스를 모두 확인했지만 큰 나쁜 뉴스는 없습니다.",
+                 "→ 판단: 뉴스 없는 수급 하락입니다 — 서두르지 않습니다. 매수는 관문 통과를 기다리고, 보유는 -1% 규칙대로."],
+                [head_en,
+                 "📰 We checked the news across all 20 stocks — no big bad story.",
+                 "→ Verdict: a flow-driven dip, not a news event — no hurry. Buys wait for the gates; holds keep the -1% rule."])
+    head_ko = f"📈 시장 전체가 오르고 있습니다 — {len(chgs)}종목 중 {n_up}개 상승 (평균 {avg:+.2f}%). 뉴스를 확인했습니다."
+    head_en = f"📈 The whole board is rising — {n_up} of {len(chgs)} stocks up (avg {avg:+.2f}%). We checked the news."
+    if goods:
+        t9 = str(goods[-1].get("title") or "")[:46]
+        return ([head_ko, f"📰 호재 뉴스 {len(goods)}건 — 최근: \"{t9}\"",
+                 "→ 판단: 좋은 뉴스가 가격을 밀어올리고 있습니다 — 관문을 통과하는 종목은 바로 매수 제안이 나옵니다."],
+                [head_en, f"📰 {len(goods)} good-news stories — latest: \"{t9}\"",
+                 "→ Verdict: good news is pushing prices up — any stock that clears the gates gets an instant BUY proposal."])
+    return ([head_ko, "📰 특별한 호재 뉴스는 없습니다 — 수급 상승으로 판단, 규칙대로만 삽니다."],
+            [head_en, "📰 No standout good news — a flow-driven rise; we buy only by the rules."])
+
+
+def _watch_note(pending: list, n_held: int = 0, rooms: list | None = None) -> dict | None:
     """THE AGENT SAYS SOMETHING EVERY 3 MINUTES, EVEN WHEN IT HAS NOTHING TO
     PROPOSE (boss 2026-09-03: "from 13:00 there is no popup message so I am
     worrying. If it is because the condition is not matching it should give
@@ -68,6 +163,14 @@ def _watch_note(pending: list, n_held: int = 0) -> dict | None:
         f"✅ {n_done} already decided by you · {n_hold} held (offered again after we sell).",
         "👀 Still watching — the moment a condition matches, a BUY/SELL popup appears.",
     ]
+    # a broad market move puts its news verdict ON TOP of the note
+    try:
+        _mm = _market_move_lines(rooms or [])
+        if _mm:
+            lines_ko = _mm[0] + [""] + lines_ko
+            lines_en = _mm[1] + [""] + lines_en
+    except Exception:
+        pass
     import datetime as _dt
     _NOTE9["t"] = _t.time()
     _NOTE9["v"] = {"id": int(_t.time()), "hhmm": _dt.datetime.now().strftime("%H:%M"),
@@ -141,9 +244,14 @@ def feed(db: Session = Depends(get_db)):
         pnl = None
         if lot and px:
             pnl = round((float(px) / float(lot["price"]) - 1) * 100, 2)
+        _nw = None
+        try:
+            _nw = _news_of(code)     # freshest 호재/위험 stamp rides with the room
+        except Exception:
+            pass
         rooms.append({"code": code, "name": m["name"], "score": m.get("score"),
                       "price": px, "chg": chg, "zone": m.get("zone"),
-                      "held": lot, "pnl": pnl})
+                      "held": lot, "pnl": pnl, "news": _nw})
     try:
         from services.kiwoom_tape import market_open
         mkt = market_open()
@@ -184,7 +292,7 @@ def feed(db: Session = Depends(get_db)):
     return {"ok": True, "market_open": mkt, "rooms": rooms,
             "pending": _pend9,
             # the agent speaks every 3 minutes even with nothing to propose
-            "note": _watch_note(_pend9, len(_held9)),
+            "note": _watch_note(_pend9, len(_held9), rooms),
             "held": _held9,
             # rows the boss struck stay in the record but leave the board
             # (2026-09-03 12:2x, the 현대모비스 09:50 entry: "remove this, it is
