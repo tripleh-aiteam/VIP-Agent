@@ -340,7 +340,14 @@ def scan(db) -> dict:
     _keep9, _drop9 = [], []
     for _p9 in (st.get("pending") or []):
         _c9, _sd9 = str(_p9.get("code")), str(_p9.get("side"))
-        if _sd9 == "BUY" and _c9 not in _live9:
+        if _sd9 == "BUY" and not _gates_pass(_c9):
+            # A POPUP LIVES ONLY WHILE ITS OWN REASON DOES - and its reason is
+            # the GATES, not 알고3's entry shape (boss 2026-09-03 15:3x: six
+            # popups appeared and were all swept away seconds later, then came
+            # back, then went again). This test used to ask whether the engine
+            # held the stock, which is a different question from the one the
+            # popup was raised on, so every correct proposal was withdrawn on
+            # the very next scan. It now asks the same question that raised it.
             _drop9.append(_p9)
         elif _sd9 == "SELL" and (_c9 not in _ourc9 or _c9 in _live9):
             _drop9.append(_p9)

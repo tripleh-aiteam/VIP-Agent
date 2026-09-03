@@ -75,7 +75,8 @@ def feed(db: Session = Depends(get_db)):
             # (2026-09-03 12:2x, the 현대모비스 09:50 entry: "remove this, it is
             # not a good condition to buy") - never a deletion, only a display
             # filter, the same law every other board here follows
-            "log": _log9, "stats": _st9}
+            "log": _log9, "stats": _st9,
+            "why_skip": st.get("why_skip") or {}}
 @router.get("/process/{code}")
 def process(code: str, db: Session = Depends(get_db)):
     from services import approval_desk as ad
@@ -131,7 +132,6 @@ def reject(sid: int, db: Session = Depends(get_db)):
     return ad.decide(db, sid, False)
 
 
-_BRAIN9 = {"t": 0.0, "v": None, "busy": False}
 
 
 _BRAIN_CACHE = {"ts": 0.0, "data": None, "busy": False}
@@ -155,39 +155,26 @@ def brain():
                 if d.get("ok"):
                     c["data"] = d
                     c["ts"] = _t.time()
+                    # HAND THE VERDICTS DOWN TO THE SCANNER (boss 2026-09-03
+                    # 15:2x: the board showed eight BUY cards and not one popup
+                    # ever appeared). The scanner asks the brain which lane a
+                    # stock is in before raising a popup and was getting an
+                    # empty answer for every stock: a SECOND function of the
+                    # same name further down this file shadowed the cached
+                    # wrapper holding those verdicts, so the store the scanner
+                    # read was never once written. The live path now publishes
+                    # directly and the dead twin is gone.
+                    try:
+                        from services.approval_desk import publish_brain
+                        publish_brain(d)
+                    except Exception:
+                        pass
             except Exception:
                 pass
             finally:
                 c["busy"] = False
         threading.Thread(target=_run, daemon=True).start()
     return c["data"] or {"ok": False, "computing": True}
-
-
-def _brain_compute():
-    """NEVER BLOCKS THE SERVER (boss 2026-09-03 10:1x: the brain took 170s and
-    then killed the process twice - it walked 38 stocks, each touching the tape
-    and the database, INLINE on the request thread, so Approve and the feed
-    queued behind it). It now serves the last computed answer instantly and
-    refreshes in a background thread, the same pattern the room meta already
-    uses. The very first call returns an empty shell; the panel fills a moment
-    later and animates client-side regardless."""
-    import threading as _th, time as _tm
-    if _BRAIN9["v"] is not None and _tm.time() - _BRAIN9["t"] < 6:
-        return _BRAIN9["v"]
-    if not _BRAIN9["busy"]:
-        _BRAIN9["busy"] = True
-
-        def _bg():
-            try:
-                v = _brain_compute()
-                _BRAIN9["t"], _BRAIN9["v"] = _tm.time(), v
-            except Exception:
-                pass
-            finally:
-                _BRAIN9["busy"] = False
-        _th.Thread(target=_bg, daemon=True).start()
-    return _BRAIN9["v"] or {"ok": True, "universe": [], "six": [], "five": [],
-                            "computing": True}
 
 
 def _brain_compute():
