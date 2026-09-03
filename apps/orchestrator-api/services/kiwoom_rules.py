@@ -298,9 +298,31 @@ def _daily20(code: str, before_day: str) -> tuple:
                 closes[d2] = float(cs2[-1]["close"])
     except Exception:
         pass
+    # THE DATABASE IS THE THIRD SOURCE (boss 2026-09-03 09:2x, demo morning:
+    # Menu 3's four freshly-picked rooms had ma20/ma1y/low5 = None, so the
+    # average gates, the 5-day patience law and the rebound door were all
+    # SILENTLY INERT on exactly the stocks the agent had just chosen. The two
+    # sources above only cover stocks the desk has been collecting for weeks -
+    # a room picked this morning has neither a minute-history file nor stored
+    # tapes. raw_daily_prices already holds their full daily history and is
+    # what the checklist scores from, so the laws now read it too.
+    if len([d2 for d2 in closes if d2 < before_day]) < 40:
+        try:
+            from services.daily_pick import _conn
+            _cn = _conn(); _cu = _cn.cursor()
+            _cu.execute("""SELECT date, close FROM raw_daily_prices
+                           WHERE ticker = %s ORDER BY date""", (code,))
+            for _d3, _c3 in _cu.fetchall():
+                if _c3 is None:
+                    continue
+                _k3 = _d3.strftime("%Y%m%d")
+                closes.setdefault(_k3, float(_c3))
+            _cn.close()
+        except Exception:
+            pass
     days = sorted(d2 for d2 in closes if d2 < before_day)
     if not days:
-        out = (None, None)
+        out = (None, None, None, None, None)
     else:
         prev_close = closes[days[-1]]
         low20 = min(closes[d2] for d2 in days[-20:])
