@@ -377,7 +377,20 @@ def _brain_compute():
                        "hour - it is still moving the price → WAIT until it "
                        "settles." if news_bad else "")})
         blocked = [g for g in gates if g["bad"]]
-        entry = {"code": code, "name": r.get("name"),
+        # ALL THE MACHINE-CHECKABLE CHECKLIST ITEMS (boss 2026-09-03 13:4x:
+        # "inside each stock our agent is checking, but you did not include all
+        # 100 checklist - some of them related to human so remove them - start
+        # with 갭상승 and list them one by one"). The 100 items were always part
+        # human judgement; 15 of them are measured, and each already carries its
+        # original checklist number. They ride alongside the six gates so a card
+        # can list every check the desk actually performs.
+        _items = []
+        for _gk, _lst in (r.get("detail") or {}).items():
+            for _it in (_lst or []):
+                _items.append({"k": _it.get("k"), "v": str(_it.get("v")),
+                               "s": _it.get("s"), "g": _gk,
+                               "bad": (_it.get("s") or 0) < 40})
+        entry = {"code": code, "name": r.get("name"), "items": _items,
                  "score": r.get("score"), "score_100": r.get("score_100"),
                  "gates": gates, "pass": not blocked,
                  "no_buy": (blocked[0].get("why") or

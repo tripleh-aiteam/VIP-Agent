@@ -24,8 +24,16 @@ from services.logger import log
 _FILE = Path(__file__).resolve().parent.parent / "data" / "approval_desk.json"
 SIX = [("000660", "SK하이닉스"), ("005930", "삼성전자"), ("035420", "NAVER"),
        ("017670", "SK텔레콤"), ("042660", "한화오션"), ("034020", "두산에너빌리티")]
-_BUY_COOLDOWN = 1800.0        # one BUY nudge per stock per 30 min
-_SELL_COOLDOWN = 600.0
+# NO WAITING WHEN THE AGENT IS READY (boss 2026-09-03 13:4x: "if it passed from
+# all gates it should send immediately pop up message", and his 한화오션 case
+# this morning - the engine entered 09:12, the popup was cancelled at 09:16 and
+# the next one did not come until 09:43, a 27-minute silence caused entirely by
+# this cooldown while the engine sat holding the stock the whole time).
+# The cooldown existed to stop nagging on a stock the engine was NOT in; now the
+# popup only ever mirrors a live engine position, so a short guard against
+# double-firing inside one scan is all that is needed.
+_BUY_COOLDOWN = 45.0
+_SELL_COOLDOWN = 45.0
 _EXPIRE = 600.0               # a popup no one answers dies after 10 min
 
 
