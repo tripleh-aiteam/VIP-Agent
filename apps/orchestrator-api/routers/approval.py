@@ -366,7 +366,33 @@ def _brain_compute():
             if not (pc and cs and cs[0].get("open")):
                 return None, None
             g = 100.0 * (float(cs[0]["open"]) / float(pc) - 1)
-            return g, g >= 1.5
+            if g < 1.5:
+                return g, False
+            # THE GAP PAUSE CAN BE LIFTED (boss 2026-09-03 evening): "do not buy
+            # if there is a 갭상승; you can buy when it decreases and is equal
+            # to yesterday's price or lower, and stops decreasing, and 3 red
+            # candles (like the small blue case)". The board used to ban a
+            # gap-up stock for the whole day, which is stricter than his own
+            # rule and stricter than the engines - so a stock that had given
+            # the whole gap back and turned could still not be proposed.
+            # The release line is YESTERDAY'S CLOSE, not today's open, and the
+            # three rises count through a small blue exactly as the blues law
+            # does everywhere else.
+            back = False
+            reds = 0
+            for b in cs:
+                lo = float(b.get("low") or b.get("close") or 0)
+                if lo and lo <= float(pc):
+                    back = True
+                o9, c9 = float(b.get("open") or 0), float(b.get("close") or 0)
+                if o9 and c9:
+                    if c9 > o9:
+                        reds += 1
+                    elif abs(c9 / o9 - 1) * 100 > 0.2:   # a SMALL blue continues the run
+                        reds = 0
+                if back and reds >= 3:
+                    return g, False          # the pause is lifted for good
+            return g, True
         except Exception:
             return None, None
     def _lines(code):
@@ -397,11 +423,13 @@ def _brain_compute():
             "bad": bool(gbad),
             "short": "갭상승 출발 → 대기", "short_en": "Gap-up open → WAIT",
             "why": (f"⚡ 갭상승입니다! 오늘 시가가 어제 종가보다 {gv:+.1f}% 높게 "
-                    f"출발했습니다. 지금은 비싼 자리입니다 → 가격이 오늘 시가 "
-                    f"아래로 내려올 때까지 기다립니다." if gbad else ""),
+                    f"출발했습니다. 아직 비싼 자리입니다 → 어제 종가까지 "
+                    f"내려오고, 하락이 멈추고, 양봉 3개가 나오면 그때 삽니다."
+                    if gbad else ""),
             "why_en": (f"⚡ GAP-UP! It opened {gv:+.1f}% above yesterday's close - "
-                       f"an expensive place to buy. WAIT until the price comes back "
-                       f"below today's opening price." if gbad else "")})
+                       f"still an expensive place. We buy only after it comes "
+                       f"back DOWN to yesterday's close, the fall stops, and "
+                       f"three red candles confirm." if gbad else "")})
         _m = r.get("mid")
         gates.append({
             "k": "1개월 평균", "en": "vs 1-month avg",

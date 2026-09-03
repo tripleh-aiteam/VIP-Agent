@@ -380,7 +380,17 @@ VARIANTS: list[dict] = [
      # threshold 1.0 (boss 2026-08-27 evening: "check all historical data,
      # find the best %"): full sweep 1.0-4.0 on 251 days - 1.0% is best desk-
      # wide (+42.1M/yr vs +28.5M at 2.0; D1 +24.1M, D2 +5.5M, D3 +12.5M).
-     "gap_guard": 1.5, "gap_wait": "median_dip3",
+     # PREV3 (boss 2026-09-03 evening, ordered for 알고2/알고3/메뉴3): "do not
+     # buy if there is a 갭상승; you can buy when it decreases and is equal to
+     # yesterday's price or lower, and stops decreasing, and 3 red candles".
+     # The release line moves from today's OPEN to YESTERDAY'S CLOSE - a gap
+     # that only fades to its own open has not given the price back yet.
+     # MEASURED over all 22 stored days before deploying, same desk:
+     #   알고2  521 trips / 41% / -155.96%  ->  422 / 41% / -122.04%  (+33.92%)
+     #   알고3   36 trips / 64% /   +8.64%  ->   35 / 63% /   +7.41%  (-1.23%)
+     # It clearly helps 알고2 and slightly hurts 알고3; deployed to both at his
+     # explicit order, with both numbers on record.
+     "gap_guard": 1.5, "gap_wait": "prev3",
      # median_dip3 (boss 2026-09-03 15:4x, SK하이닉스 09:33 exhibit): a gap-up
      # starter at/below its 1-year MEDIAN waits for the fade's minimum to hold
      # 3 bars and turn (2-of-3 rises, within 1.5% of the bottom) - the release
@@ -512,7 +522,17 @@ VARIANTS: list[dict] = [
      # threshold 1.0 (boss 2026-08-27 evening: "check all historical data,
      # find the best %"): full sweep 1.0-4.0 on 251 days - 1.0% is best desk-
      # wide (+42.1M/yr vs +28.5M at 2.0; D1 +24.1M, D2 +5.5M, D3 +12.5M).
-     "gap_guard": 1.5, "gap_wait": "median_dip3",
+     # PREV3 (boss 2026-09-03 evening, ordered for 알고2/알고3/메뉴3): "do not
+     # buy if there is a 갭상승; you can buy when it decreases and is equal to
+     # yesterday's price or lower, and stops decreasing, and 3 red candles".
+     # The release line moves from today's OPEN to YESTERDAY'S CLOSE - a gap
+     # that only fades to its own open has not given the price back yet.
+     # MEASURED over all 22 stored days before deploying, same desk:
+     #   알고2  521 trips / 41% / -155.96%  ->  422 / 41% / -122.04%  (+33.92%)
+     #   알고3   36 trips / 64% /   +8.64%  ->   35 / 63% /   +7.41%  (-1.23%)
+     # It clearly helps 알고2 and slightly hurts 알고3; deployed to both at his
+     # explicit order, with both numbers on record.
+     "gap_guard": 1.5, "gap_wait": "prev3",
      # median_dip3 (boss 2026-09-03 15:4x, SK하이닉스 09:33 exhibit): a gap-up
      # starter at/below its 1-year MEDIAN waits for the fade's minimum to hold
      # 3 bars and turn (2-of-3 rises, within 1.5% of the bottom) - the release
@@ -1908,6 +1928,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     gap_lo = [None] * n        # the fade's minimum low so far
     gap_lo_i = [None] * n      # bar index of that minimum's LAST touch
     gap_dip_ok = [False] * n   # latched: bottom held 3 bars + 2-of-3 rises
+    gap_back = [False] * n     # price returned to yesterday's close or below
+    gap_prev_ok = [False] * n  # latched: back to prev close AND 3 reds after
     gap_news_ok = [False] * n  # BIG NEWS during the session lifts the gap pause
                                # (boss 2026-08-27 night: "if we have big news
                                # during market time we can join") - big = 3+
@@ -2179,6 +2201,20 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                   and sum(1 for _j9 in (i - 2, i - 1, i)
                           if _j9 >= 1 and closes[_j9] > closes[_j9 - 1]) >= 2):
                 gap_dip_ok[si] = True
+        # PREV3 (boss 2026-09-03 evening): "do not buy if there is a
+        # 갭상승; you can buy when it decreases and is equal to yesterday's
+        # price or lower than this, and stops decreasing, and 3 red candles
+        # (like the small blue case)". The release line is YESTERDAY'S CLOSE,
+        # not today's open - a gap-up that only fades to its own open has not
+        # given the price back. The three rises then prove the fall ended, and
+        # they count through a small blue exactly as the blues law already
+        # does elsewhere.
+        if not gap_prev_ok[si]:
+            _pc9 = s.get("prev_close")
+            if _pc9 and (s.get("lows") or closes)[i] <= _pc9:
+                gap_back[si] = True
+            if gap_back[si] and up[si] >= 3:
+                gap_prev_ok[si] = True
         if (not gap_news_ok[si]) and s.get("news_hits") and s.get("times"):
             try:
                 _tb9 = str(s["times"][i])
@@ -2420,6 +2456,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                             and float(s["daily_pos"]) <= 0.55)
                         else (c >= (s.get("open_px") or closes[0]))))
                       if v.get("gap_wait") == "median_dip3"
+                      else (not gap_prev_ok[si])
+                      if v.get("gap_wait") == "prev3"
                       else (not gap_ok[si])
                       if v.get("gap_wait") == "turn3"
                       # the RELEASE LINE is the TRUE OPEN, not the first
