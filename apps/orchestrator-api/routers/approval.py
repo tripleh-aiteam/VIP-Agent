@@ -43,6 +43,10 @@ def feed(db: Session = Depends(get_db)):
     except Exception:
         mkt = False
     try:
+        ad.apply_time_overrides(st.get("held") or [], st.get("log") or [])
+    except Exception:
+        pass
+    try:
         from services.approval_desk import semi_stats
         _st9 = semi_stats(db)
     except Exception:

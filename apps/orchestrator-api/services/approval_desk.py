@@ -495,6 +495,49 @@ def semi_stats(db, day8: str = "") -> dict:
     return out
 
 
+_TOVR = _FILE.parent / "approval_time_overrides.json"
+
+
+def time_overrides() -> dict:
+    """{code: {"sug_at": "09:11", "at": "09:11"}} - the boss's own clock edits."""
+    try:
+        return json.loads(_TOVR.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def set_time_override(code: str, sug_at: str = "", at: str = "") -> dict:
+    o = time_overrides()
+    cur = o.get(code) or {}
+    if sug_at:
+        cur["sug_at"] = sug_at
+    if at:
+        cur["at"] = at
+    o[code] = cur
+    _TOVR.parent.mkdir(parents=True, exist_ok=True)
+    _TOVR.write_text(json.dumps(o, ensure_ascii=False, indent=1), encoding="utf-8")
+    return o
+
+
+def apply_time_overrides(held: list, log: list) -> None:
+    """Stamp the boss's clocks onto whatever the scanner just produced. Called
+    on every feed read, so a background rewrite can never undo his edit."""
+    o = time_overrides()
+    if not o:
+        return
+    for row in list(held or []) + list(log or []):
+        ov = o.get(str(row.get("code") or ""))
+        if not ov:
+            continue
+        if ov.get("at"):
+            row["at"] = ov["at"]
+            if "hhmm" in row:
+                row["hhmm"] = ov["at"]
+        if ov.get("sug_at"):
+            row["sug_at"] = ov["sug_at"]
+        row["time_fixed"] = True
+
+
 def _book_price(code: str, side: str, fallback: float):
     """THE PRICE COMES FROM THE ORDER BOOK (boss 2026-09-03 10:5x: "suggested
     price must be in the Kiwoom waiting list - for selling one step below the

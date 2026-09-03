@@ -549,18 +549,35 @@ def check_limit_orders(db) -> int:
         # THE GIVE-UP LAW (boss 2026-09-03: "if we offer price and it will not
         # reach, it should give up and cancel"): once the live price runs away
         # beyond the stock's studied give-up distance, a comeback fill is a
-        # falling knife on average — cancel instead of waiting all day.
+        # falling knife on average. A BUY is simply cancelled — a missed buy
+        # costs nothing. A SELL must NEVER be abandoned (boss 2026-09-03 12:4x,
+        # the 두산 79,900 case: "we lost chance to sell due to limitation") —
+        # holding a falling stock while the exit order sits dead is the real
+        # loss, so the stale sell limit CONVERTS TO MARKET and exits now, the
+        # same spirit as his -1% urgent-sell law.
         try:
             from services.giveup_rule import giveup_won, should_give_up
             if should_give_up(side, lp, px, ticker):
                 d = giveup_won(ticker, lp)
-                db.execute(text(
-                    "UPDATE paper_desk_orders SET status='CANCELLED', "
-                    "note=:n WHERE id=:i AND status='OPEN'"),
-                    {"i": oid,
-                     "n": f"🏳 포기 (give-up rule): 현재가 ₩{px:,.0f}가 제안가 "
-                          f"₩{lp:,.0f}에서 ₩{d:,.0f} 이상 멀어짐"})
-                db.commit()
+                if side == "SELL":
+                    res = _fill(db, oid, ticker, name, side, int(qty), px)
+                    if res.get("status") == "FILLED":
+                        fills += 1
+                        db.execute(text(
+                            "UPDATE paper_desk_orders SET note=:n WHERE id=:i"),
+                            {"i": oid,
+                             "n": f"🏳→⚡ 지정가 ₩{lp:,.0f} 대기 포기 → 시장가 "
+                                  f"₩{px:,.0f} 매도 전환 (가격이 ₩{d:,.0f} 이상 "
+                                  f"멀어짐 — 매도는 포기하지 않고 즉시 실행)"})
+                        db.commit()
+                else:
+                    db.execute(text(
+                        "UPDATE paper_desk_orders SET status='CANCELLED', "
+                        "note=:n WHERE id=:i AND status='OPEN'"),
+                        {"i": oid,
+                         "n": f"🏳 포기 (give-up rule): 현재가 ₩{px:,.0f}가 제안가 "
+                              f"₩{lp:,.0f}에서 ₩{d:,.0f} 이상 멀어짐"})
+                    db.commit()
         except Exception:
             db.rollback()
     return fills
