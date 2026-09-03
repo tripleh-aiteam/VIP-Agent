@@ -54,7 +54,10 @@ def feed(db: Session = Depends(get_db)):
     except Exception:
         _st9 = None
     _held9 = st.get("held") or []
-    _log9 = [l for l in reversed((st.get("log") or [])[-40:])
+    # the WHOLE day's log, not a 40-row window (boss 2026-09-03 16:2x: "before
+    # 12:00 there were 3 or 4 completed cases, now only 1" — the log grew past
+    # 40 rows and the morning's completed sells fell out of the window)
+    _log9 = [l for l in reversed((st.get("log") or [])[-200:])
              if not l.get("hidden")]
     # THE CHAT ERASER REACHES MENU 3 TOO (boss 2026-09-03 13:5x: "he said I
     # deleted and when I check it is not deleting" — the chat lane registered
