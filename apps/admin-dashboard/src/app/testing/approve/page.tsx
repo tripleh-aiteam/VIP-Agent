@@ -14,7 +14,7 @@ type Room = { code: string; name: string; score?: number | null; price?: number 
               pnl?: number | null };
 type Sug = { id: number; hhmm: string; code: string; name: string; side: "BUY" | "SELL";
              reasons: string[]; reasons_en?: string[]; price: number; qty: number; score?: number | null };
-type LogRow = Sug & { decision: string; fill?: number; at: string };
+type LogRow = Sug & { decision: string; fill?: number | null; at: string; dealt?: boolean };
 type Feed = { ok: boolean; market_open: boolean; rooms: Room[]; pending: Sug[];
               held: { code: string; name: string; qty: number; price: number; at: string }[];
               log: LogRow[] };
@@ -92,13 +92,25 @@ export default function ApprovePage() {
   }, [base]);
   useEffect(() => { pull(); const t = setInterval(pull, 5000); return () => clearInterval(t); }, [pull]);
   useEffect(() => {
+    // NEVER LET THE AGENT PANEL DISAPPEAR (boss 2026-09-03: "agent thinking and
+    // working part sometimes is disappearing - it should not"): a poll that
+    // comes back computing/empty must not overwrite good data with a blank.
     const load = () =>
-      fetch(`${base}/approval/brain`).then((r) => r.json()).then(setBrain).catch(() => {});
+      fetch(`${base}/approval/brain`).then((r) => r.json())
+        .then((d) => {
+          if (d && d.ok && (((d.six || []).length + (d.universe || []).length) > 0)) setBrain(d);
+        }).catch(() => {});
     load(); const t = setInterval(load, 7000); return () => clearInterval(t);
   }, []);
   // the "thinking" cursor walks one stock per beat, never stopping in market hours
   useEffect(() => {
     const t = setInterval(() => setThinkIdx((i) => i + 1), 1400);
+    return () => clearInterval(t);
+  }, []);
+  // the left-rail walk has its own quicker heartbeat — one check per beat
+  const [railTick, setRailTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setRailTick((i) => i + 1), 950);
     return () => clearInterval(t);
   }, []);
 
@@ -125,7 +137,9 @@ export default function ApprovePage() {
       ? `?qty=${Math.max(0, Math.round(qty || 0))}&price=${Math.max(0, price || 0)}` : "";
     fetch(`${base}/approval/${ok ? "approve" : "reject"}/${sid}${q}`, { method: "POST" })
       .then((r) => r.json())
-      .then((d) => { setToast(ok ? (d?.ok ? t(`✅ 승인 완료 — 체결 ${W(d.fill)}`, `✅ Approved — filled ${W(d.fill)}`) : `⚠️ ${d?.error || t("실패", "failed")}`)
+      .then((d) => { setToast(ok ? (d?.ok ? (d.decision === "queued"
+                                     ? t("🕐 승인 — 지정가 미체결 대기 중 (체결되면 기록이 ✅로 바뀝니다)", "🕐 Approved — limit order waiting, not dealt yet (flips to ✅ when it fills)")
+                                     : t(`✅ 승인 완료 — 체결 ${W(d.fill)}`, `✅ Approved — filled ${W(d.fill)}`)) : `⚠️ ${d?.error || t("실패", "failed")}`)
                                  : t("🚫 취소했습니다 — 감시는 계속됩니다", "🚫 Cancelled — the watch continues"));
                      setTimeout(() => setToast(null), 3500); pull(); })
       .catch(() => setToast(t("⚠️ 요청 실패", "⚠️ request failed")))
@@ -139,8 +153,103 @@ export default function ApprovePage() {
       {z.zone === "buy" ? t(`매수구간 ${z.pos}%`, `BUY zone ${z.pos}%`) : z.zone === "sell" ? t(`매도구간 ${z.pos}%`, `SELL zone ${z.pos}%`) : t(`중간 ${z.pos}%`, `mid ${z.pos}%`)}
     </span>);
 
+  // ─ THE LEFT-GAP AGENT RAIL (boss 2026-09-03: "between the left side menu and
+  //   our main part there is a gap - in this part we should show how our agent
+  //   is working: checklist, one by one, most important first - gap-up or not,
+  //   increasing or decreasing, buying or selling zone, then the other items of
+  //   the 100 checklist - then the popup when it satisfies. So easy school boys
+  //   can understand. Main goal: showing REAL-TIME work, not a static result.")
+  //   One stock at a time, one check per beat, stops at the first red gate.
+  const GICO = ["📈", "📊", "🗓", "🔺", "🎯", "📰"];
+  const rail = (() => {
+    const uni = [...(brain?.six || []), ...(brain?.universe || [])];
+    if (!uni.length) return null;
+    // each stock owns (checks until first ✗) + a "94 more items" beat when clean
+    // + one verdict beat; the walk loops the whole universe forever
+    const durs = uni.map((u) => {
+      const b = u.gates.findIndex((g) => g.bad);
+      return (b < 0 ? u.gates.length + 1 : b + 1) + 1;
+    });
+    const total = durs.reduce((a, b) => a + b, 0) || 1;
+    let k = railTick % total, si = 0;
+    while (k >= durs[si]) { k -= durs[si]; si++; }
+    const u = uni[si];
+    const badIdx = u.gates.findIndex((g) => g.bad);
+    const clean = badIdx < 0;
+    const verdictBeat = k === durs[si] - 1;
+    const extraBeat = clean && k === u.gates.length;      // "…94 more items"
+    const nChecks = Math.min(k + 1, clean ? u.gates.length : badIdx + 1);
+    return { uni, si, u, badIdx, clean, verdictBeat, extraBeat, nChecks };
+  })();
+
   return (
-    <div style={{ maxWidth: 1080, margin: "0 auto", padding: 16, fontFamily: "inherit" }}>
+    <div style={{ display: "flex", alignItems: "flex-start" }}>
+      {/* the rail is ALWAYS mounted — even before first data it shows the agent waking */}
+      <div className="agent-rail"
+           style={{ flex: "0 0 236px", position: "sticky", top: 8, margin: "16px 0 16px 10px",
+                    border: "2px solid #6a1b9a", borderRadius: 12, padding: "12px 12px",
+                    background: "rgba(106,27,154,0.06)", fontSize: 12.5 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <span style={{ fontSize: 18 }}>🤖</span>
+          <b style={{ color: "#6a1b9a", fontSize: 13.5 }}>{t("에이전트 작업 중", "Agent working")}</b>
+          <span style={{ width: 8, height: 8, borderRadius: 99, background: "#e53935",
+                         animation: "railPulse 1s infinite" }} />
+          <span style={{ fontSize: 10, fontWeight: 800, color: "#e53935" }}>LIVE</span>
+        </div>
+        {!rail && (
+          <div style={{ marginTop: 10, opacity: 0.75, lineHeight: 1.6 }}>
+            {t("깨어나는 중 — 전 종목 1년 데이터를 읽고 있어요",
+               "Waking up — reading a year of data for every stock")}{".".repeat((railTick % 3) + 1)}
+          </div>)}
+        {rail && (
+          <div style={{ marginTop: 9 }}>
+            <div style={{ fontSize: 14, fontWeight: 900 }}>
+              🔍 {rail.u.name}
+              <span style={{ fontSize: 10.5, fontWeight: 600, opacity: 0.6, marginLeft: 6 }}>
+                {rail.si + 1}/{rail.uni.length}</span>
+            </div>
+            <div style={{ marginTop: 6 }}>
+              {rail.u.gates.slice(0, rail.nChecks).map((g, i) => (
+                <div key={i} style={{ padding: "3px 0", lineHeight: 1.4,
+                                      animation: "fadeIn .3s ease both",
+                                      color: g.bad ? "#c62828" : "#2e7d32",
+                                      fontWeight: g.bad ? 800 : 600 }}>
+                  {g.bad ? "✗" : "✓"} {GICO[i] || "📋"} {t(g.k, g.en)}
+                  <span style={{ marginLeft: 5, opacity: 0.85, fontWeight: 700 }}>{g.v}</span>
+                </div>))}
+              {rail.extraBeat && !rail.verdictBeat && (
+                <div style={{ padding: "3px 0", color: "#2e7d32", fontWeight: 600,
+                              animation: "fadeIn .3s ease both" }}>
+                  ⏳ 📋 {t("나머지 체크리스트 94개 검사 중…", "checking the other 94 checklist items…")}
+                </div>)}
+              {!rail.verdictBeat && !rail.extraBeat && rail.nChecks < (rail.clean ? rail.u.gates.length : rail.badIdx + 1) + 1 && (
+                <div style={{ padding: "3px 0", opacity: 0.55 }}>
+                  ⏳ {t("다음 검사", "next check")}{".".repeat((railTick % 3) + 1)}</div>)}
+              {rail.verdictBeat && (rail.clean
+                ? <div style={{ marginTop: 5, padding: "6px 8px", borderRadius: 8, fontWeight: 900,
+                                background: "rgba(106,27,154,0.15)", color: "#6a1b9a",
+                                animation: "fadeIn .3s ease both" }}>
+                    🎉 {t("모든 관문 통과! 기회가 오면 → 팝업", "All gates passed! On a chance → popup")}
+                  </div>
+                : <div style={{ marginTop: 5, padding: "6px 8px", borderRadius: 8, fontWeight: 900,
+                                background: "rgba(198,40,40,0.12)", color: "#c62828",
+                                animation: "fadeIn .3s ease both" }}>
+                    ⛔ {t(rail.u.no_buy_short || "매수 금지", rail.u.no_buy_short_en || "NO BUY")}
+                  </div>)}
+            </div>
+            <div style={{ marginTop: 9, borderTop: "1px dashed rgba(106,27,154,0.4)",
+                          paddingTop: 6, fontSize: 10.5, opacity: 0.65, lineHeight: 1.5 }}>
+              {t("다음 차례: ", "next up: ")}
+              {rail.uni.slice(rail.si + 1, rail.si + 4).map((x) => x.name).join(" · ")
+                || rail.uni.slice(0, 3).map((x) => x.name).join(" · ")}
+            </div>
+          </div>)}
+        <style>{`@keyframes railPulse{0%,100%{opacity:1}50%{opacity:.25}}
+                 @media (max-width:1180px){.agent-rail{display:none!important}}`}</style>
+      </div>
+
+      <div style={{ maxWidth: 1080, margin: "0 auto", padding: 16, fontFamily: "inherit",
+                    flex: 1, minWidth: 0 }}>
       <div style={{ fontSize: 11.5, marginBottom: 6, display: "flex", gap: 12, opacity: 0.85 }}>
         <a href="/testing" style={{ color: "inherit" }}>{t("← 모의투자 메뉴", "← Paper Trading menu")}</a>
         <a href="/testing/live" style={{ color: "#00838f" }}>{t("📡 메뉴1 실시간 키움", "📡 Menu 1 Live Kiwoom")}</a>
@@ -155,7 +264,18 @@ export default function ApprovePage() {
         {feed && <span style={{ marginLeft: 8 }}>{feed.market_open ? t("🟢 장중", "🟢 market open") : t("🌙 장 마감 — 제안은 장중에만 나옵니다", "🌙 market closed — proposals come only in market hours")}</span>}
       </div>
 
-      {/* ─ THE AGENT, above the rooms, working on ALL stocks at once ─ */}
+      {/* ─ THE AGENT, above the rooms, working on ALL stocks at once —
+            ALWAYS mounted: before first data it says so instead of vanishing ─ */}
+      {!brain?.ok && (
+        <div style={{ margin: "12px 0", padding: "14px 16px", borderRadius: 12,
+                      border: "2px solid #6a1b9a", background: "rgba(106,27,154,0.05)" }}>
+          <span style={{ fontSize: 20 }}>🤖</span>{" "}
+          <b style={{ fontSize: 15, color: "#6a1b9a" }}>
+            {t("에이전트가 깨어나는 중 — 전 종목 검사 데이터를 준비하고 있어요",
+               "The agent is waking up — preparing inspection data for every stock")}
+            {".".repeat((thinkIdx % 3) + 1)}
+          </b>
+        </div>)}
       {brain?.ok && (() => {
         const uni = [...(brain.six || []), ...(brain.universe || [])];
         // THE PHASE SWEEP (boss 2026-09-03 09:0x: "like when we ask ChatGPT it
@@ -339,7 +459,9 @@ export default function ApprovePage() {
               {rows.map((l, i) => (
                 <div key={i} style={{ fontSize: 12, padding: "2px 0", opacity: 0.9 }}>
                   {l.at} · {l.side === "BUY" ? t("🔴 매수", "🔴 BUY") : t("🔵 매도", "🔵 SELL")} {l.qty.toLocaleString()}{t("주", " sh")}
-                  — <b>{t(l.decision, l.decision === "승인" ? "approved" : "cancelled")}</b>{l.fill ? ` @ ${W(l.fill)}` : ""}</div>))}
+                  — <b>{t(l.decision, l.decision === "승인" ? "approved" : "cancelled")}</b>{l.fill ? ` @ ${W(l.fill)}` : ""}
+                  {l.decision === "승인" && l.dealt === false &&
+                    <b style={{ color: "#e6a817", marginLeft: 5 }}>{t("🕐 미체결", "🕐 not dealt")}</b>}</div>))}
             </div>);
           })()}
         </div>
@@ -379,7 +501,7 @@ export default function ApprovePage() {
               {t("아직 기록 없음 — 장중에 제안이 오고 결정을 내리면 전부 여기 쌓입니다.", "No records yet — proposals arrive in market hours; every decision builds here.")}</div>
           : <table style={{ width: "100%", fontSize: 12.5, marginTop: 6, borderCollapse: "collapse" }}>
               <thead><tr style={{ opacity: 0.6, textAlign: "left" }}>
-                <th>{t("시각", "Time")}</th><th>{t("구분", "Side")}</th><th>{t("종목", "Stock")}</th><th>{t("수량", "Qty")}</th><th>{t("제안가", "Proposed")}</th><th>{t("결정", "Decision")}</th><th>{t("체결가", "Fill")}</th></tr></thead>
+                <th>{t("시각", "Time")}</th><th>{t("구분", "Side")}</th><th>{t("종목", "Stock")}</th><th>{t("수량", "Qty")}</th><th>{t("제안가", "Proposed")}</th><th>{t("결정", "Decision")}</th><th>{t("체결 여부", "Dealt?")}</th><th>{t("체결가", "Fill")}</th></tr></thead>
               <tbody>{feed!.log.slice(0, 25).map((l, i) => (
                 <tr key={i} style={{ borderTop: "1px solid rgba(128,128,128,0.2)" }}>
                   <td style={{ padding: "4px 0", opacity: 0.7 }}>{l.at}</td>
@@ -388,6 +510,14 @@ export default function ApprovePage() {
                   <td><b>{l.name}</b></td><td>{l.qty.toLocaleString()}{t("주", "")}</td>
                   <td>{W(l.price)}</td>
                   <td style={{ fontWeight: 700 }}>{t(l.decision, l.decision === "승인" ? "approved" : "cancelled")}</td>
+                  {/* dealt or not (boss 2026-09-03: a limit offer may never fill) */}
+                  <td style={{ fontWeight: 700 }}>
+                    {l.decision !== "승인" ? <span style={{ opacity: 0.5 }}>—</span>
+                     : (l.dealt === false)
+                       ? <span style={{ color: "#e6a817" }}>{t("🕐 미체결", "🕐 not dealt")}</span>
+                       : (l.dealt === true || l.fill)
+                         ? <span style={{ color: "#2e7d32" }}>{t("✅ 체결", "✅ dealt")}</span>
+                         : <span style={{ opacity: 0.5 }}>—</span>}</td>
                   <td>{l.fill ? W(l.fill) : "-"}</td></tr>))}</tbody>
             </table>}
       </div>
@@ -410,43 +540,53 @@ export default function ApprovePage() {
             setEdits((m) => ({ ...m, [p.id]: { ...(m[p.id] || {}), [k]: v } }));
           const inp: React.CSSProperties = {
             width: "100%", padding: "7px 9px", borderRadius: 7, fontSize: 14,
-            fontWeight: 800, textAlign: "right", background: "#12161d",
-            color: "#fff", border: "1.5px solid #55606e" };
+            fontWeight: 800, textAlign: "right", background: "#f6f8fa",
+            color: "#12161b", border: "2px solid #9aa5b1" };
           return (
           <div key={p.id} style={{ border: `2px solid ${p.side === "BUY" ? "#e53935" : "#1e88e5"}`,
-                                   borderRadius: 12, padding: 13, background: "#1b2027",
-                                   color: "#fff",
-                                   boxShadow: "0 8px 28px rgba(0,0,0,0.55)" }}>
+                                   borderRadius: 12, padding: 13, background: "#ffffff",
+                                   color: "#12161b",
+                                   boxShadow: "0 10px 32px rgba(0,0,0,0.35)" }}>
             <div style={{ fontWeight: 900, fontSize: 15,
-                          color: p.side === "BUY" ? "#ff6b66" : "#5aa9f0" }}>
+                          color: p.side === "BUY" ? "#c62828" : "#1565c0" }}>
               {p.side === "BUY" ? t("🔴 매수 제안", "🔴 BUY proposal") : t("🔵 매도 제안", "🔵 SELL proposal")} — {p.name}
-              <span style={{ float: "right", fontSize: 11, opacity: 0.7, color: "#fff" }}>{p.hhmm}</span>
+              <span style={{ float: "right", fontSize: 11.5, fontWeight: 700, color: "#5b6570" }}>{p.hhmm}</span>
             </div>
-            <ul style={{ margin: "7px 0 9px 16px", padding: 0, color: "#e8ecf1" }}>
-              {(t("k", "e") === "k" ? p.reasons : (p.reasons_en || p.reasons)).map((x, i2) => (
-                <li key={i2} style={{ fontSize: 12.3, margin: "3px 0", lineHeight: 1.45 }}>{x}</li>))}
+            <ul style={{ margin: "7px 0 9px 15px", padding: 0, color: "#22282f" }}>
+              {(t("k", "e") === "k" ? p.reasons : (p.reasons_en || p.reasons)).map((x, i2) => {
+                // the label before the dash carries the point - bold it so the room
+                // reads the WHY at a glance (boss 2026-09-03 11:0x: "background
+                // white to easily read, important facts in bold letter")
+                const cut = x.indexOf("—") >= 0 ? x.indexOf("—") : x.indexOf(" - ");
+                const head = cut > 0 ? x.slice(0, cut) : "";
+                const tail = cut > 0 ? x.slice(cut) : x;
+                return (
+                  <li key={i2} style={{ fontSize: 12.6, margin: "4px 0", lineHeight: 1.5 }}>
+                    {head && <b style={{ color: "#12161b" }}>{head}</b>}{tail}
+                  </li>);
+              })}
             </ul>
             {/* editable numbers */}
             <div style={{ display: "flex", gap: 8, marginBottom: 9 }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 3 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: "#5b6570", marginBottom: 3 }}>
                   {t("가격 (수정 가능)", "Price (editable)")}</div>
                 <input type="number" style={inp} value={pv}
                   onChange={(e) => set("price", Number(e.target.value))} />
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 3 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: "#5b6570", marginBottom: 3 }}>
                   {t("수량 (수정 가능)", "Quantity (editable)")}</div>
                 <input type="number" style={inp} value={qv}
                   onChange={(e) => set("qty", Number(e.target.value))} />
               </div>
             </div>
-            <div style={{ fontSize: 12.5, marginBottom: 9, color: "#cfd6de" }}>
-              {t("합계 ", "Total ")}<b style={{ color: "#fff" }}>{W(Math.round(pv * qv))}</b>
-              {changed && <b style={{ marginLeft: 8, color: "#ffc046" }}>
+            <div style={{ fontSize: 13, marginBottom: 9, color: "#3c4753" }}>
+              {t("합계 ", "Total ")}<b style={{ color: "#12161b", fontSize: 14 }}>{W(Math.round(pv * qv))}</b>
+              {changed && <b style={{ marginLeft: 8, color: "#b26a00" }}>
                 {t("· 수정됨 (에이전트 제안: ", "· edited (agent proposed ")}
                 {W(p.price)} × {p.qty.toLocaleString()}{t("주)", ")")}</b>}
-              {p.score != null && <span style={{ marginLeft: 8, color: "#e6a817" }}>
+              {p.score != null && <span style={{ marginLeft: 8, fontWeight: 700, color: "#8a6100" }}>
                 {t("체크리스트 ", "checklist ")}{p.score}{t("점", " pts")}</span>}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
@@ -456,14 +596,15 @@ export default function ApprovePage() {
                 {t("✅ 승인", "✅ APPROVE")}</button>
               <button disabled={busy === p.id} onClick={() => decide(p.id, false)}
                 style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontWeight: 800, fontSize: 14,
-                         border: "2px solid #8a94a3", background: "#4a515b",
-                         color: "#fff", cursor: "pointer" }}>
+                         border: "2px solid #6b7684", background: "#e9edf1",
+                         color: "#22282f", cursor: "pointer" }}>
                 {t("✖ 취소", "✖ CANCEL")}</button>
             </div>
           </div>);
         })}
         {toast && <div style={{ borderRadius: 10, padding: "10px 12px", fontSize: 13,
                                 background: "#333", color: "#fff" }}>{toast}</div>}
+      </div>
       </div>
     </div>
   );
