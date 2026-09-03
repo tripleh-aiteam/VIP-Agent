@@ -165,11 +165,45 @@ def apply_rows(rows: list, day8: str) -> list:
                                 r2["won"] = round(float(r2["won"])
                                                   + (old_px - float(px9)) * sold_q)
                         else:
+                            # the header exit price follows its own leg - it was
+                            # left on the OLD price, so the table showed one
+                            # price on the ▼ line and another in the header
+                            if float(r2.get("exit") or 0) == old_px:
+                                r2["exit"] = float(px9)
                             q9 = next((int(x[1] or 0) for x in new_arr
                                        if str(x[2] or "")[:5] == e["to"]), 0)
                             if r2.get("won") is not None and q9:
                                 r2["won"] = round(float(r2["won"])
                                                   + (float(px9) - old_px) * q9)
+        if r2 is not r:
+            # THE PERCENTAGE MUST FOLLOW THE PRICE (audit 2026-09-03: the
+            # 한국항공우주 10:15->09:25 edit moved the entry to 122,000 and the
+            # money to +110,557,300 won, but net_pct kept the ORIGINAL trade's
+            # -1.263 and result kept "loss" - so the board printed a red LOSS on
+            # a row whose own two prices read +2.05%. The edit already decides
+            # the prices; the percentage is not an independent fact and may not
+            # disagree with them.)
+            _prt = r2.get("parts") or {}
+            _sl9 = _prt.get("sells") or []
+            _g9 = None
+            if r2.get("partial") and _sl9:
+                _w9 = _c9 = 0.0
+                for _s9 in _sl9:
+                    if len(_s9) > 6 and _s9[6]:
+                        _b9, _q9 = float(_s9[6]), int(_s9[1] or 0)
+                        _w9 += (float(_s9[0]) - _b9) * _q9
+                        _c9 += _b9 * _q9
+                if _c9:
+                    _g9 = _w9 / _c9 * 100
+            else:
+                _e9, _x9 = float(r2.get("entry") or 0), float(r2.get("exit") or 0)
+                if _e9 and _x9:
+                    _g9 = (_x9 / _e9 - 1) * 100
+            if _g9 is not None and r2.get("net_pct") is not None:
+                _n9 = round(_g9 - 0.23, 3)
+                r2["gross_pct"] = round(_g9, 3)
+                r2["net_pct"] = _n9
+                r2["result"] = "win" if _n9 > 0 else "loss" if _n9 < 0 else "flat"
         out.append(r2)
     return out
 

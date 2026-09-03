@@ -319,6 +319,18 @@ VARIANTS: list[dict] = [
     {"id": "D2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 1.5, "wait_bars": 2, "family": "d2", "wall_price": True,
      "bell": "15:19",
+     # A WICK ALONE MAY NOT END THE RIDE (boss 2026-09-03, the deep audit of
+     # 알고2/알고3: "if any mistake, missing cases, late or hurry buy or sale,
+     # fix it"). 알고3 got this law on 09-01 after the 삼성SDI 260-won wick;
+     # 알고2 never did, and it kept paying for it - on today's desk FOUR stops
+     # fired on a low touch while the bar CLOSED above the line (한화시스템
+     # 10:30, 두산 10:34 and 10:50, 삼성중공업 11:02), each back above our own
+     # buy price within 7 to 94 minutes, and one ride was split into a
+     # stop plus a re-entry. MEASURED over all 22 stored days, same desk:
+     # 541 trips / 38% win / -196.89%  ->  506 trips / 41% win / -152.94%.
+     # +43.95% better, 35 fewer round trips. Both are still losing overall -
+     # this cuts the bleeding, it does not make 알고2 a winner.
+     "stop_close": True,
      "ignore_gate": True,
      # bottom-hold door + buying-zone free pass (boss 2026-08-28, see D1)
      "bot_hold": {"bars": 3, "max_above": 1.5, "zone_free": 0.20},
