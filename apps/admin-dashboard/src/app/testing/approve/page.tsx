@@ -14,7 +14,8 @@ type Room = { code: string; name: string; score?: number | null; price?: number 
               pnl?: number | null };
 type Sug = { id: number; hhmm: string; code: string; name: string; side: "BUY" | "SELL";
              reasons: string[]; reasons_en?: string[]; price: number; qty: number; score?: number | null };
-type LogRow = Sug & { decision: string; fill?: number | null; at: string; dealt?: boolean };
+type LogRow = Sug & { decision: string; fill?: number | null; at: string; dealt?: boolean;
+                      gave_up?: boolean; giveup_note?: string };
 type Feed = { ok: boolean; market_open: boolean; rooms: Room[]; pending: Sug[];
               held: { code: string; name: string; qty: number; price: number; at: string }[];
               log: LogRow[] };
@@ -65,8 +66,14 @@ export default function ApprovePage() {
   type BrainRow = { code: string; name: string; score?: number; gates: Gate[];
                     pass: boolean; no_buy?: string | null; no_buy_en?: string | null;
                     no_buy_short?: string | null; no_buy_short_en?: string | null;
-                    blocked_n?: number; chosen?: boolean };
-  type Brain = { ok: boolean; universe: BrainRow[]; six: BrainRow[]; five: string[] };
+                    blocked_n?: number; chosen?: boolean; verdict?: string; tradeable?: boolean };
+  type SellChk = { k: string; en: string; v: string; hit?: boolean; hold?: boolean };
+  type SellRow = { code: string; name: string; buy_t: string; base: number; px: number;
+                   pnl: number; peak: number; from_peak: number; qty?: number;
+                   checks: SellChk[]; patience: SellChk[]; verdict: string;
+                   why: string; why_en: string };
+  type Brain = { ok: boolean; universe: BrainRow[]; six: BrainRow[]; five: string[];
+                 selling?: SellRow[]; universe_n?: number; computing?: boolean };
   const [brain, setBrain] = useState<Brain | null>(null);
   const [thinkIdx, setThinkIdx] = useState(0);
   const [edits, setEdits] = useState<Record<number, { qty?: number; price?: number }>>({});
@@ -264,126 +271,137 @@ export default function ApprovePage() {
         {feed && <span style={{ marginLeft: 8 }}>{feed.market_open ? t("🟢 장중", "🟢 market open") : t("🌙 장 마감 — 제안은 장중에만 나옵니다", "🌙 market closed — proposals come only in market hours")}</span>}
       </div>
 
-      {/* ─ THE AGENT, above the rooms, working on ALL stocks at once —
-            ALWAYS mounted: before first data it says so instead of vanishing ─ */}
-      {!brain?.ok && (
-        <div style={{ margin: "12px 0", padding: "14px 16px", borderRadius: 12,
-                      border: "2px solid #6a1b9a", background: "rgba(106,27,154,0.05)" }}>
-          <span style={{ fontSize: 20 }}>🤖</span>{" "}
-          <b style={{ fontSize: 15, color: "#6a1b9a" }}>
-            {t("에이전트가 깨어나는 중 — 전 종목 검사 데이터를 준비하고 있어요",
-               "The agent is waking up — preparing inspection data for every stock")}
-            {".".repeat((thinkIdx % 3) + 1)}
-          </b>
-        </div>)}
-      {brain?.ok && (() => {
-        const uni = [...(brain.six || []), ...(brain.universe || [])];
-        // THE PHASE SWEEP (boss 2026-09-03 09:0x: "like when we ask ChatGPT it
-        // says thinking… searching… preparing… - and show the agent checks ALL
-        // stocks in parallel, not one by one"). The old cursor walked a single
-        // stock per beat, which showed the opposite of parallel. Now the agent
-        // announces ONE GATE and every stock is judged by it simultaneously.
+      {/* ─ THE AGENT: PART 1 BUYING, PART 2 SELLING ─ */}
+      {brain?.ok && !brain.computing && (() => {
+        const all = [...(brain.six || []), ...(brain.universe || [])];
+        const sixSet = new Set((brain.six || []).map((x) => x.code));
+        // TRULY PARALLEL (boss 2026-09-03 11:3x: "people think it is analyzing
+        // one by one, so they think we are late to buy or sell"). All twenty
+        // carry their full verdict at all times; the sweep only HIGHLIGHTS one
+        // gate across an already-judged board, so nothing waits its turn.
         const PH = [
-          { k: "갭상승 검사 중", en: "Checking gap-up opens", g: 0, ico: "📈" },
-          { k: "1개월 평균선과 비교 중", en: "Comparing to the 1-month average", g: 1, ico: "📊" },
-          { k: "1년 평균선과 비교 중", en: "Comparing to the 1-year average", g: 2, ico: "🗓" },
-          { k: "연속 상승 여부 확인 중", en: "Checking for an already-rising run", g: 3, ico: "🔺" },
-          { k: "1년 구간(매수/매도존) 판정 중", en: "Judging the 1-year zone", g: 4, ico: "🎯" },
-          { k: "위험 뉴스 스캔 중", en: "Scanning for danger news", g: 5, ico: "📰" },
-          { k: "최적 5종목 선정 중", en: "Selecting the best five", g: -1, ico: "🏆" },
+          { k: "갭상승", en: "gap-up", g: 0 },
+          { k: "1개월 평균", en: "1-month avg", g: 1 },
+          { k: "1년 평균", en: "1-year avg", g: 2 },
+          { k: "연속 상승", en: "rising run", g: 3 },
+          { k: "1년 구간", en: "year zone", g: 4 },
+          { k: "위험 뉴스", en: "danger news", g: 5 },
         ];
         const ph = PH[thinkIdx % PH.length];
         const dots = ".".repeat((thinkIdx % 3) + 1);
-        const isFinal = ph.g < 0;
-        const failed = isFinal ? [] : uni.filter((u) => u.gates[ph.g]?.bad);
+        const buys = all.filter((x) => x.verdict === "BUY").length;
+        const sells = brain.selling || [];
         return (
-          <div style={{ margin: "12px 0", padding: "14px 16px", borderRadius: 12,
-                        border: "2px solid #6a1b9a", background: "rgba(106,27,154,0.05)" }}>
-            {/* the status line, the way an assistant narrates itself */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 20 }}>🤖</span>
-              <b style={{ fontSize: 16, color: "#6a1b9a" }}>
-                {ph.ico} {t(ph.k, ph.en)}{dots}
-              </b>
-              <span style={{ fontSize: 12.5, fontWeight: 700, padding: "2px 10px",
-                             borderRadius: 999, background: "#6a1b9a", color: "#fff" }}>
-                {t(`${uni.length}개 종목 동시 검사`, `${uni.length} stocks in parallel`)}
-              </span>
-              {!isFinal && failed.length > 0 && (
-                <span style={{ fontSize: 13, fontWeight: 800, color: "#c62828" }}>
-                  {t(`${failed.length}개 탈락`, `${failed.length} rejected`)}
-                </span>
-              )}
-            </div>
-            {/* every stock, judged together, right now */}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 11 }}>
-              {uni.map((u, n) => {
-                const g = isFinal ? null : u.gates[ph.g];
-                const bad = isFinal ? !u.pass : !!g?.bad;
-                const win = isFinal && (brain.five || []).includes(u.name);
-                return (
-                  <span key={u.code}
-                    title={u.gates.map((x) =>
-                        (x.bad ? "✗ " : "✓ ") + t(x.k, x.en) + " " + x.v
-                        + (x.bad ? "  → " + t(x.why || "", x.why_en || "") : "")
-                      ).join(" | ")}
-                    style={{
-                      fontSize: 11.5, padding: "4px 9px", borderRadius: 7,
-                      fontWeight: bad ? 800 : 600,
-                      animation: `fadeIn .35s ease ${(n % 12) * 0.03}s both`,
-                      border: `1.5px solid ${win ? "#6a1b9a" : bad ? "#c62828" : "#2e7d32"}`,
-                      background: win ? "#6a1b9a" : bad ? "rgba(198,40,40,0.10)" : "rgba(46,125,50,0.08)",
-                      color: win ? "#fff" : bad ? "#c62828" : "#2e7d32",
-                    }}>
-                    {win ? "🏆 " : bad ? "✗ " : "✓ "}{u.name}
-                    <b style={{ marginLeft: 5, opacity: 0.9 }}>{isFinal ? (u.score ?? "") : g?.v}</b>
-                  </span>
-                );
-              })}
-            </div>
-            {/* the sentence for whoever the current gate just rejected */}
-            {!isFinal && failed.length > 0 && (
-              <div style={{ marginTop: 9, fontSize: 12.5, color: "#c62828",
-                            fontWeight: 600, lineHeight: 1.5 }}>
-                ✗ <b>{failed[thinkIdx % failed.length].name}</b> —{" "}
-                {t(failed[thinkIdx % failed.length].gates[ph.g]?.why || "",
-                   failed[thinkIdx % failed.length].gates[ph.g]?.why_en || "")}
+          <div style={{ margin: "12px 0 16px" }}>
+            <div style={{ padding: "13px 15px", borderRadius: 12,
+                          border: "2px solid #6a1b9a", background: "rgba(106,27,154,0.05)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 20 }}>🤖</span>
+                <b style={{ fontSize: 15.5 }}>{t("1부 · 무엇을 살까", "PART 1 · WHAT TO BUY")}</b>
+                <span style={{ fontSize: 12.5, fontWeight: 800, padding: "3px 11px",
+                               borderRadius: 999, background: "#6a1b9a", color: "#fff" }}>
+                  {t(`${all.length}종목 동시 검사`, `all ${all.length} at once`)}</span>
+                <b style={{ fontSize: 13, color: "#6a1b9a" }}>
+                  {t(`지금 보는 관문: ${ph.k}`, `highlighting: ${ph.en}`)}{dots}</b>
+                <span style={{ fontSize: 13, fontWeight: 800, color: "#2e7d32" }}>
+                  🟢 {t("매수 가능", "BUY")} {buys}</span>
+                <span style={{ fontSize: 13, fontWeight: 800, color: "#b26a00" }}>
+                  🟠 {t("대기", "WAIT")} {all.length - buys}</span>
               </div>
-            )}
-            {/* the six, called out by name when they are barred */}
-            {(brain.six || []).some((x) => !x.pass) && (
-              <div style={{ marginTop: 11, padding: "9px 11px", borderRadius: 8,
-                            border: "2px solid #c62828", background: "rgba(198,40,40,0.07)" }}>
-                <b style={{ color: "#c62828", fontSize: 13.5 }}>
-                  ⛔ {t("고정 6종목 중 매수 금지", "NO BUY among the fixed six")}
-                </b>
-                {(brain.six || []).filter((x) => !x.pass).map((x) => (
-                  <div key={x.code} style={{ fontSize: 13, marginTop: 6, lineHeight: 1.5 }}>
-                    {/* the VERDICT first, short and bold (boss 2026-09-03: "first
-                        sentence should be very short"); the lesson underneath */}
-                    <b style={{ color: "#c62828", fontSize: 14.5 }}>NO BUY! {x.name}</b>
-                    <b style={{ marginLeft: 8, fontSize: 13.5 }}>
-                      — {t(x.no_buy_short || "", x.no_buy_short_en || x.no_buy_short || "")}</b>
-                    <div style={{ fontSize: 12, opacity: 0.8, marginLeft: 2, marginTop: 1 }}>
-                      {t(x.no_buy || "", x.no_buy_en || x.no_buy || "")}</div>
-                  </div>
-                ))}
+              <div style={{ display: "grid", gap: 7, marginTop: 11,
+                            gridTemplateColumns: "repeat(auto-fill,minmax(234px,1fr))" }}>
+                {all.map((u) => {
+                  const ok = u.verdict === "BUY";
+                  const g = u.gates[ph.g];
+                  return (
+                    <div key={u.code} style={{
+                        border: `2px solid ${ok ? "#2e7d32" : "#c62828"}`, borderRadius: 9,
+                        padding: "8px 9px",
+                        background: ok ? "rgba(46,125,50,0.07)" : "rgba(198,40,40,0.06)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                        <b style={{ fontSize: 13 }}>{sixSet.has(u.code) ? "📌 " : ""}{u.name}</b>
+                        <b style={{ fontSize: 12.5, color: ok ? "#2e7d32" : "#c62828" }}>
+                          {ok ? t("🟢 매수", "🟢 BUY") : t("🟠 대기", "🟠 WAIT")}</b>
+                      </div>
+                      <div style={{ display: "flex", gap: 3, flexWrap: "wrap", margin: "5px 0 4px" }}>
+                        {u.gates.map((x, n) => (
+                          <span key={n} title={t(x.k, x.en) + " " + x.v}
+                            style={{ fontSize: 9.5, padding: "1px 5px", borderRadius: 4,
+                              fontWeight: n === ph.g ? 800 : 600,
+                              outline: n === ph.g ? "2px solid #6a1b9a" : "none",
+                              background: x.bad ? "rgba(198,40,40,0.16)" : "rgba(46,125,50,0.16)",
+                              color: x.bad ? "#c62828" : "#2e7d32" }}>
+                            {x.bad ? "✗" : "✓"}{t(x.k, x.en)}</span>))}
+                      </div>
+                      <div style={{ fontSize: 10.5, opacity: 0.85 }}>
+                        {t("100 체크리스트", "checklist")} <b>{u.score}</b>
+                        {g && <span style={{ marginLeft: 6 }}>· {t(ph.k, ph.en)} <b>{g.v}</b></span>}
+                      </div>
+                      {!ok && <div style={{ fontSize: 10.5, color: "#c62828", marginTop: 3,
+                                            fontWeight: 700, lineHeight: 1.35 }}>
+                        {t(u.no_buy || "", u.no_buy_en || u.no_buy || "")}</div>}
+                    </div>);
+                })}
               </div>
-            )}
-            <div style={{ marginTop: 11, fontSize: 13.5 }}>
-              <b>🏆 {t("현재 최적 5종목", "the current best five")}:</b>{" "}
-              {(brain.five || []).map((n2, i2) => (
-                <span key={i2} style={{ margin: "0 4px", padding: "4px 11px", borderRadius: 999,
-                    background: "#6a1b9a", color: "#fff", fontSize: 13, fontWeight: 800 }}>{n2}</span>
-              ))}
-              <span style={{ marginLeft: 6, fontSize: 11.5, opacity: 0.65 }}>
-                {t("장중 4초마다 다시 선정 — 고정 6종목은 항상 유지",
-                   "re-chosen every 4s through the session — the fixed six always stay")}
-              </span>
+              <div style={{ marginTop: 10, fontSize: 13.5 }}>
+                <b>🏆 {t("오늘의 5종목", "today’s five")}:</b>{" "}
+                {(brain.five || []).map((n2, i2) => (
+                  <span key={i2} style={{ margin: "0 4px", padding: "4px 11px", borderRadius: 999,
+                      background: "#6a1b9a", color: "#fff", fontSize: 13, fontWeight: 800 }}>{n2}</span>))}
+                <span style={{ marginLeft: 6, fontSize: 11.5, opacity: 0.65 }}>
+                  {t("고정 6종목 📌 + 에이전트가 고른 5종목",
+                     "the fixed six 📌 + the five the agent picked")}</span>
+              </div>
             </div>
-            <style>{`@keyframes fadeIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}`}</style>
-          </div>
-        );
+            <div style={{ marginTop: 12, padding: "13px 15px", borderRadius: 12,
+                          border: "2px solid #1565c0", background: "rgba(21,101,192,0.05)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 20 }}>🤖</span>
+                <b style={{ fontSize: 15.5 }}>{t("2부 · 언제 팔까", "PART 2 · WHEN TO SELL")}</b>
+                <span style={{ fontSize: 12.5, fontWeight: 800, padding: "3px 11px",
+                               borderRadius: 999, background: "#1565c0", color: "#fff" }}>
+                  {t(`보유 ${sells.length}종목 동시 감시`, `watching all ${sells.length} holdings`)}</span>
+                <span style={{ fontSize: 12, opacity: 0.75 }}>
+                  {t("같은 에이전트의 두 번째 일 — 매도 규칙 4가지 + 인내 규칙 2가지",
+                     "the same agent’s second job — 4 exit rules + 2 patience rules")}</span>
+              </div>
+              {sells.length === 0 && (
+                <div style={{ marginTop: 9, fontSize: 13, opacity: 0.7 }}>
+                  {t("보유 중인 종목이 없습니다.", "No open positions to watch.")}</div>)}
+              <div style={{ display: "grid", gap: 7, marginTop: 11,
+                            gridTemplateColumns: "repeat(auto-fill,minmax(270px,1fr))" }}>
+                {sells.map((r) => {
+                  const doSell = r.verdict === "SELL";
+                  return (
+                    <div key={r.code} style={{
+                        border: `2px solid ${doSell ? "#1565c0" : "#2e7d32"}`, borderRadius: 9,
+                        padding: "8px 10px",
+                        background: doSell ? "rgba(21,101,192,0.08)" : "rgba(46,125,50,0.06)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                        <b style={{ fontSize: 13 }}>{r.name}</b>
+                        <b style={{ fontSize: 12.5, color: doSell ? "#1565c0" : "#2e7d32" }}>
+                          {doSell ? t("🔵 매도", "🔵 SELL") : t("🟢 보유 유지", "🟢 HOLD")}</b>
+                      </div>
+                      <div style={{ fontSize: 11, margin: "3px 0 5px", opacity: 0.85 }}>
+                        {r.buy_t} {t("매수", "in")} <b>{W(r.base)}</b> → <b>{W(r.px)}</b>{" "}
+                        <b style={{ color: r.pnl >= 0 ? "#c62828" : "#1565c0" }}>
+                          {r.pnl >= 0 ? "+" : ""}{r.pnl.toFixed(2)}%</b>
+                      </div>
+                      {[...r.checks, ...r.patience].map((c, n) => {
+                        const on = c.hit || c.hold;
+                        return (
+                          <div key={n} style={{ fontSize: 10.5, lineHeight: 1.45,
+                                                color: on ? (c.hold ? "#b26a00" : "#1565c0") : "#5b6570" }}>
+                            {on ? "●" : "○"} <b>{t(c.k, c.en)}</b> {c.v}</div>);
+                      })}
+                      <div style={{ fontSize: 11, marginTop: 4, fontWeight: 800,
+                                    color: doSell ? "#1565c0" : "#2e7d32" }}>
+                        → {t(r.why, r.why_en)}</div>
+                    </div>);
+                })}
+              </div>
+            </div>
+          </div>);
       })()}
       {/* ─ the ten rooms ─ */}
       {!feed && <div style={{ padding: "26px 0", fontSize: 13.5, opacity: 0.7 }}>
@@ -521,7 +539,10 @@ export default function ApprovePage() {
                       ? <span style={{ color: "#c62828" }}>{t("✖ 미체결 (취소)", "✖ NOT DEAL (cancelled)")}</span>
                       : (l.dealt === true || l.fill)
                         ? <span style={{ color: "#2e7d32" }}>{t("✅ 체결 완료", "✅ DEAL")}</span>
-                        : <span style={{ color: "#b26a00" }}>{t("🕐 미체결 (대기 중)", "🕐 NOT DEAL (waiting)")}</span>}</td>
+                        : l.gave_up
+                          ? <span style={{ color: "#8e24aa" }} title={l.giveup_note || ""}>
+                              {t("🏳 포기 (가격이 멀어짐)", "🏳 GAVE UP (price ran away)")}</span>
+                          : <span style={{ color: "#b26a00" }}>{t("🕐 미체결 (대기 중)", "🕐 NOT DEAL (waiting)")}</span>}</td>
                   <td>{l.fill ? W(l.fill) : "-"}</td></tr>))}</tbody>
             </table>}
       </div>

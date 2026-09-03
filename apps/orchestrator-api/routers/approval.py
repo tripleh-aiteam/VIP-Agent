@@ -212,8 +212,17 @@ def _brain_compute():
     # Restricted to the collector's set plus the fixed six: about half the work,
     # every row genuinely tradeable, and their daily lines are already warm in
     # the desk's cache.
+    # TWENTY NAMES, FIXED (boss 2026-09-03 11:3x: "lets fix number 20 - you
+    # should choose 20 stock including our 6 fixed and other popular ones and
+    # our agent should analyze in parallel"). His six always, then the highest
+    # scorers we actually collect tape for, padded to 20 from the rest so the
+    # board is a constant size the room can read at a glance.
     _keep9 = watch_codes | set(SIX)
-    rows = [r for r in rows if str(r.get("code")) in _keep9]
+    _six_rows = [r for r in rows if str(r.get("code")) in set(SIX)]
+    _hot = [r for r in rows if str(r.get("code")) in _keep9
+            and str(r.get("code")) not in set(SIX)]
+    _cold = [r for r in rows if str(r.get("code")) not in _keep9]
+    rows = (_six_rows + _hot + _cold)[:20]
     # live gap check: today's open vs yesterday's close, once bars exist
     def _gap(code):
         """Today's open vs yesterday's close, read IN-PROCESS (boss 2026-09-03
@@ -363,4 +372,96 @@ def _brain_compute():
     out["five"] = five
     # the six keep the boss's order
     out["six"].sort(key=lambda e: SIX.index(e["code"]))
+
+    # every row ends in one word the room can read: BUY or WAIT
+    for e in out["six"] + out["universe"]:
+        e["verdict"] = "BUY" if e.get("pass") else "WAIT"
+        e["tradeable"] = e["code"] in watch_codes
+    out["universe_n"] = len(out["universe"]) + len(out["six"])
+
+    # ── PART 2: THE SELLING SIDE (boss 2026-09-03 11:3x: "in case of selling
+    # also, in the holding list we have to make like this - for selling our
+    # agent needs to check conditions, we have rules for selling so you have to
+    # list them"). Same agent, second half of its work: every open ride with
+    # 알고3's four exits and the two patience laws evaluated live.
+    sell_rows = []
+    try:
+        from services.approval_desk import _algo3_board, desk_codes
+        from services.kiwoom_rules import _bars_for, _daily20, _daily_pos
+        board = _algo3_board([c for c, _n, _s in desk_codes()])
+        for code, h in (board.get("hold") or {}).items():
+            cs = _bars_for(code, 5, 60)
+            if not cs:
+                continue
+            px = float(cs[-1]["close"])
+            base = float(h.get("base") or h.get("entry") or px)
+            pnl = (px / base - 1) * 100
+            i0 = 0
+            for k, c2 in enumerate(cs):
+                if str(c2.get("hhmm") or "")[:5] >= str(h.get("buy_t") or "")[:5]:
+                    i0 = k
+                    break
+            seg = [float(c2["close"]) for c2 in cs[i0:]] or [px]
+            peak = max(seg)
+            from_peak = (px / peak - 1) * 100
+            armed = peak >= base * 1.01
+            shelf = min([float(c2["close"]) for c2 in cs[-13:-1]] or [px])
+            d20 = _daily20(code, _kd())
+            dp = _daily_pos(code, px)
+            in_buy_zone = bool((dp is not None and dp <= 0.20)
+                               or (d20[2] and px <= d20[2] * 1.005))
+            checks = [
+                {"k": "고점 대비 -1.5% (종가)", "en": "1.5% down from the peak",
+                 "v": f"{from_peak:+.2f}% (고점 ₩{peak:,.0f})",
+                 "hit": bool(armed and from_peak <= -1.5)},
+                {"k": "지지선 이탈 (12봉 최저, 이익 중)", "en": "shelf break (12-bar low, in profit)",
+                 "v": f"₩{px:,.0f} vs ₩{shelf:,.0f}",
+                 "hit": bool(px < shelf and pnl > 0.23)},
+                {"k": "-1% 손절", "en": "-1% stop",
+                 "v": f"{pnl:+.2f}%", "hit": bool(pnl <= -1.0)},
+                {"k": "15:19 마감 정리", "en": "15:19 closing sweep",
+                 "v": str(cs[-1].get("hhmm") or "")[:5], "hit": str(cs[-1].get("hhmm") or "")[:5] >= "15:19"},
+            ]
+            patience = [
+                {"k": "매수구간 인내 (1년 바닥 또는 5일 최저)",
+                 "en": "buying-zone patience (year bottom or 5-day low)",
+                 "v": ("해당 — 손절·마감 외에는 팔지 않음" if in_buy_zone else "해당 없음"),
+                 "hold": in_buy_zone},
+                {"k": "수수료 구간 금지 (0~0.23%)", "en": "fee-zone ban (0-0.23%)",
+                 "v": f"{pnl:+.2f}%", "hold": bool(0 < pnl <= 0.23)},
+            ]
+            fired = [c for c in checks if c["hit"]]
+            blocked_by = [q for q in patience if q["hold"]]
+            # patience never blocks the stop or the bell
+            hard = any(c["hit"] for c in checks if c["k"].startswith("-1%")
+                       or c["k"].startswith("15:19"))
+            do_sell = bool(fired) and (hard or not blocked_by)
+            sell_rows.append({
+                "code": code, "name": h.get("name") or code,
+                "buy_t": str(h.get("buy_t") or "")[:5],
+                "base": base, "px": px, "pnl": round(pnl, 2),
+                "peak": peak, "from_peak": round(from_peak, 2),
+                "qty": h.get("qty"),
+                "checks": checks, "patience": patience,
+                "verdict": "SELL" if do_sell else "HOLD",
+                "why": ((fired[0]["k"] if fired else "청산 조건 미충족")
+                        if do_sell else
+                        (blocked_by[0]["k"] if blocked_by and fired
+                         else "청산 조건 미충족 — 파도가 아직 살아 있습니다")),
+                "why_en": ((fired[0]["en"] if fired else "no exit condition met")
+                           if do_sell else
+                           (blocked_by[0]["en"] if blocked_by and fired
+                            else "no exit condition met - the ride is still alive")),
+            })
+    except Exception as e:
+        out["sell_err"] = str(e)[:120]
+    out["selling"] = sell_rows
     return out
+
+
+@router.get("/giveup")
+def giveup_table():
+    """THE GIVE-UP LAW table (boss 2026-09-03): per-stock price-runaway limits
+    from the year study; other stocks default to 4 ticks of their price band."""
+    from services.giveup_rule import GIVEUP_WON, DEFAULT_TICKS, table
+    return {"ok": True, "rows": table(), "default_ticks": DEFAULT_TICKS}

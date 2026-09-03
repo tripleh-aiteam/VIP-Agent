@@ -628,7 +628,7 @@ def _reconcile_fills(db, st) -> None:
         from sqlalchemy import text as _sqt
         for l in open_logs:
             row = db.execute(_sqt(
-                "SELECT status, fill_price FROM paper_desk_orders WHERE id=:i"),
+                "SELECT status, fill_price, note FROM paper_desk_orders WHERE id=:i"),
                 {"i": l["oid"]}).fetchone()
             if row and str(row[0]) == "FILLED" and row[1]:
                 l["dealt"] = True
@@ -640,5 +640,12 @@ def _reconcile_fills(db, st) -> None:
                 else:
                     st["held"] = [h for h in st.get("held") or []
                                   if h["code"] != l["code"]]
+            elif row and str(row[0]) == "CANCELLED":
+                # the GIVE-UP LAW cancelled it — price ran away past the stock's
+                # studied limit; the history shows 포기, not an eternal 미체결
+                l["gave_up"] = True
+                l["oid"] = None            # settled — stop re-checking it
+                if "포기" in str(row[2] or ""):
+                    l["giveup_note"] = str(row[2])
     except Exception as e:
         print(f"[approval] reconcile skipped: {str(e)[:80]}")

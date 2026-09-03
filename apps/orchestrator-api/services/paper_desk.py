@@ -545,6 +545,24 @@ def check_limit_orders(db) -> int:
             res = _fill(db, oid, ticker, name, side, int(qty), px)
             if res.get("status") == "FILLED":
                 fills += 1
+            continue
+        # THE GIVE-UP LAW (boss 2026-09-03: "if we offer price and it will not
+        # reach, it should give up and cancel"): once the live price runs away
+        # beyond the stock's studied give-up distance, a comeback fill is a
+        # falling knife on average — cancel instead of waiting all day.
+        try:
+            from services.giveup_rule import giveup_won, should_give_up
+            if should_give_up(side, lp, px, ticker):
+                d = giveup_won(ticker, lp)
+                db.execute(text(
+                    "UPDATE paper_desk_orders SET status='CANCELLED', "
+                    "note=:n WHERE id=:i AND status='OPEN'"),
+                    {"i": oid,
+                     "n": f"🏳 포기 (give-up rule): 현재가 ₩{px:,.0f}가 제안가 "
+                          f"₩{lp:,.0f}에서 ₩{d:,.0f} 이상 멀어짐"})
+                db.commit()
+        except Exception:
+            db.rollback()
     return fills
 
 
