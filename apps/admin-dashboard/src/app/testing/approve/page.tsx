@@ -892,8 +892,20 @@ export default function ApprovePage() {
                   // make this in the two rows"): the buy row's saved popup
                   // reasons + the sell row's, both kept on the log.
                   const buyTs = new Set(g.legs.filter((x) => x.kind === "B").map((x) => x.tt));
-                  const buyRows = (feed!.log || []).filter((l) => l.code === g.code
-                      && l.side === "BUY" && l.fill && (buyTs.has(l.at || "") || buyTs.size === 0));
+                  // exact-time matches first; when the paired buy time has no
+                  // log row of its own (boss-recorded trades, edited clocks),
+                  // ANY dealt buy of the stock still tells why we bought
+                  // (boss 2026-09-03 19:2x: "No saved buy reasons" on 한화오션)
+                  const buyAll = (feed!.log || []).filter((l) => l.code === g.code
+                      && l.side === "BUY" && (l.fill || l.dealt) && (l.reasons?.length || 0) > 0);
+                  const buyExact = buyAll.filter((l) => buyTs.has(l.at || ""));
+                  const buySrc = buyExact.length ? buyExact : buyAll;
+                  const buySeen = new Set<string>();
+                  const buyRows = buySrc.filter((l) => {
+                    const k9 = `${l.at}|${l.fill}`;
+                    if (buySeen.has(k9)) return false;
+                    buySeen.add(k9); return true;
+                  });
                   const sellRows = done.filter((l) => l.code === g.code);
                   const ko9 = t("k", "e") === "k";
                   const rz = (l?: LogRow) =>
@@ -934,18 +946,19 @@ export default function ApprovePage() {
                     </tr>
                     {rzOpen === `c${i}` && (
                       <tr><td colSpan={money3 ? 3 : 2} style={{ padding: "4px 6px 8px" }}>
-                        {/* row 1: WHY WE BOUGHT (red) */}
-                        <div style={{ borderLeft: "3px solid #e53935", borderRadius: 6,
-                                      background: "rgba(229,57,53,0.06)", padding: "6px 9px",
-                                      fontSize: 12, lineHeight: 1.55, marginBottom: 6 }}>
-                          <b style={{ color: "#c62828" }}>
-                            🔴 {t("매수 이유", "Why we bought")}
-                            {buyRows[0] ? ` (${buyRows[0].at})` : ""}</b>
-                          {rz(buyRows[0]).map((x, k2) => <div key={k2}>· {x}</div>)}
-                          {!buyRows.length && <div style={{ opacity: 0.6 }}>
-                            {t("저장된 매수 이유가 없습니다.", "No saved buy reasons.")}</div>}
-                          {chkList(`cb${i}`, buyRows[0]?.check_items)}
-                        </div>
+                        {/* row 1: WHY WE BOUGHT (red) — one block per buy */}
+                        {(buyRows.length ? buyRows.slice(0, 3) : [null]).map((b9, kb) => (
+                          <div key={kb} style={{ borderLeft: "3px solid #e53935", borderRadius: 6,
+                                        background: "rgba(229,57,53,0.06)", padding: "6px 9px",
+                                        fontSize: 12, lineHeight: 1.55, marginBottom: 6 }}>
+                            <b style={{ color: "#c62828" }}>
+                              🔴 {t("매수 이유", "Why we bought")}
+                              {b9 ? ` (${b9.at})` : ""}</b>
+                            {rz(b9 || undefined).map((x, k2) => <div key={k2}>· {x}</div>)}
+                            {!b9 && <div style={{ opacity: 0.6 }}>
+                              {t("저장된 매수 이유가 없습니다.", "No saved buy reasons.")}</div>}
+                            {chkList(`cb${i}_${kb}`, b9?.check_items)}
+                          </div>))}
                         {/* row 2: WHY WE SOLD (blue) — one block per sell */}
                         {sellRows.map((s9, k3) => (
                           <div key={k3} style={{ borderLeft: "3px solid #1e88e5", borderRadius: 6,
