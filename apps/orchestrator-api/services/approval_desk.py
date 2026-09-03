@@ -232,6 +232,60 @@ def process_steps(db, code: str, name: str) -> list[dict]:
     return steps
 
 
+def _add_lot(st, code, name, qty, price, sug_at=None, at=None) -> None:
+    """ONE POSITION PER STOCK (boss's standing law: we do not buy before we
+    sell). Two places open a position - the approval itself, and the reconciler
+    that picks up a queued limit when it finally fills - and NEITHER checked
+    whether we already held that stock. On 2026-09-03 the desk ended up holding
+    SK하이닉스 twice, 6 shares from 09:33 and 10 more stamped 13:16, so the
+    stock could never be offered or sold as one position again.
+
+    A second fill now MERGES into the standing lot: quantities add, the price
+    becomes the size-weighted average of what we actually paid, and the earlier
+    buy time is kept. Nothing is discarded - both fills survive inside one
+    position, which is what one-position-per-stock means."""
+    lot = next((h for h in st.setdefault("held", []) if h["code"] == code), None)
+    if lot is None:
+        st["held"].append({"code": code, "name": name, "qty": int(qty),
+                           "price": float(price), "sug_at": sug_at, "at": at})
+        return
+    q0, q1 = int(lot.get("qty") or 0), int(qty)
+    p0, p1 = float(lot.get("price") or 0), float(price)
+    tot = q0 + q1
+    lot["qty"] = tot
+    if tot:
+        lot["price"] = round((p0 * q0 + p1 * q1) / tot, 2)
+    if at and str(at) < str(lot.get("at") or "99:99"):
+        lot["at"] = at
+    lot["merged"] = int(lot.get("merged") or 1) + 1
+
+
+def _fold_lots(st) -> bool:
+    """Collapse any duplicate positions already sitting in the saved state -
+    the law applies to the book we inherited, not only to new fills."""
+    seen, out, changed = {}, [], False
+    for h in st.get("held") or []:
+        c = h.get("code")
+        if c in seen:
+            o = seen[c]
+            q0, q1 = int(o.get("qty") or 0), int(h.get("qty") or 0)
+            p0, p1 = float(o.get("price") or 0), float(h.get("price") or 0)
+            tot = q0 + q1
+            o["qty"] = tot
+            if tot:
+                o["price"] = round((p0 * q0 + p1 * q1) / tot, 2)
+            if str(h.get("at") or "99:99") < str(o.get("at") or "99:99"):
+                o["at"] = h.get("at")
+            o["merged"] = int(o.get("merged") or 1) + 1
+            changed = True
+        else:
+            seen[c] = dict(h)
+            out.append(seen[c])
+    if changed:
+        st["held"] = out
+    return changed
+
+
 def _mk_sug(st, code, name, side, reasons, price, qty, score, reasons_en=None):
     st["seq"] = int(st.get("seq") or 0) + 1
     sug = {"id": st["seq"], "ts": time.time(), "hhmm": _hhmm(), "code": code,
@@ -313,6 +367,7 @@ def scan(db) -> dict:
     except Exception:
         pass
     from services.paper_desk import fast_price
+    _fold_lots(st)                 # one position per stock, including inherited ones
     held_codes = {h["code"] for h in st["held"]}
     pending_codes = {(p["side"], p["code"]) for p in st["pending"]}
     # SCAN EVERYTHING THE BOARD JUDGES (boss 2026-09-03 14:5x: "현대차 says BUY
@@ -1006,9 +1061,8 @@ def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
     if not queued:
         fill = float(fill)
         if p["side"] == "BUY":
-            st.setdefault("held", []).append({"code": p["code"], "name": p["name"],
-                                              "qty": int(p["qty"]), "price": fill,
-                                              "sug_at": p.get("hhmm"), "at": _hhmm()})
+            _add_lot(st, p["code"], p["name"], int(p["qty"]), fill,
+                     p.get("hhmm"), _hhmm())
         else:
             # THE ROUND TRIP ON THE SELL ROW (boss 2026-09-03 12:5x: "put buying
             # time, buying price, selling time, selling price and how much we
@@ -1065,9 +1119,8 @@ def _reconcile_fills(db, st) -> None:
                     l["converted"] = True
                     l["conv_note"] = str(row[2])
                 if l.get("side") == "BUY":
-                    st.setdefault("held", []).append(
-                        {"code": l["code"], "name": l["name"], "qty": int(l["qty"]),
-                         "price": float(row[1]), "sug_at": l.get("hhmm"), "at": _hhmm()})
+                    _add_lot(st, l["code"], l["name"], int(l["qty"]),
+                             float(row[1]), l.get("hhmm"), _hhmm())
                 else:
                     _lot = next((h for h in st.get("held") or []
                                  if h["code"] == l["code"]), None)
