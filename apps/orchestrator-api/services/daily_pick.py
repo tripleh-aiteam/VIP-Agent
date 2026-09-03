@@ -46,7 +46,14 @@ _CHAR_FILE = _DATA / "stock_character.json"      # the slow half, refreshed week
 OLD_WEIGHTS = {"trend": 25, "liquidity": 20, "flexibility": 20,
                "levels": 15, "momentum": 10, "flows": 10}
 WEIGHTS = {"trend": 35, "liquidity": 45, "flexibility": 10,
-           "levels": 0, "momentum": 0, "flows": 10}
+           "levels": 0, "momentum": 0, "flows": 10,
+           "position": 0, "volchg": 0}
+# HIS ORDER OF IMPACT (boss 2026-09-04): position first - top / middle / down,
+# and middle-or-below scores higher because that is the buying zone with room
+# to rise - then trading volume, then volume CHANGE %. Kept beside the
+# deployed set so the two can be measured against each other honestly.
+BOSS_WEIGHTS = {"position": 30, "liquidity": 30, "volchg": 15, "trend": 15,
+                "flexibility": 5, "flows": 5, "levels": 0, "momentum": 0}
 N_PICKS = 5
 
 # THE BOSS'S DESK (2026-08-10, his call). He named the six companies he wants traded
@@ -339,6 +346,15 @@ def _pct(vals: list[float], v: float, hi: bool = True) -> float:
     return p if hi else 100 - p
 
 
+_WOVER: dict = {}
+
+
+def _weights_now() -> dict:
+    """The weight table in force - overridable so a candidate scheme can be
+    backtested against the deployed one without editing the file."""
+    return _WOVER or WEIGHTS
+
+
 def pick(day: str, n: int | None = None, refresh_character: bool = False) -> dict[str, Any]:
     """TODAY's ranking. Character (year) x Condition (recent days), checklist weights."""
     if n is None:
@@ -353,7 +369,8 @@ def pick(day: str, n: int | None = None, refresh_character: bool = False) -> dic
     A = {k: [ch[c][k] for c in codes] for k in ("turnover", "tick_pct", "surge_rate", "trendiness")}
     B = {k: [co[c][k] for c in codes] for k in
          ("aligned", "new_high", "above_s20", "rsi", "macd_cross", "bb_pos",
-          "vs_close", "vol_surge", "foreign3", "inst3", "short_ratio")}
+          "vs_close", "vol_surge", "foreign3", "inst3", "short_ratio",
+          "mid", "midy")}
     rows = []
     for c in codes:
         a, b = ch[c], co[c]
@@ -371,6 +388,21 @@ def pick(day: str, n: int | None = None, refresh_character: bool = False) -> dic
             # 62,63,67,74 - where is it against its own levels?
             "levels": (0.5 * max(0.0, min(100.0, (b["bb_pos"] + 1) * 50)) +
                        0.5 * _pct(B["vs_close"], b["vs_close"])),
+            # WHERE IS IT IN ITS OWN RANGE? (boss 2026-09-04: "before them we
+            # need to check the position - is it in the top, middle or down? If
+            # it is in the middle or below the middle it should have a HIGHER
+            # score, because it is the buying zone and there is more chance to
+            # increase.") Distance below the 1-month and 1-year average lines,
+            # ranked LOW-IS-GOOD, so a stock sitting under both scores near 100
+            # and one at its highs scores near 0. This is his notion of
+            # position - not the old bb_pos/vs-prev-close mix that measured
+            # near zero and was benched.
+            "position": (0.5 * _pct(B["mid"], b["mid"], hi=False) +
+                         0.5 * _pct(B["midy"], b["midy"], hi=False)),
+            # HOW MUCH IS IT TRADING RIGHT NOW vs its own normal (his #3:
+            # "next one is trading volume CHANGES %"). vol_surge was computed
+            # every day and used only for a label - it never entered the score.
+            "volchg": _pct(B["vol_surge"], b["vol_surge"]),
             # 60,61 - momentum with room left
             "momentum": (0.5 * (100 - abs(b["rsi"] - 55) * 2.2) +
                          0.5 * (b["macd_cross"] * 100)),
@@ -381,7 +413,8 @@ def pick(day: str, n: int | None = None, refresh_character: bool = False) -> dic
                       0.10 * _pct(B["short_ratio"], b["short_ratio"], hi=False)),
         }
         g = {k: max(0.0, min(100.0, v)) for k, v in g.items()}
-        score = sum(g[k] * WEIGHTS[k] for k in g) / 100
+        _W = _weights_now()
+        score = sum(g[k] * _W.get(k, 0) for k in g) / 100
         why = []
         if b["aligned"] == 2: why.append("5>20>60 정배열" )
         if b["new_high"]: why.append("20일 신고가")

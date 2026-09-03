@@ -1700,6 +1700,22 @@ def trade_story(code: str, name: str = "") -> dict:
     return {"state": "none", "code": code, "name": nm, "ko": ko, "en": en}
 
 
+_CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
+
+
+def _renumber(lines: list) -> list:
+    """Renumber the ①②③ lines sequentially in the order they survived."""
+    out, n = [], 0
+    for ln in lines:
+        t = str(ln)
+        if t[:1] in _CIRCLED:
+            out.append((_CIRCLED[n] if n < len(_CIRCLED) else "•") + t[1:])
+            n += 1
+        else:
+            out.append(t)
+    return out
+
+
 def _why_buy(code: str, name: str, hold: dict):
     """WHY WE BUY, GATE BY GATE, IN PLAIN WORDS (boss 2026-09-03 09:5x: "the
     explanation should START WITH CLEAR GATES - for not-buy: 갭상승, selling
@@ -1771,7 +1787,9 @@ def _why_buy(code: str, name: str, hold: dict):
     # this number and it increased x%"): the fuel behind the move, measured now,
     # not a label. Real-time - it reads differently at 09:10 and at 14:10.
     _vr9, _tv9 = _vol_ratio(code)
-    if _tv9 and can_propose():
+    if not can_propose():
+        _tv9 = None                  # before the bell the number is meaningless
+    if _tv9:
         # only while the session is live: before the bell today's volume is a
         # few pre-open ticks and the ratio reads a meaningless 0.0x
         _vk9 = (f"현재 거래량 {_tv9:,.0f}주"
@@ -1783,10 +1801,35 @@ def _why_buy(code: str, name: str, hold: dict):
     R.append("✅ 살 수 있는 자리입니다 — " + " · ".join(gk))
     E.append("✅ THIS IS A PLACE TO BUY — " + " · ".join(ge))
 
+    # ORDERED BY IMPACT, NOT BY HABIT (boss 2026-09-04: "organise the checklist
+    # in terms of impact on the buying. Before them we need to check the
+    # POSITION - top, middle or down; middle-or-below scores higher because it
+    # is the buying zone. Next trading volume, next volume change %. Whenever
+    # you put them in the buying reason you have to explain them with NUMERICAL
+    # and TIME-BASED values.")
+    # ① position, ② how far below the lines, ③ volume now, then the rest. It is
+    # also the order the measured ranking uses: position and the size of the
+    # fall are what rank a stock; volume was tested on top of them and made the
+    # top-5 worse (+0.752%/day -> +0.520%), so it INFORMS the reader here, it
+    # does not decide the pick.
+    _nowt = _hhmm()
+    if mid is not None and midy is not None:
+        R.append(f"① 위치 — 1개월 평균 대비 {mid:+.2f}%, 1년 평균 대비 {midy:+.2f}%. "
+                 f"{'두 평균선 아래' if (mid < 0 and midy < 0) else '평균선 부근'}이라 "
+                 f"위로 올라갈 자리가 남아 있습니다 ({_nowt} 기준).")
+        E.append(f"① POSITION — {mid:+.2f}% against its 1-month average and "
+                 f"{midy:+.2f}% against its 1-year average"
+                 f"{', below BOTH lines' if (mid < 0 and midy < 0) else ''}, so there "
+                 f"is room left above it (as of {_nowt}).")
+    if _tv9:
+        R.append(f"② 거래량 — {_nowt} 현재 {_tv9:,.0f}주"
+                 + (f", 20일 평균의 {_vr9:.2f}배입니다." if _vr9 else "."))
+        E.append(f"② VOLUME — {_tv9:,.0f} shares traded as of {_nowt}"
+                 + (f", {_vr9:.2f}x its own 20-day average." if _vr9 else "."))
     if _gap_talk:
-        R.append("① 갭상승 아님 — 오늘 시가가 어제 종가(시간외 포함)보다 크게 뛰지 "
+        R.append("③ 갭상승 아님 — 오늘 시가가 어제 종가(시간외 포함)보다 크게 뛰지 "
                  "않았습니다. 비싼 출발이 아니라는 뜻입니다.")
-        E.append("① No gap-up — it did not open far above yesterday's close "
+        E.append("③ No gap-up — it did not open far above yesterday's close "
                  "(after-hours included). It did not start expensive.")
     if zone == "buy":
         R.append(f"② 매수구간 — 1년 범위의 {zpos}% 지점, 바닥권입니다. 우리 규칙이 사는 자리입니다.")
@@ -1810,12 +1853,12 @@ def _why_buy(code: str, name: str, hold: dict):
                  "관문은 모두 열렸고, 승인하시면 지금 들어갑니다.")
         E.append("④ 알고3 has not taken its entry shape yet (the 3rd rise after a fall) - "
                  "every gate is open, and approving enters now.")
-    _skip9 = True
-    if False:
-        R.append(f"④ 떨어졌다가 다시 오르기 시작 ({bt}) — 하락이 멈추고 3번째 양봉입니다. "
-             f"바닥이 3봉 이상 버텼고, 바닥에서 1.5% 안이며, 최근 3봉 중 2번 올랐습니다.")
-    E.append(f"④ It fell, stopped, and started rising ({bt}) — the 3rd rising candle. The bottom "
-             f"held 3+ bars, price is within 1.5% of it, 2 of the last 3 bars rose.")
+    # BOTH LANGUAGES OR NEITHER (found 2026-09-04 while testing his ordering).
+    # The Korean half of this line was disabled inside `if False:` but the
+    # English append sat OUTSIDE it, so every English reason carried a line the
+    # Korean one did not - and printed an empty "()" where the buy clock should
+    # be, because there is no buy time on a stock we have not bought. The pair
+    # is retired together, which is what was intended.
     # THE 100-CHECKLIST PROOF, IN EVERY POPUP (boss 2026-09-03 13:4x: "in the
     # pop up it should show and proof it is checking 100 checklist also — make
     # it available in all upcoming popups"): the six often drop out of the
@@ -1895,7 +1938,12 @@ def _why_buy(code: str, name: str, hold: dict):
         _ce = "📋 We checked ALL 100 checklist items — today's score is still computing."
     R.insert(1, _ck)
     E.insert(1, _ce)
-    return R, E
+    # THE NUMBERS MUST COUNT (boss 2026-09-04: the reason is read top to
+    # bottom, so its numbering has to be sequential and in impact order). The
+    # numbered lines are written by several independent blocks; whichever ones
+    # actually apply today are renumbered here, in the order they stand, so the
+    # reader never sees a list that runs 3, 2, 4.
+    return _renumber(R), _renumber(E)
 
 
 def _why_sell(code: str, lot: dict, row: dict, px: float):
