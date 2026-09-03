@@ -696,7 +696,12 @@ export default function ApprovePage() {
                             <div key={j} style={lineS}>
                               ▼ {x.tt} {W(x.px)} × {x.qty.toLocaleString()}{t("주", "sh")}
                               <span style={{ opacity: 0.65 }}> ({t("잔여", "left")} {Math.max(0, left).toLocaleString()})</span>
-                              <b style={{ marginLeft: 6 }}>{(x.pct ?? 0) >= 0 ? "+" : ""}{x.pct}%</b>
+                              {/* GAIN = RED, LOSS = BLUE, like Menu 2 (boss
+                                  2026-09-03 14:5x) — the % wears the money's
+                                  color, not the ▼ line's blue */}
+                              <b style={{ marginLeft: 6,
+                                          color: (x.pct ?? 0) >= 0 ? "#e53935" : "#1e88e5" }}>
+                                {(x.pct ?? 0) >= 0 ? "+" : ""}{x.pct}%</b>
                               {x.conv && <span style={{ marginLeft: 6, fontSize: 10.5, opacity: 0.7 }}
                                 title={x.note || ""}>⚡{t("시장가 전환", "switched to market")}</span>}
                             </div>);
