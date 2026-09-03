@@ -74,14 +74,16 @@ export default function ApprovePage() {
   type BrainRow = { code: string; name: string; score?: number; gates: Gate[];
                     pass: boolean; no_buy?: string | null; no_buy_en?: string | null;
                     no_buy_short?: string | null; no_buy_short_en?: string | null;
-                    blocked_n?: number; chosen?: boolean; verdict?: string; tradeable?: boolean };
+                    blocked_n?: number; chosen?: boolean; verdict?: string; lane?: string;
+                    lane_why?: string | null; lane_why_en?: string | null; pnl?: number | null; tradeable?: boolean };
   type SellChk = { k: string; en: string; v: string; hit?: boolean; hold?: boolean };
   type SellRow = { code: string; name: string; buy_t: string; base: number; px: number;
                    pnl: number; peak: number; from_peak: number; qty?: number;
                    checks: SellChk[]; patience: SellChk[]; verdict: string;
                    why: string; why_en: string };
   type Brain = { ok: boolean; universe: BrainRow[]; six: BrainRow[]; five: string[];
-                 selling?: SellRow[]; universe_n?: number; computing?: boolean };
+                 selling?: SellRow[]; universe_n?: number; computing?: boolean;
+                 lanes?: Record<string,string[]>; conditions?: number };
   const [brain, setBrain] = useState<Brain | null>(null);
   const [thinkIdx, setThinkIdx] = useState(0);
   const [edits, setEdits] = useState<Record<number, { qty?: number; price?: number }>>({});
@@ -121,11 +123,11 @@ export default function ApprovePage() {
         .then((d) => {
           if (d && d.ok && (((d.six || []).length + (d.universe || []).length) > 0)) setBrain(d);
         }).catch(() => {});
-    load(); const t = setInterval(load, 7000); return () => clearInterval(t);
+    load(); const t = setInterval(load, 5000); return () => clearInterval(t);
   }, []);
   // the "thinking" cursor walks one stock per beat, never stopping in market hours
   useEffect(() => {
-    const t = setInterval(() => setThinkIdx((i) => i + 1), 1400);
+    const t = setInterval(() => setThinkIdx((i) => i + 1), 1000);
     return () => clearInterval(t);
   }, []);
   // the left-rail walk has its own quicker heartbeat — one check per beat
@@ -285,135 +287,91 @@ export default function ApprovePage() {
         {feed && <span style={{ marginLeft: 8 }}>{feed.market_open ? t("🟢 장중", "🟢 market open") : t("🌙 장 마감 — 제안은 장중에만 나옵니다", "🌙 market closed — proposals come only in market hours")}</span>}
       </div>
 
-      {/* ─ THE AGENT: PART 1 BUYING, PART 2 SELLING ─ */}
+      {/* ─ THE CONTROL ROOM: four lanes, all 20 at once ─ */}
       {brain?.ok && !brain.computing && (() => {
         const all = [...(brain.six || []), ...(brain.universe || [])];
         const sixSet = new Set((brain.six || []).map((x) => x.code));
-        // TRULY PARALLEL (boss 2026-09-03 11:3x: "people think it is analyzing
-        // one by one, so they think we are late to buy or sell"). All twenty
-        // carry their full verdict at all times; the sweep only HIGHLIGHTS one
-        // gate across an already-judged board, so nothing waits its turn.
-        const PH = [
-          { k: "갭상승", en: "gap-up", g: 0 },
-          { k: "1개월 평균", en: "1-month avg", g: 1 },
-          { k: "1년 평균", en: "1-year avg", g: 2 },
-          { k: "연속 상승", en: "rising run", g: 3 },
-          { k: "1년 구간", en: "year zone", g: 4 },
-          { k: "위험 뉴스", en: "danger news", g: 5 },
+        // A SIMULATION YOU CAN WATCH (boss 2026-09-03 13:0x: "show the agent
+        // analysing all 20 in parallel and telling us which to buy, which not
+        // to buy, which to hold and which to sell"). Every stock is a chip and
+        // every chip sits in the lane its verdict puts it in; as conditions
+        // change the chips MIGRATE between lanes in front of you. Nothing
+        // sweeps and nothing queues - the whole board is judged from one
+        // instant and re-judged every few seconds, which is what parallel
+        // actually looks like.
+        const LANES = [
+          { k: "BUY", ko: "지금 매수 가능", en: "READY TO BUY", c: "#2e7d32", ico: "🟢" },
+          { k: "NOBUY", ko: "매수 금지", en: "DO NOT BUY", c: "#c62828", ico: "🔴" },
+          { k: "HOLD", ko: "보유 유지", en: "HOLD", c: "#1565c0", ico: "🔵" },
+          { k: "SELL", ko: "매도 신호", en: "SELL NOW", c: "#e65100", ico: "🟠" },
         ];
-        const ph = PH[thinkIdx % PH.length];
-        const dots = ".".repeat((thinkIdx % 3) + 1);
-        const buys = all.filter((x) => x.verdict === "BUY").length;
-        const sells = brain.selling || [];
+        const beat = thinkIdx % 2 === 0;
         return (
-          <div style={{ margin: "12px 0 16px" }}>
-            <div style={{ padding: "13px 15px", borderRadius: 12,
-                          border: "2px solid #6a1b9a", background: "rgba(106,27,154,0.05)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 20 }}>🤖</span>
-                <b style={{ fontSize: 15.5 }}>{t("1부 · 무엇을 살까", "PART 1 · WHAT TO BUY")}</b>
-                <span style={{ fontSize: 12.5, fontWeight: 800, padding: "3px 11px",
-                               borderRadius: 999, background: "#6a1b9a", color: "#fff" }}>
-                  {t(`${all.length}종목 동시 검사`, `all ${all.length} at once`)}</span>
-                <b style={{ fontSize: 13, color: "#6a1b9a" }}>
-                  {t(`지금 보는 관문: ${ph.k}`, `highlighting: ${ph.en}`)}{dots}</b>
-                <span style={{ fontSize: 13, fontWeight: 800, color: "#2e7d32" }}>
-                  🟢 {t("매수 가능", "BUY")} {buys}</span>
-                <span style={{ fontSize: 13, fontWeight: 800, color: "#b26a00" }}>
-                  🟠 {t("대기", "WAIT")} {all.length - buys}</span>
-              </div>
-              <div style={{ display: "grid", gap: 7, marginTop: 11,
-                            gridTemplateColumns: "repeat(auto-fill,minmax(234px,1fr))" }}>
-                {all.map((u) => {
-                  const ok = u.verdict === "BUY";
-                  const g = u.gates[ph.g];
-                  return (
-                    <div key={u.code} style={{
-                        border: `2px solid ${ok ? "#2e7d32" : "#c62828"}`, borderRadius: 9,
-                        padding: "8px 9px",
-                        background: ok ? "rgba(46,125,50,0.07)" : "rgba(198,40,40,0.06)" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                        <b style={{ fontSize: 13 }}>{sixSet.has(u.code) ? "📌 " : ""}{u.name}</b>
-                        <b style={{ fontSize: 12.5, color: ok ? "#2e7d32" : "#c62828" }}>
-                          {ok ? t("🟢 매수", "🟢 BUY") : t("🟠 대기", "🟠 WAIT")}</b>
-                      </div>
-                      <div style={{ display: "flex", gap: 3, flexWrap: "wrap", margin: "5px 0 4px" }}>
-                        {u.gates.map((x, n) => (
-                          <span key={n} title={t(x.k, x.en) + " " + x.v}
-                            style={{ fontSize: 9.5, padding: "1px 5px", borderRadius: 4,
-                              fontWeight: n === ph.g ? 800 : 600,
-                              outline: n === ph.g ? "2px solid #6a1b9a" : "none",
-                              background: x.bad ? "rgba(198,40,40,0.16)" : "rgba(46,125,50,0.16)",
-                              color: x.bad ? "#c62828" : "#2e7d32" }}>
-                            {x.bad ? "✗" : "✓"}{t(x.k, x.en)}</span>))}
-                      </div>
-                      <div style={{ fontSize: 10.5, opacity: 0.85 }}>
-                        {t("100 체크리스트", "checklist")} <b>{u.score}</b>
-                        {g && <span style={{ marginLeft: 6 }}>· {t(ph.k, ph.en)} <b>{g.v}</b></span>}
-                      </div>
-                      {!ok && <div style={{ fontSize: 10.5, color: "#c62828", marginTop: 3,
-                                            fontWeight: 700, lineHeight: 1.35 }}>
-                        {t(u.no_buy || "", u.no_buy_en || u.no_buy || "")}</div>}
-                    </div>);
-                })}
-              </div>
-              <div style={{ marginTop: 10, fontSize: 13.5 }}>
-                <b>🏆 {t("오늘의 5종목", "today’s five")}:</b>{" "}
-                {(brain.five || []).map((n2, i2) => (
-                  <span key={i2} style={{ margin: "0 4px", padding: "4px 11px", borderRadius: 999,
-                      background: "#6a1b9a", color: "#fff", fontSize: 13, fontWeight: 800 }}>{n2}</span>))}
-                <span style={{ marginLeft: 6, fontSize: 11.5, opacity: 0.65 }}>
-                  {t("고정 6종목 📌 + 에이전트가 고른 5종목",
-                     "the fixed six 📌 + the five the agent picked")}</span>
-              </div>
+          <div style={{ margin: "12px 0 16px", padding: "13px 15px", borderRadius: 12,
+                        border: "2px solid #6a1b9a", background: "rgba(106,27,154,0.05)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 20 }}>🤖</span>
+              <b style={{ fontSize: 16 }}>{t("에이전트 관제실", "AGENT CONTROL ROOM")}</b>
+              <span style={{ fontSize: 12.5, fontWeight: 800, padding: "3px 11px",
+                             borderRadius: 999, background: "#6a1b9a", color: "#fff",
+                             opacity: beat ? 1 : 0.55, transition: "opacity .5s" }}>
+                {t(`${all.length}종목 · ${brain.conditions ?? all.length * 6}개 조건 동시 판정`,
+                   `${all.length} stocks · ${brain.conditions ?? all.length * 6} conditions judged together`)}
+              </span>
+              <span style={{ fontSize: 12, opacity: 0.72 }}>
+                {t("몇 초마다 전체 재판정 — 한 종목도 순서를 기다리지 않습니다",
+                   "the whole board is re-judged every few seconds — no stock waits its turn")}
+              </span>
             </div>
-            <div style={{ marginTop: 12, padding: "13px 15px", borderRadius: 12,
-                          border: "2px solid #1565c0", background: "rgba(21,101,192,0.05)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 20 }}>🤖</span>
-                <b style={{ fontSize: 15.5 }}>{t("2부 · 언제 팔까", "PART 2 · WHEN TO SELL")}</b>
-                <span style={{ fontSize: 12.5, fontWeight: 800, padding: "3px 11px",
-                               borderRadius: 999, background: "#1565c0", color: "#fff" }}>
-                  {t(`보유 ${sells.length}종목 동시 감시`, `watching all ${sells.length} holdings`)}</span>
-                <span style={{ fontSize: 12, opacity: 0.75 }}>
-                  {t("같은 에이전트의 두 번째 일 — 매도 규칙 4가지 + 인내 규칙 2가지",
-                     "the same agent’s second job — 4 exit rules + 2 patience rules")}</span>
-              </div>
-              {sells.length === 0 && (
-                <div style={{ marginTop: 9, fontSize: 13, opacity: 0.7 }}>
-                  {t("보유 중인 종목이 없습니다.", "No open positions to watch.")}</div>)}
-              <div style={{ display: "grid", gap: 7, marginTop: 11,
-                            gridTemplateColumns: "repeat(auto-fill,minmax(270px,1fr))" }}>
-                {sells.map((r) => {
-                  const doSell = r.verdict === "SELL";
-                  return (
-                    <div key={r.code} style={{
-                        border: `2px solid ${doSell ? "#1565c0" : "#2e7d32"}`, borderRadius: 9,
-                        padding: "8px 10px",
-                        background: doSell ? "rgba(21,101,192,0.08)" : "rgba(46,125,50,0.06)" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                        <b style={{ fontSize: 13 }}>{r.name}</b>
-                        <b style={{ fontSize: 12.5, color: doSell ? "#1565c0" : "#2e7d32" }}>
-                          {doSell ? t("🔵 매도", "🔵 SELL") : t("🟢 보유 유지", "🟢 HOLD")}</b>
-                      </div>
-                      <div style={{ fontSize: 11, margin: "3px 0 5px", opacity: 0.85 }}>
-                        {r.buy_t} {t("매수", "in")} <b>{W(r.base)}</b> → <b>{W(r.px)}</b>{" "}
-                        <b style={{ color: r.pnl >= 0 ? "#c62828" : "#1565c0" }}>
-                          {r.pnl >= 0 ? "+" : ""}{r.pnl.toFixed(2)}%</b>
-                      </div>
-                      {[...r.checks, ...r.patience].map((c, n) => {
-                        const on = c.hit || c.hold;
-                        return (
-                          <div key={n} style={{ fontSize: 10.5, lineHeight: 1.45,
-                                                color: on ? (c.hold ? "#b26a00" : "#1565c0") : "#5b6570" }}>
-                            {on ? "●" : "○"} <b>{t(c.k, c.en)}</b> {c.v}</div>);
-                      })}
-                      <div style={{ fontSize: 11, marginTop: 4, fontWeight: 800,
-                                    color: doSell ? "#1565c0" : "#2e7d32" }}>
-                        → {t(r.why, r.why_en)}</div>
-                    </div>);
-                })}
-              </div>
+            <div style={{ display: "grid", gap: 9, marginTop: 12,
+                          gridTemplateColumns: "repeat(auto-fit,minmax(215px,1fr))" }}>
+              {LANES.map((L) => {
+                const mine = all.filter((x) => (x.lane || (x.pass ? "BUY" : "NOBUY")) === L.k);
+                return (
+                  <div key={L.k} style={{ border: `2px solid ${L.c}`, borderRadius: 10,
+                                          background: `${L.c}0d`, padding: "9px 10px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between",
+                                  alignItems: "baseline", marginBottom: 7 }}>
+                      <b style={{ fontSize: 13.5, color: L.c }}>{L.ico} {t(L.ko, L.en)}</b>
+                      <b style={{ fontSize: 17, color: L.c }}>{mine.length}</b>
+                    </div>
+                    {mine.length === 0 && (
+                      <div style={{ fontSize: 11.5, opacity: 0.5 }}>{t("없음", "none")}</div>)}
+                    {mine.map((u) => (
+                      <div key={u.code} style={{ marginBottom: 6, padding: "5px 7px",
+                          borderRadius: 7, background: "var(--card,#fff)",
+                          border: `1px solid ${L.c}55` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between",
+                                      alignItems: "baseline" }}>
+                          <b style={{ fontSize: 12.5 }}>
+                            {sixSet.has(u.code) ? "📌 " : ""}{u.name}</b>
+                          {u.pnl != null
+                            ? <b style={{ fontSize: 11.5,
+                                          color: u.pnl >= 0 ? "#c62828" : "#1565c0" }}>
+                                {u.pnl >= 0 ? "+" : ""}{u.pnl}%</b>
+                            : <span style={{ fontSize: 10.5, opacity: 0.65 }}>
+                                {u.score}{t("점", "pts")}</span>}
+                        </div>
+                        <div style={{ display: "flex", gap: 2, flexWrap: "wrap", margin: "3px 0 2px" }}>
+                          {(u.gates || []).map((g, n) => (
+                            <span key={n} title={t(g.k, g.en) + " " + g.v}
+                              style={{ width: 15, height: 5, borderRadius: 3,
+                                background: g.bad ? "#c62828" : "#2e7d32", opacity: 0.85 }} />))}
+                        </div>
+                        <div style={{ fontSize: 10, lineHeight: 1.35, color: L.c, fontWeight: 600 }}>
+                          {(t(u.lane_why || "", u.lane_why_en || u.lane_why || "") || "").slice(0, 92)}
+                        </div>
+                      </div>))}
+                  </div>);
+              })}
+            </div>
+            <div style={{ marginTop: 10, fontSize: 13 }}>
+              <b>🏆 {t("오늘의 5종목", "today’s five")}:</b>{" "}
+              {(brain.five || []).map((n2, i2) => (
+                <span key={i2} style={{ margin: "0 4px", padding: "3px 10px", borderRadius: 999,
+                    background: "#6a1b9a", color: "#fff", fontSize: 12.5, fontWeight: 800 }}>{n2}</span>))}
+              <span style={{ marginLeft: 6, fontSize: 11.5, opacity: 0.65 }}>
+                {t("고정 6종목 📌 + 에이전트가 고른 5종목", "the fixed six 📌 + the agent’s five")}</span>
             </div>
           </div>);
       })()}

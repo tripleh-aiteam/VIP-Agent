@@ -156,7 +156,7 @@ def _brain_compute():
     uses. The very first call returns an empty shell; the panel fills a moment
     later and animates client-side regardless."""
     import threading as _th, time as _tm
-    if _BRAIN9["v"] is not None and _tm.time() - _BRAIN9["t"] < 20:
+    if _BRAIN9["v"] is not None and _tm.time() - _BRAIN9["t"] < 6:
         return _BRAIN9["v"]
     if not _BRAIN9["busy"]:
         _BRAIN9["busy"] = True
@@ -468,6 +468,26 @@ def _brain_compute():
     except Exception as e:
         out["sell_err"] = str(e)[:120]
     out["selling"] = sell_rows
+    # ONE VERDICT PER STOCK, FOUR LANES (boss 2026-09-03 13:0x: "show the agent
+    # analysing all 20 and telling us which to buy, which not to buy, which to
+    # hold and which to sell - like a simulation"). A stock we own is judged by
+    # the SELL rules; everything else by the BUY gates. Nothing is in two lanes.
+    _own = {r["code"]: r for r in sell_rows}
+    for e in out["six"] + out["universe"]:
+        o = _own.get(e["code"])
+        if o:
+            e["lane"] = "SELL" if o["verdict"] == "SELL" else "HOLD"
+            e["lane_why"] = o.get("why")
+            e["lane_why_en"] = o.get("why_en")
+            e["pnl"] = o.get("pnl")
+        else:
+            e["lane"] = "BUY" if e.get("pass") else "NOBUY"
+            e["lane_why"] = e.get("no_buy")
+            e["lane_why_en"] = e.get("no_buy_en")
+    out["lanes"] = {k: [e["name"] for e in out["six"] + out["universe"]
+                        if e.get("lane") == k]
+                    for k in ("BUY", "NOBUY", "HOLD", "SELL")}
+    out["conditions"] = len(out["six"] + out["universe"]) * 6 + len(sell_rows) * 6
     return out
 
 

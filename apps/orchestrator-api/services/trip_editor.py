@@ -52,7 +52,11 @@ def restore(day8: str, code: Optional[str] = None) -> int:
 
 
 def apply_rows(rows: list, day8: str) -> list:
-    """Rewrite buy_t/sell_t on matching rows (completed trips AND holdings)."""
+    """Rewrite buy_t/sell_t on matching rows (completed trips AND holdings).
+    The algo tables render their ▲/▼ lines from parts.buys/parts.sells
+    [[price, qty, "HH:MM:SS", ...], ...], not from the header fields — so the
+    override rewrites BOTH (boss 2026-09-03 13:3x: the 한국항공우주 10:15→09:25
+    edit registered but the table still showed 10:15)."""
     eds = [x for x in _load() if x.get("day") == day8]
     if not eds:
         return rows
@@ -64,11 +68,24 @@ def apply_rows(rows: list, day8: str) -> list:
                 continue
             f = e.get("field") or "buy_t"
             cur = str(r2.get(f) or "")
-            if not cur:
-                continue
-            if e.get("frm") and cur[:5] != e["frm"]:
-                continue
-            r2 = {**r2, f: e["to"] + cur[5:]}
+            if cur and (not e.get("frm") or cur[:5] == e["frm"]):
+                r2 = {**r2, f: e["to"] + cur[5:]}
+            # the ▲/▼ leg lines inside parts
+            p = r2.get("parts")
+            key = "buys" if f == "buy_t" else "sells"
+            arr = (p or {}).get(key) or []
+            if arr:
+                changed = False
+                new_arr = []
+                for leg in arr:
+                    leg2 = list(leg)
+                    tt = str(leg2[2]) if len(leg2) > 2 and leg2[2] else ""
+                    if tt and (not e.get("frm") or tt[:5] == e["frm"]):
+                        leg2[2] = e["to"] + tt[5:]
+                        changed = True
+                    new_arr.append(leg2)
+                if changed:
+                    r2 = {**r2, "parts": {**p, key: new_arr}}
         out.append(r2)
     return out
 
