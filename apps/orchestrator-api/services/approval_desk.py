@@ -266,7 +266,21 @@ def scan(db) -> dict:
     from services.paper_desk import fast_price
     held_codes = {h["code"] for h in st["held"]}
     pending_codes = {(p["side"], p["code"]) for p in st["pending"]}
-    _rooms9 = desk_codes()
+    # SCAN EVERYTHING THE BOARD JUDGES (boss 2026-09-03 14:5x: "현대차 says BUY
+    # but the popup is not coming"). The scanner walked only the ten ROOM cards
+    # while the board judges all twenty, so any stock outside the rooms could
+    # show BUY for ever and never raise a popup. The rooms stay ten; the scan
+    # now covers every stock the board has an opinion about.
+    _rooms9 = list(desk_codes())
+    try:
+        from routers.approval import _BRAIN9 as _B9
+        _seen9 = {c for c, _n, _s in _rooms9}
+        for _e9 in ((_B9.get("v") or {}).get("six") or []) + ((_B9.get("v") or {}).get("universe") or []):
+            if str(_e9.get("code")) not in _seen9:
+                _rooms9.append((str(_e9.get("code")), _e9.get("name"), _e9.get("score")))
+                _seen9.add(str(_e9.get("code")))
+    except Exception:
+        pass
     _board9 = _algo3_board([c for c, _n, _s in _rooms9])
     # A POPUP LIVES ONLY WHILE ITS REASON DOES (boss 2026-09-03 14:1x). A BUY
     # proposal stands only while the engine still holds that position; a SELL
@@ -595,6 +609,13 @@ def apply_time_overrides(held: list, log: list) -> None:
         ov = o.get(str(row.get("code") or ""))
         if not ov:
             continue
+        # LESSON OF THE 한화시스템 BLOCK (boss 2026-09-03 15:2x: "selling time
+        # and buying time is not matching — learn lesson, do not repeat"):
+        # this blanket per-code stamp once rewrote SELL rows too, printing a
+        # sell at 09:27 under a buy at 10:48. An "at" override is an ENTRY
+        # clock — it may touch held lots and BUY rows only, never a sell.
+        if row.get("side") == "SELL":
+            continue
         if ov.get("at"):
             row["at"] = ov["at"]
             if "hhmm" in row:
@@ -612,9 +633,14 @@ def apply_time_overrides(held: list, log: list) -> None:
 def _gates_pass(code: str) -> bool:
     """The board's own BUY condition, read from the same place the board reads
     it, so the two can never diverge again (boss 2026-09-03 14:3x)."""
+    # IN-PROCESS, NEVER OVER HTTP TO OURSELVES. The scan runs in a background
+    # thread; fetching our own /approval/brain from inside it is the same
+    # self-call that deadlocked the server this morning, and when it timed out
+    # this returned False for every stock - which is exactly why the board
+    # showed eight BUY cards and no popup appeared (boss 2026-09-03 14:4x).
     try:
-        import json as _j, urllib.request as _ur
-        b = _j.load(_ur.urlopen("http://127.0.0.1:8000/approval/brain", timeout=20))
+        from routers.approval import _BRAIN9
+        b = _BRAIN9.get("v") or {}
         for e in (b.get("six") or []) + (b.get("universe") or []):
             if str(e.get("code")) == code:
                 return bool(e.get("pass"))
@@ -701,9 +727,16 @@ def _why_buy(code: str, name: str, hold: dict):
     carry the measured evidence for each gate. Returns (ko, en)."""
     R, E = [], []
     score = mid = midy = rank = tot = zone = zpos = None
+    # READ THE BRAIN IN-PROCESS (boss 2026-09-03 15:0x - the server died again).
+    # _ranking() fetches /paper-desk/daily-pick over HTTP from our OWN server;
+    # with the scan widened from 10 rooms to 20 stocks that became twenty
+    # self-calls per cycle from a background thread - the same pile-up that
+    # killed the process twice this morning. The brain already holds these
+    # numbers in memory.
     try:
-        from services.checklist_reco import _ranking
-        rows = (_ranking() or {}).get("rows") or []
+        from routers.approval import _BRAIN9
+        rows = (((_BRAIN9.get("v") or {}).get("six") or [])
+                + ((_BRAIN9.get("v") or {}).get("universe") or []))
         me = next((r for r in rows if str(r.get("code")) == code), None)
         if me:
             score, mid, midy = me.get("score"), me.get("mid"), me.get("midy")
@@ -927,11 +960,18 @@ def _reconcile_fills(db, st) -> None:
         from sqlalchemy import text as _sqt
         for l in open_logs:
             row = db.execute(_sqt(
-                "SELECT status, fill_price, note FROM paper_desk_orders WHERE id=:i"),
+                "SELECT status, fill_price, note, "
+                "to_char(filled_at AT TIME ZONE 'Asia/Seoul','HH24:MI') "
+                "FROM paper_desk_orders WHERE id=:i"),
                 {"i": l["oid"]}).fetchone()
             if row and str(row[0]) == "FILLED" and row[1]:
                 l["dealt"] = True
                 l["fill"] = float(row[1])
+                # LESSON (boss 2026-09-03 15:2x): a queued order that fills
+                # later shows its FILL time, not the approval click's time —
+                # the 한화시스템 sell read 09:27 though it executed after 10:00
+                if len(row) > 3 and row[3]:
+                    l["at"] = str(row[3])
                 if "전환" in str(row[2] or ""):
                     # the give-up law converted a stale SELL limit to market —
                     # the history says so instead of pretending the limit dealt
