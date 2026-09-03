@@ -245,7 +245,12 @@ VARIANTS: list[dict] = [
      # threshold 1.0 (boss 2026-08-27 evening: "check all historical data,
      # find the best %"): full sweep 1.0-4.0 on 251 days - 1.0% is best desk-
      # wide (+42.1M/yr vs +28.5M at 2.0; D1 +24.1M, D2 +5.5M, D3 +12.5M).
-     "gap_guard": 1.5, "gap_wait": "below_open",
+     "gap_guard": 1.5, "gap_wait": "median_dip3",
+     # median_dip3 (boss 2026-09-03 15:4x, SK하이닉스 09:33 exhibit): a gap-up
+     # starter at/below its 1-year MEDIAN waits for the fade's minimum to hold
+     # 3 bars and turn (2-of-3 rises, within 1.5% of the bottom) - the release
+     # is the 3rd candle after the stop; above the median the old below-open
+     # release still applies.
      # 1.5 AT THE BOSS'S ORDER (2026-08-27 night, verbatim: "please do not set
      # +1% and more - set +1.5% and more"), overriding the sweep's optimum on
      # record per the standing law: below_open court measured 1.0% = +69.6M/yr
@@ -363,7 +368,12 @@ VARIANTS: list[dict] = [
      # threshold 1.0 (boss 2026-08-27 evening: "check all historical data,
      # find the best %"): full sweep 1.0-4.0 on 251 days - 1.0% is best desk-
      # wide (+42.1M/yr vs +28.5M at 2.0; D1 +24.1M, D2 +5.5M, D3 +12.5M).
-     "gap_guard": 1.5, "gap_wait": "below_open",
+     "gap_guard": 1.5, "gap_wait": "median_dip3",
+     # median_dip3 (boss 2026-09-03 15:4x, SK하이닉스 09:33 exhibit): a gap-up
+     # starter at/below its 1-year MEDIAN waits for the fade's minimum to hold
+     # 3 bars and turn (2-of-3 rises, within 1.5% of the bottom) - the release
+     # is the 3rd candle after the stop; above the median the old below-open
+     # release still applies.
      # 1.5 AT THE BOSS'S ORDER (2026-08-27 night, verbatim: "please do not set
      # +1% and more - set +1.5% and more"), overriding the sweep's optimum on
      # record per the standing law: below_open court measured 1.0% = +69.6M/yr
@@ -490,7 +500,12 @@ VARIANTS: list[dict] = [
      # threshold 1.0 (boss 2026-08-27 evening: "check all historical data,
      # find the best %"): full sweep 1.0-4.0 on 251 days - 1.0% is best desk-
      # wide (+42.1M/yr vs +28.5M at 2.0; D1 +24.1M, D2 +5.5M, D3 +12.5M).
-     "gap_guard": 1.5, "gap_wait": "below_open",
+     "gap_guard": 1.5, "gap_wait": "median_dip3",
+     # median_dip3 (boss 2026-09-03 15:4x, SK하이닉스 09:33 exhibit): a gap-up
+     # starter at/below its 1-year MEDIAN waits for the fade's minimum to hold
+     # 3 bars and turn (2-of-3 rises, within 1.5% of the bottom) - the release
+     # is the 3rd candle after the stop; above the median the old below-open
+     # release still applies.
      # 1.5 AT THE BOSS'S ORDER (2026-08-27 night, verbatim: "please do not set
      # +1% and more - set +1.5% and more"), overriding the sweep's optimum on
      # record per the standing law: below_open court measured 1.0% = +69.6M/yr
@@ -1873,6 +1888,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     pends: list = [None] * n    # per stock: its working limit order
     gap_fade = [False] * n     # gap stock: price has been below its own open
     gap_ok = [False] * n       # gap stock: fade happened AND ended (3 rises)
+    # MEDIAN-DIP3 (boss 2026-09-03 15:4x, the SK하이닉스 09:33 exhibit: "for
+    # gap-up starters check the daily chart - if it sits at/below the MEDIAN
+    # price, then after the decrease find the minimum point, and after it
+    # stops, buy on the 3rd candle"): track the fade's bottom LOW and when it
+    # was last touched; the release fires 3 bars after the bottom held.
+    gap_lo = [None] * n        # the fade's minimum low so far
+    gap_lo_i = [None] * n      # bar index of that minimum's LAST touch
+    gap_dip_ok = [False] * n   # latched: bottom held 3 bars + 2-of-3 rises
     gap_news_ok = [False] * n  # BIG NEWS during the session lifts the gap pause
                                # (boss 2026-08-27 night: "if we have big news
                                # during market time we can join") - big = 3+
@@ -2125,6 +2148,25 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 gap_fade[si] = True
             if gap_fade[si] and up[si] >= 3:
                 gap_ok[si] = True
+        # median-dip3 bookkeeping (boss 2026-09-03): once the fade has begun,
+        # follow its bottom low; 3 bars after the bottom's last touch, if no
+        # new low came, price sits within 1.5% of it and 2 of the last 3
+        # closes rose, the dip has STOPPED and turned - latch the release.
+        if gap_fade[si] and not gap_dip_ok[si]:
+            _glo9 = (s.get("lows") or closes)[i]
+            if gap_lo[si] is None or _glo9 <= gap_lo[si]:
+                gap_lo[si] = _glo9
+                gap_lo_i[si] = i
+            elif (gap_lo_i[si] is not None and i >= gap_lo_i[si] + 3
+                  # the decrease must be REAL before a bottom counts (the
+                  # SK하이닉스 09:03 mini-pause at -0.24% was not "the minimum
+                  # point" - his 09:33 exhibit sits under the true 09:30
+                  # bottom at -1.6% below the open): fade >= 1% below open
+                  and gap_lo[si] <= (s.get("open_px") or closes[0]) * 0.99
+                  and c <= gap_lo[si] * 1.015
+                  and sum(1 for _j9 in (i - 2, i - 1, i)
+                          if _j9 >= 1 and closes[_j9] > closes[_j9 - 1]) >= 2):
+                gap_dip_ok[si] = True
         if (not gap_news_ok[si]) and s.get("news_hits") and s.get("times"):
             try:
                 _tb9 = str(s["times"][i])
@@ -2354,7 +2396,19 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                       # done"): the pause lifts the moment the fade has BOTH
                       # happened (price below its own open) and ENDED (3
                       # consecutive rises) - at 09:05 or 11:00 alike.
-                      (not gap_ok[si])
+                      # MEDIAN-DIP3 (boss 2026-09-03 15:4x): a gap-up starter
+                      # sitting at/below the MEDIAN of its 1-year daily chart
+                      # waits for the fade's bottom to hold 3 bars and turn
+                      # (the SK하이닉스 09:33 exhibit); above the median the
+                      # old below-open release stands.
+                      (((not gap_dip_ok[si])
+                        if (s.get("daily_pos") is not None
+                            # "at the median or below" with rounding room —
+                            # SK하이닉스 read 51% on his own exhibit day
+                            and float(s["daily_pos"]) <= 0.55)
+                        else (c >= (s.get("open_px") or closes[0]))))
+                      if v.get("gap_wait") == "median_dip3"
+                      else (not gap_ok[si])
                       if v.get("gap_wait") == "turn3"
                       # the RELEASE LINE is the TRUE OPEN, not the first
                       # minute's close (caught live 2026-08-28 09:29: NAVER
