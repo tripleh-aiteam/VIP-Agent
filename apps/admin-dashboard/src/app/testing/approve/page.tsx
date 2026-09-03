@@ -566,10 +566,85 @@ export default function ApprovePage() {
               </div>)}
           </div>);
       })()}
-      {/* ─ 📜 TRADING HISTORY — always visible ─ */}
+      {/* ─ 📜 TRADING HISTORY, Menu-2 style (boss 2026-09-03 13:0x: "the table
+          looks weird and difficult to follow - make TWO tables: a trading list
+          with ALL agent suggestions even not dealt, and a trading history
+          clear like our Menu 2 Algo 3") — grouped per stock: ▲ buys, ▼ sells,
+          % and money, holding-now on top, completed underneath ─ */}
+      {(() => {
+        const done = (feed?.log || [])
+          .filter((l) => l.side === "SELL" && (l.dealt === true || l.fill) && l.buy_price != null)
+          .sort((a, b) => (b.at || "").localeCompare(a.at || ""));
+        const holds = feed?.held || [];
+        const wins2 = done.filter((l) => (l.pnl_won ?? 0) > 0).length;
+        const loss2 = done.filter((l) => (l.pnl_won ?? 0) < 0).length;
+        const tot = done.reduce((a, l) => a + (l.pnl_won ?? 0), 0);
+        const lineB: React.CSSProperties = { color: "#e53935", fontSize: 12.3, padding: "1px 0" };
+        const lineS: React.CSSProperties = { color: "#1e88e5", fontSize: 12.3, padding: "1px 0" };
+        return (
+          <div style={{ marginTop: 12, border: "1px solid rgba(46,125,50,0.45)", borderRadius: 10, padding: 12 }}>
+            <b style={{ fontSize: 13.5 }}>{t("📜 매매 기록", "📜 Trading history")}
+              <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6, marginLeft: 6 }}>
+                {t("깨끗한 매수→매도 기록 — 메뉴2 스타일", "clean buy→sell record — Menu 2 style")}</span></b>
+            {(done.length > 0 || holds.length > 0) && (
+              <div style={{ fontSize: 12, margin: "6px 0 2px", fontWeight: 700 }}>
+                {done.length}{t("판", " trips")} · <span style={{ color: "#c62828" }}>{wins2}{t("승", "W")}</span>{" "}
+                <span style={{ color: "#1565c0" }}>{loss2}{t("패", "L")}</span>
+                {" · "}{t("실현 손익 ", "realized P&L ")}
+                <b style={{ color: tot >= 0 ? "#e53935" : "#1e88e5" }}>
+                  {tot >= 0 ? "+" : ""}₩{tot.toLocaleString()}</b>
+                {" · "}{t("보유 ", "holding ")}{holds.length}
+              </div>)}
+            {done.length === 0 && holds.length === 0 && (
+              <div style={{ fontSize: 12.5, opacity: 0.6, padding: "8px 0" }}>
+                {t("아직 기록 없음 — 매수를 승인하면 여기부터 쌓입니다.", "Nothing yet — approve a buy and it builds here.")}</div>)}
+            {holds.length > 0 && (<>
+              <div style={{ fontSize: 11.5, marginTop: 8, opacity: 0.75, fontWeight: 700, color: "#2e7d32" }}>
+                ● {t("보유 중 — 거래가 아직 진행 중", "holding now — the trade is still running")}</div>
+              <table style={{ width: "100%", fontSize: 12.5, borderCollapse: "collapse" }}>
+                <tbody>{holds.map((h, i) => {
+                  const room = feed!.rooms.find((r) => r.code === h.code);
+                  const pnl = room?.pnl;
+                  return (
+                    <tr key={i} style={{ borderTop: "1px solid rgba(128,128,128,0.15)" }}>
+                      <td style={{ width: 130, padding: "5px 0", verticalAlign: "top" }}><b>🎞 {h.name}</b></td>
+                      <td style={{ padding: "5px 0" }}>
+                        <div style={lineB}>▲ {h.at} {W(h.price)} × {h.qty.toLocaleString()}{t("주", "sh")}</div>
+                        <div style={{ fontSize: 11.5, opacity: 0.75 }}>
+                          {t("보유 중 — 아직 매도 안 함", "holding — not sold yet")}
+                          {pnl != null && <b style={{ marginLeft: 6, color: pnl >= 0 ? "#e53935" : "#1e88e5" }}>
+                            {pnl >= 0 ? "+" : ""}{pnl}%</b>}
+                        </div></td>
+                      <td style={{ width: 110, textAlign: "right", opacity: 0.5 }}>—</td>
+                    </tr>);
+                })}</tbody>
+              </table></>)}
+            {done.length > 0 && (<>
+              <div style={{ fontSize: 11.5, marginTop: 10, opacity: 0.75, fontWeight: 700 }}>
+                ✓ {t("완료 — 매도까지 끝난 거래", "completed — already sold")}</div>
+              <table style={{ width: "100%", fontSize: 12.5, borderCollapse: "collapse" }}>
+                <tbody>{done.map((l, i) => (
+                  <tr key={i} style={{ borderTop: "1px solid rgba(128,128,128,0.15)" }}>
+                    <td style={{ width: 130, padding: "5px 0", verticalAlign: "top" }}><b>🎞 {l.name}</b></td>
+                    <td style={{ padding: "5px 0" }}>
+                      <div style={lineB}>▲ {l.buy_at} {W(l.buy_price)} × {l.qty.toLocaleString()}{t("주", "sh")}</div>
+                      <div style={lineS}>▼ {l.at} {W(l.fill)} × {l.qty.toLocaleString()}{t("주", "sh")}
+                        <b style={{ marginLeft: 6 }}>{(l.pnl_pct ?? 0) >= 0 ? "+" : ""}{l.pnl_pct}%</b>
+                        {l.converted && <span style={{ marginLeft: 6, fontSize: 10.5, opacity: 0.7 }}
+                          title={l.conv_note || ""}>⚡{t("시장가 전환", "switched to market")}</span>}
+                      </div></td>
+                    <td style={{ width: 110, textAlign: "right", verticalAlign: "top", paddingTop: 5,
+                                 fontWeight: 800, color: (l.pnl_won ?? 0) >= 0 ? "#e53935" : "#1e88e5" }}>
+                      {(l.pnl_won ?? 0) >= 0 ? "+" : "-"}₩{Math.abs(l.pnl_won ?? 0).toLocaleString()}</td>
+                  </tr>))}</tbody>
+              </table></>)}
+          </div>);
+      })()}
+
+      {/* ─ 📋 SUGGESTIONS LIST — every proposal & decision, dealt or not ─ */}
       <div style={{ marginTop: 12, border: "1px solid rgba(128,128,128,0.35)", borderRadius: 10, padding: 12 }}>
-        <b style={{ fontSize: 13.5 }}>{t("📜 매매 기록", "📜 Trading history")} <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6 }}>
-          {t("모든 제안과 결정 (승인·취소)", "every proposal and decision (approve / cancel)")}</span></b>
+        <b style={{ fontSize: 13.5 }}>{t("📋 거래 제안 목록", "📋 Trading list")} <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6 }}>
+          {t("에이전트의 모든 제안과 결정 — 미체결·포기·취소까지 전부", "every agent suggestion and decision — waiting, gave-up and cancelled included")}</span></b>
         {/* filter row (boss 2026-09-03 12:0x) */}
         {(feed?.log?.length || 0) > 0 && (() => {
           const sel: React.CSSProperties = {
@@ -663,22 +738,8 @@ export default function ApprovePage() {
                               {t("🏳 포기 (가격이 멀어짐)", "🏳 GAVE UP (price ran away)")} {guOpen === i ? "▲" : "▼"}</span>
                           : <span style={{ color: "#b26a00" }}>{t("🕐 미체결 (대기 중)", "🕐 NOT DEAL (waiting)")}</span>}</td>
                   <td>{l.fill ? W(l.fill) : "-"}</td></tr>
-                {/* THE ROUND TRIP UNDER THE SELL (boss 2026-09-03 12:5x: "put
-                    buying time, buying price, selling time, selling price and
-                    how much we gain with % and money") */}
-                {l.side === "SELL" && l.buy_price != null && l.fill != null && (
-                  <tr><td colSpan={8} style={{ padding: "4px 10px 7px", fontSize: 12,
-                        lineHeight: 1.5, borderLeft: `3px solid ${(l.pnl_won ?? 0) >= 0 ? "#e53935" : "#1e88e5"}`,
-                        background: (l.pnl_won ?? 0) >= 0 ? "rgba(229,57,53,0.06)" : "rgba(30,136,229,0.06)" }}>
-                    🔗 {t(`${l.buy_at} 매수 `, `bought ${l.buy_at} @ `)}<b>{W(l.buy_price)}</b>
-                    {" → "}{t(`${l.at} 매도 `, `sold ${l.at} @ `)}<b>{W(l.fill)}</b>
-                    <b style={{ marginLeft: 10, color: (l.pnl_won ?? 0) >= 0 ? "#e53935" : "#1e88e5" }}>
-                      {(l.pnl_pct ?? 0) >= 0 ? "+" : ""}{l.pnl_pct}% · {(l.pnl_won ?? 0) >= 0 ? "+" : ""}₩{Math.abs(l.pnl_won ?? 0) === 0 ? "0" : (l.pnl_won ?? 0).toLocaleString()}
-                    </b>
-                    <span style={{ opacity: 0.55, marginLeft: 8 }}>
-                      ({l.qty.toLocaleString()}{t("주", " sh")})</span>
-                  </td></tr>)}
-                {/* the clicked give-up row unfolds its own law */}
+                {/* the clicked give-up row unfolds its own law (the round-trip
+                    detail lives in the clean 📜 history table above) */}
                 {l.gave_up && guOpen === i && (
                   <tr><td colSpan={8} style={{ padding: "8px 10px", fontSize: 12.5,
                         background: "rgba(142,36,170,0.07)", lineHeight: 1.6,
