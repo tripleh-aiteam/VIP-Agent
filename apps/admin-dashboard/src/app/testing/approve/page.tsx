@@ -4,7 +4,7 @@
    buttons approve or cancel. Ten rooms (the six + top-4 by checklist), click a
    room = watch the agent work with real numbers, popups carry easy-word reasons,
    nothing trades without the human click." Simple on purpose — it is a stage. */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useLanguage } from "@/components/i18n";
 import { API } from "../../../components/api";
 
@@ -77,6 +77,7 @@ export default function ApprovePage() {
   const [brain, setBrain] = useState<Brain | null>(null);
   const [thinkIdx, setThinkIdx] = useState(0);
   const [edits, setEdits] = useState<Record<number, { qty?: number; price?: number }>>({});
+  const [guOpen, setGuOpen] = useState<number | null>(null);   // opened give-up detail row
   const [open, setOpen] = useState<string | null>(null);          // opened room code
   const [steps, setSteps] = useState<Step[]>([]);
   const [shown, setShown] = useState(0);                          // animated step count
@@ -520,8 +521,27 @@ export default function ApprovePage() {
           : <table style={{ width: "100%", fontSize: 12.5, marginTop: 6, borderCollapse: "collapse" }}>
               <thead><tr style={{ opacity: 0.6, textAlign: "left" }}>
                 <th>{t("시각", "Time")}</th><th>{t("구분", "Side")}</th><th>{t("종목", "Stock")}</th><th>{t("수량", "Qty")}</th><th>{t("제안가", "Proposed")}</th><th>{t("결정", "Decision")}</th><th>{t("체결 여부", "Dealt?")}</th><th>{t("체결가", "Fill")}</th></tr></thead>
-              <tbody>{feed!.log.slice(0, 25).map((l, i) => (
-                <tr key={i} style={{ borderTop: "1px solid rgba(128,128,128,0.2)" }}>
+              <tbody>{feed!.log.slice(0, 25).map((l, i) => {
+                // THE GIVE-UP LAW, per stock (boss 2026-09-03 11:5x: "remove the
+                // give-up table; inside trading history make give-up cases
+                // clickable and show the limitation, like SK하이닉스 2000") —
+                // limits from the 1-year minute-bar study (tools/giveup_study.py)
+                const GU: Record<string, { w: number; ko: string; en: string }> = {
+                  "000660": { w: 2000, ko: "2틱 이상 멀어진 뒤의 체결은 평균 손실", en: "fills after a 2-tick runaway lose on average" },
+                  "005930": { w: 400, ko: "4틱 이후 기다림의 기대수익 0 이하", en: "waiting earns nothing past 4 ticks" },
+                  "035420": { w: 3000, ko: "6틱 이후 재체결 확률 40% 미만", en: "comeback chance under 40% past 6 ticks" },
+                  "017670": { w: 1100, ko: "11틱까지는 기다림이 이익 — 그 뒤 손실", en: "patience pays to 11 ticks, then turns negative" },
+                  "042660": { w: 400, ko: "4틱 이후 기다림의 기대수익 0 이하", en: "waiting earns nothing past 4 ticks" },
+                  "034020": { w: 500, ko: "5틱 이후 기다림의 기대수익 0 이하", en: "waiting earns nothing past 5 ticks" },
+                };
+                const tick = (p: number) => p < 2000 ? 1 : p < 5000 ? 5 : p < 20000 ? 10
+                  : p < 50000 ? 50 : p < 200000 ? 100 : p < 500000 ? 500 : 1000;
+                const gu = GU[l.code] || { w: 4 * tick(l.price || 0),
+                  ko: "기본 규칙: 가격대 4틱 (연구한 6종목의 중앙값)",
+                  en: "default rule: 4 ticks of its price band (median of the studied six)" };
+                return (
+                <Fragment key={i}>
+                <tr style={{ borderTop: "1px solid rgba(128,128,128,0.2)" }}>
                   <td style={{ padding: "4px 0", opacity: 0.7 }}>{l.at}</td>
                   <td style={{ color: l.side === "BUY" ? "#e53935" : "#1e88e5", fontWeight: 700 }}>
                     {l.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")}</td>
@@ -540,41 +560,32 @@ export default function ApprovePage() {
                       : (l.dealt === true || l.fill)
                         ? <span style={{ color: "#2e7d32" }}>{t("✅ 체결 완료", "✅ DEAL")}</span>
                         : l.gave_up
-                          ? <span style={{ color: "#8e24aa" }} title={l.giveup_note || ""}>
-                              {t("🏳 포기 (가격이 멀어짐)", "🏳 GAVE UP (price ran away)")}</span>
+                          ? <span onClick={() => setGuOpen(guOpen === i ? null : i)}
+                                  style={{ color: "#8e24aa", cursor: "pointer",
+                                           textDecoration: "underline dotted",
+                                           textUnderlineOffset: 3 }}
+                                  title={t("클릭하면 이 종목의 포기 한도를 보여줍니다", "click to see this stock's give-up limit")}>
+                              {t("🏳 포기 (가격이 멀어짐)", "🏳 GAVE UP (price ran away)")} {guOpen === i ? "▲" : "▼"}</span>
                           : <span style={{ color: "#b26a00" }}>{t("🕐 미체결 (대기 중)", "🕐 NOT DEAL (waiting)")}</span>}</td>
-                  <td>{l.fill ? W(l.fill) : "-"}</td></tr>))}</tbody>
+                  <td>{l.fill ? W(l.fill) : "-"}</td></tr>
+                {/* the clicked give-up row unfolds its own law */}
+                {l.gave_up && guOpen === i && (
+                  <tr><td colSpan={8} style={{ padding: "8px 10px", fontSize: 12.5,
+                        background: "rgba(142,36,170,0.07)", lineHeight: 1.6,
+                        borderLeft: "3px solid #8e24aa" }}>
+                    🏳 <b>{l.name}</b> {t("포기 한도: ", "give-up limit: ")}
+                    <b style={{ color: "#8e24aa", fontSize: 13.5 }}>₩{gu.w.toLocaleString()}</b>
+                    {" — "}
+                    {t(`제안가 ${W(l.price)}에서 ₩${gu.w.toLocaleString()} 이상 멀어지면 기다리지 않고 포기합니다.`,
+                       `once price runs ₩${gu.w.toLocaleString()} away from the offer ${W(l.price)}, we stop waiting.`)}
+                    <div style={{ fontSize: 11.5, opacity: 0.75, marginTop: 2 }}>
+                      {t(`근거 (1년 분봉 연구): ${gu.ko}`, `why (1-year minute-bar study): ${gu.en}`)}
+                      {l.giveup_note ? <><br />{l.giveup_note}</> : null}
+                    </div>
+                  </td></tr>)}
+                </Fragment>);
+              })}</tbody>
             </table>}
-      </div>
-
-      {/* ─ 🏳 THE GIVE-UP LAW (boss 2026-09-03: "make a table for give up price,
-          different for each stock, find the best efficient limitation with our
-          historical data") — a waiting limit is cancelled once the live price
-          runs this far away from the offer ─ */}
-      <div style={{ marginTop: 12, border: "1px solid rgba(142,36,170,0.5)", borderRadius: 10, padding: 12 }}>
-        <b style={{ fontSize: 13.5 }}>{t("🏳 포기 규칙 — 종목별 한계", "🏳 Give-up rule — per-stock limits")}
-          <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6, marginLeft: 6 }}>
-            {t("제안가에서 이만큼 멀어지면 주문을 포기(취소)합니다 — 1년 분봉 연구로 정한 값",
-               "an unfilled offer is abandoned once price runs this far away — set by a 1-year minute-bar study")}</span></b>
-        <table style={{ width: "100%", fontSize: 12.5, marginTop: 6, borderCollapse: "collapse" }}>
-          <thead><tr style={{ opacity: 0.6, textAlign: "left" }}>
-            <th>{t("종목", "Stock")}</th><th>{t("포기 한계", "Give-up limit")}</th><th>{t("근거", "Why")}</th></tr></thead>
-          <tbody>
-            {[
-              { n: "SK하이닉스", w: "₩2,000", ko: "2틱 이상 멀어진 뒤의 체결은 평균 손실 (-0.08%~)", en: "fills after a 2-tick runaway lose on average" },
-              { n: "삼성전자", w: "₩400", ko: "4틱 이후 기다림의 기대수익 0 이하", en: "waiting earns nothing past 4 ticks" },
-              { n: "NAVER", w: "₩3,000", ko: "6틱 이후 재체결 확률 40% 미만", en: "comeback chance under 40% past 6 ticks" },
-              { n: "SK텔레콤", w: "₩1,100", ko: "11틱까지는 기다림이 이익 — 그 뒤 손실", en: "patience pays to 11 ticks, then turns negative" },
-              { n: "한화오션", w: "₩400", ko: "4틱 이후 기다림의 기대수익 0 이하", en: "waiting earns nothing past 4 ticks" },
-              { n: "두산에너빌리티", w: "₩500", ko: "5틱 이후 기다림의 기대수익 0 이하", en: "waiting earns nothing past 5 ticks" },
-              { n: t("그 외 모든 종목", "every other stock"), w: t("4틱 (가격대별)", "4 ticks (of its price band)"), ko: "연구한 6종목의 중앙값", en: "the median of the studied six" },
-            ].map((r, i) => (
-              <tr key={i} style={{ borderTop: "1px solid rgba(128,128,128,0.2)" }}>
-                <td style={{ padding: "4px 0" }}><b>{r.n}</b></td>
-                <td style={{ fontWeight: 800, color: "#8e24aa" }}>{r.w}</td>
-                <td style={{ opacity: 0.8 }}>{t(r.ko, r.en)}</td></tr>))}
-          </tbody>
-        </table>
       </div>
 
       {/* ─ suggestion POPUPS ─ */}
