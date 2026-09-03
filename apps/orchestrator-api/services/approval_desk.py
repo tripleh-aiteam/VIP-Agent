@@ -757,6 +757,11 @@ def _reconcile_fills(db, st) -> None:
             if row and str(row[0]) == "FILLED" and row[1]:
                 l["dealt"] = True
                 l["fill"] = float(row[1])
+                if "전환" in str(row[2] or ""):
+                    # the give-up law converted a stale SELL limit to market —
+                    # the history says so instead of pretending the limit dealt
+                    l["converted"] = True
+                    l["conv_note"] = str(row[2])
                 if l.get("side") == "BUY":
                     st.setdefault("held", []).append(
                         {"code": l["code"], "name": l["name"], "qty": int(l["qty"]),

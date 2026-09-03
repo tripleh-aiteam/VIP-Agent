@@ -15,7 +15,8 @@ type Room = { code: string; name: string; score?: number | null; price?: number 
 type Sug = { id: number; hhmm: string; code: string; name: string; side: "BUY" | "SELL";
              reasons: string[]; reasons_en?: string[]; price: number; qty: number; score?: number | null };
 type LogRow = Sug & { decision: string; fill?: number | null; at: string; dealt?: boolean;
-                      gave_up?: boolean; giveup_note?: string };
+                      gave_up?: boolean; giveup_note?: string;
+                      converted?: boolean; conv_note?: string };
 type Stats = { trips: number; wins: number; losses: number; win_pct: number;
                net_won: number; invested: number; open_n: number; open_unreal: number;
                best?: { name: string; pct: number } | null;
@@ -647,7 +648,10 @@ export default function ApprovePage() {
                     {l.decision !== "승인"
                       ? <span style={{ color: "#c62828" }}>{t("✖ 미체결 (취소)", "✖ NOT DEAL (cancelled)")}</span>
                       : (l.dealt === true || l.fill)
-                        ? <span style={{ color: "#2e7d32" }}>{t("✅ 체결 완료", "✅ DEAL")}</span>
+                        ? <span style={{ color: "#2e7d32" }} title={l.conv_note || ""}>
+                            {l.converted
+                              ? t("✅ 체결 (⚡시장가 전환)", "✅ DEAL (⚡switched to market)")
+                              : t("✅ 체결 완료", "✅ DEAL")}</span>
                         : l.gave_up
                           ? <span onClick={() => setGuOpen(guOpen === i ? null : i)}
                                   style={{ color: "#8e24aa", cursor: "pointer",
