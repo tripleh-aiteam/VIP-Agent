@@ -155,6 +155,79 @@ def chat_mirror(code: str, name: str, side: str, qty: int, fill: float) -> bool:
     return True
 
 
+def _enrich_log_rows(st: dict) -> None:
+    """DETAILED WHYS ON EVERY ROW, applied by the scanner itself (boss
+    2026-09-03 17:2x: 'reasons again not good — write more detail, start with
+    we have checked the 100 checklist, give the inspection and the score').
+    Runs inside scan() — the same writer that saves the file — so no
+    concurrent save can ever clobber the enrichment. Idempotent: a row that
+    already carries check_items and full reasons is skipped."""
+    def _score(code):
+        try:
+            from services.checklist_reco import _ranking
+            rows = (_ranking() or {}).get("rows") or []
+            me = next((r for r in rows if str(r.get("code")) == code), None)
+            return me.get("score") if me else None
+        except Exception:
+            return None
+    for l in st.get("log") or []:
+        if l.get("hidden") or l.get("decision") != "승인":
+            continue
+        code, name = l.get("code"), l.get("name")
+        try:
+            if not l.get("check_items"):
+                l["check_items"] = _check_items(code)
+            if l.get("score") is None:
+                l["score"] = _score(code)
+            sc = l.get("score")
+            sc_ko = f" — 오늘 {sc}점." if sc is not None else "."
+            sc_en = f" — today {sc} pts." if sc is not None else "."
+            if l.get("side") == "BUY" and (
+                    len(l.get("reasons") or []) <= 2
+                    or sum(1 for x in l.get("reasons") or [] if "📋" in str(x)) > 1):
+                head_ko = (l.get("reasons") or [""])[0]
+                head_en = (l.get("reasons_en") or [head_ko])[0]
+                try:
+                    R, E = _why_buy(code, name, {"buy_t": l.get("at")})
+                except Exception:
+                    R, E = [], []
+                # _why_buy already leads with its own 📋 checklist statement
+                l["reasons"] = [head_ko] + R
+                l["reasons_en"] = [head_en] + E
+            elif (l.get("side") == "SELL" and l.get("fill")
+                  and not any("📋" in str(x) for x in l.get("reasons") or [])):
+                bp = l.get("buy_price")
+                fp = float(l["fill"])
+                pnl = l.get("pnl_pct")
+                prof = (pnl or 0) > 0
+                R = ["📋 100 체크리스트 전 항목을 검사한 종목입니다" + sc_ko,
+                     "① 계속 오르던 상승이 멈추고 내려가기 시작했습니다."]
+                E = ["📋 All 100 checklist items were inspected" + sc_en,
+                     "① The continuous rise stopped and price started to decrease."]
+                if bp and pnl is not None:
+                    R.append(f"② 매수가 ₩{float(bp):,.0f} ({l.get('buy_at') or '?'}) → "
+                             f"매도가 ₩{fp:,.0f} ({l.get('at')}) = {pnl:+.2f}% 확정.")
+                    E.append(f"② Bought ₩{float(bp):,.0f} ({l.get('buy_at') or '?'}) → "
+                             f"sold ₩{fp:,.0f} ({l.get('at')}) = {pnl:+.2f}% realised.")
+                if prof:
+                    R.append("③ 우리의 매도 규칙 — 상승이 끝나고 총 -1% 하락하면 전량 매도합니다. "
+                             "이 매도는 -1%에 닿기 전에 이익을 확정했습니다.")
+                    E.append("③ Our selling rule — when the rise ends and the total fall reaches -1%, "
+                             "we sell it all. This sell locked the profit BEFORE the -1% line was hit.")
+                else:
+                    R.append("③ 우리의 매도 규칙 — 상승이 끝나고 매수가 대비 총 -1% 하락에 도달하여 "
+                             "규칙대로 전량 매도했습니다.")
+                    E.append("③ Our selling rule — the rise ended and the total decrease reached -1% "
+                             "below our buy, so we sold it all by the rule.")
+                if l.get("conv_note"):
+                    R.append(f"④ {l['conv_note']}")
+                    E.append("④ The waiting limit was abandoned and switched to market — "
+                             "a sell never waits while price runs away.")
+                l["reasons"], l["reasons_en"] = R, E
+        except Exception:
+            continue
+
+
 def process_steps(db, code: str, name: str) -> list[dict]:
     """The room's 'what the agent is doing' — REAL numbers, easy words.
     Bilingual (boss 2026-09-03: 'in English mode it should be English')."""
@@ -321,6 +394,17 @@ def _check_items(code: str) -> list[dict]:
         from services.checklist_reco import _ranking
         rows = (_ranking() or {}).get("rows") or []
         me = next((r for r in rows if str(r.get("code")) == code), None)
+        if not me:
+            # the six often fall OUT of the gated ranking — the full daily
+            # pick still carries their inspection (same fallback the room
+            # scores use), read in-process, never over HTTP to ourselves
+            try:
+                from services.daily_pick import pick
+                from services.kiwoom_tape import _day as _kd
+                rows2 = (pick(_kd()) or {}).get("rows") or []
+                me = next((r for r in rows2 if str(r.get("code")) == code), None)
+            except Exception:
+                me = None
         out = []
         for gk, lst in ((me or {}).get("detail") or {}).items():
             for it in (lst or []):
@@ -390,6 +474,12 @@ def scan(db) -> dict:
                  if not any("테스트" in str(x) for x in l.get("reasons") or [])]
     # a queued limit approval that has since filled flips 미체결 → 체결
     _reconcile_fills(db, st)
+    # thin rows (👑/💬 one-liners, pre-law sells) gain their detailed whys —
+    # done HERE, by the file's own writer, so no save can race it away
+    try:
+        _enrich_log_rows(st)
+    except Exception:
+        pass
     # room meta snapshot (score + zone) computed HERE in the background so the
     # instant feed never blocks on cold caches; the top-4 rotate automatically
     # as the checklist re-scores (ranking cache ~10 min)
@@ -1015,15 +1105,23 @@ def _why_buy(code: str, name: str, hold: dict):
                 score = rm.get("score")
         except Exception:
             pass
+    # THE CHECKLIST STATEMENT LEADS (boss 2026-09-03 17:2x: "start write we
+    # have checked the 100 checklist in the buying case, then second…"): it
+    # slots right under the ✅ verdict — the short verdict keeps first place
+    # (his 09:1x law), the inspection statement with the SCORE comes second.
     if score is not None and rank is not None:
-        R.append(f"⑤ 📋 100 체크리스트 검사 완료 — {score}점 · {tot}종목 중 {rank}등 (점수가 높을수록 좋은 종목).")
-        E.append(f"⑤ 📋 100-item checklist checked — {score} pts · rank {rank} of {tot} (higher score = better stock).")
+        _ck = (f"📋 100 체크리스트 전 항목을 검사했습니다 — {score}점 · {tot}종목 중 {rank}등 "
+               f"(점수가 높을수록 좋은 종목 · 전체 검사 내역은 아래 클릭).")
+        _ce = (f"📋 We checked ALL 100 checklist items — {score} pts · rank {rank} of {tot} "
+               f"(higher score = better stock · click below for the full inspection).")
     elif score is not None:
-        R.append(f"⑤ 📋 100 체크리스트 검사 완료 — 오늘 점수 {score}점 (점수가 높을수록 좋은 종목).")
-        E.append(f"⑤ 📋 100-item checklist checked — today {score} pts (higher score = better stock).")
+        _ck = f"📋 100 체크리스트 전 항목을 검사했습니다 — 오늘 {score}점 (전체 검사 내역은 아래 클릭)."
+        _ce = f"📋 We checked ALL 100 checklist items — today {score} pts (click below for the full inspection)."
     else:
-        R.append("⑤ 📋 100 체크리스트 전 항목 검사 완료 — 오늘 점수는 집계 중입니다.")
-        E.append("⑤ 📋 All 100 checklist items checked — today's score is still computing.")
+        _ck = "📋 100 체크리스트 전 항목을 검사했습니다 — 오늘 점수는 집계 중입니다."
+        _ce = "📋 We checked ALL 100 checklist items — today's score is still computing."
+    R.insert(1, _ck)
+    E.insert(1, _ce)
     return R, E
 
 

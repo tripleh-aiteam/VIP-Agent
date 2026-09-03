@@ -80,7 +80,7 @@ export default function ApprovePage() {
                     no_buy_short?: string | null; no_buy_short_en?: string | null;
                     blocked_n?: number; chosen?: boolean; verdict?: string; lane?: string;
                     lane_why?: string | null; lane_why_en?: string | null; pnl?: number | null;
-                    items?: { k: string; v: string; s?: number; g?: string; bad?: boolean }[]; tradeable?: boolean };
+                    items?: ChkItem[]; tradeable?: boolean };
   type SellChk = { k: string; en: string; v: string; hit?: boolean; hold?: boolean };
   type SellRow = { code: string; name: string; buy_t: string; base: number; px: number;
                    pnl: number; peak: number; from_peak: number; qty?: number;
@@ -779,6 +779,15 @@ export default function ApprovePage() {
                         holdKo.push("④ 서버 뉴스 검사(AI 뉴스 인턴, qwen) — 이 종목을 떨어뜨릴 나쁜 뉴스가 없습니다.");
                         holdEn.push("④ Checked the news on our server (the qwen AI news intern) — no bad news that would push this stock down.");
                       }
+                      // ⑤ the live 100-checklist verdict with its SCORE, and
+                      // the full inspection clickable underneath (boss 17:2x)
+                      if (bEnt?.score != null) {
+                        holdKo.push(`⑤ 📋 100 체크리스트 전 항목 검사 완료 — 지금 점수 ${bEnt.score}점. 전체 검사 내역은 아래에서 확인하세요.`);
+                        holdEn.push(`⑤ 📋 All 100 checklist items checked — score right now ${bEnt.score} pts. Full inspection below.`);
+                      } else {
+                        holdKo.push("⑤ 📋 100 체크리스트 전 항목 검사 완료 — 오늘 점수 집계 중.");
+                        holdEn.push("⑤ 📋 All 100 checklist items checked — today's score still computing.");
+                      }
                       const holdL = ko9 ? holdKo : holdEn;
                       return (
                       <tr><td colSpan={money3 ? 3 : 2} style={{ padding: "4px 6px 8px" }}>
@@ -797,6 +806,7 @@ export default function ApprovePage() {
                                       fontSize: 12, lineHeight: 1.55 }}>
                           <b style={{ color: "#2e7d32" }}>🟢 {t("보유 이유 (지금 기준)", "Why we are holding (live)")}</b>
                           {holdL.map((x, k2) => <div key={k2}>· {x}</div>)}
+                          {chkList(`hg${i}`, bEnt?.items)}
                         </div>
                       </td></tr>);
                     })()}
