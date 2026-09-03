@@ -1025,9 +1025,9 @@ export default function ApprovePage() {
           reasons made the cards tall, so extra proposals fold into slim
           clickable bars above the active card; the stack itself scrolls if
           even one card outgrows the screen. ─ */}
-      <div style={{ position: "fixed", right: 16, bottom: 16, width: 340, zIndex: 60,
-                    display: "flex", flexDirection: "column", gap: 8,
-                    maxHeight: "calc(100vh - 32px)", overflowY: "auto" }}>
+      <div style={{ position: "fixed", right: 14, bottom: 14, width: 290, zIndex: 60,
+                    display: "flex", flexDirection: "column", gap: 7,
+                    maxHeight: "calc(100vh - 28px)", overflowY: "auto" }}>
         {(feed?.pending || []).map((p, _pi, _arr) => {
           const actId = _arr.some((x) => x.id === popTop) ? popTop : _arr[_arr.length - 1]?.id;
           if (p.id !== actId) {
@@ -1064,29 +1064,29 @@ export default function ApprovePage() {
           const set = (k: "qty" | "price", v: number) =>
             setEdits((m) => ({ ...m, [p.id]: { ...(m[p.id] || {}), [k]: v } }));
           const inp: React.CSSProperties = {
-            width: "100%", padding: "7px 9px", borderRadius: 7, fontSize: 14,
+            width: "100%", padding: "5px 8px", borderRadius: 7, fontSize: 12.5,
             fontWeight: 800, textAlign: "right", background: "#f6f8fa",
             color: "#12161b", border: "2px solid #9aa5b1" };
           return (
           <div key={p.id} style={{ border: `2px solid ${p.side === "BUY" ? "#e53935" : "#1e88e5"}`,
-                                   borderRadius: 12, padding: 13, background: "#ffffff",
+                                   borderRadius: 12, padding: 10, background: "#ffffff",
                                    color: "#12161b",
                                    boxShadow: "0 10px 32px rgba(0,0,0,0.35)" }}>
-            <div style={{ fontWeight: 900, fontSize: 15,
+            <div style={{ fontWeight: 900, fontSize: 13.5,
                           color: p.side === "BUY" ? "#c62828" : "#1565c0" }}>
               {p.side === "BUY" ? t("🔴 매수 제안", "🔴 BUY proposal") : t("🔵 매도 제안", "🔵 SELL proposal")} — {p.name}
               <span style={{ float: "right", fontSize: 11.5, fontWeight: 700, color: "#5b6570" }}>{p.hhmm}</span>
             </div>
-            <ul style={{ margin: "7px 0 9px 15px", padding: 0, color: "#22282f" }}>
+            {/* the reasons scroll INSIDE the card (boss 2026-09-03 17:4x:
+                "make it a little smaller — I cannot see other text") */}
+            <ul style={{ margin: "6px 0 7px 13px", padding: 0, color: "#22282f",
+                         maxHeight: 170, overflowY: "auto" }}>
               {(t("k", "e") === "k" ? p.reasons : (p.reasons_en || p.reasons)).map((x, i2) => {
-                // the label before the dash carries the point - bold it so the room
-                // reads the WHY at a glance (boss 2026-09-03 11:0x: "background
-                // white to easily read, important facts in bold letter")
                 const cut = x.indexOf("—") >= 0 ? x.indexOf("—") : x.indexOf(" - ");
                 const head = cut > 0 ? x.slice(0, cut) : "";
                 const tail = cut > 0 ? x.slice(cut) : x;
                 return (
-                  <li key={i2} style={{ fontSize: 12.6, margin: "4px 0", lineHeight: 1.5 }}>
+                  <li key={i2} style={{ fontSize: 11.6, margin: "3px 0", lineHeight: 1.42 }}>
                     {head && <b style={{ color: "#12161b" }}>{head}</b>}{tail}
                   </li>);
               })}
@@ -1108,8 +1108,8 @@ export default function ApprovePage() {
                   onChange={(e) => set("qty", Number(e.target.value))} />
               </div>
             </div>
-            <div style={{ fontSize: 13, marginBottom: 9, color: "#3c4753" }}>
-              {t("합계 ", "Total ")}<b style={{ color: "#12161b", fontSize: 14 }}>{W(Math.round(pv * qv))}</b>
+            <div style={{ fontSize: 11.8, marginBottom: 7, color: "#3c4753" }}>
+              {t("합계 ", "Total ")}<b style={{ color: "#12161b", fontSize: 12.6 }}>{W(Math.round(pv * qv))}</b>
               {changed && <b style={{ marginLeft: 8, color: "#b26a00" }}>
                 {t("· 수정됨 (에이전트 제안: ", "· edited (agent proposed ")}
                 {W(p.price)} × {p.qty.toLocaleString()}{t("주)", ")")}</b>}
@@ -1118,11 +1118,11 @@ export default function ApprovePage() {
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button disabled={busy === p.id} onClick={() => decide(p.id, true, pv, qv)}
-                style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: "none", fontWeight: 900,
-                         fontSize: 14, background: "#e53935", color: "#fff", cursor: "pointer" }}>
+                style={{ flex: 1, padding: "7px 0", borderRadius: 8, border: "none", fontWeight: 900,
+                         fontSize: 12.5, background: "#e53935", color: "#fff", cursor: "pointer" }}>
                 {t("✅ 승인", "✅ APPROVE")}</button>
               <button disabled={busy === p.id} onClick={() => decide(p.id, false)}
-                style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontWeight: 800, fontSize: 14,
+                style={{ flex: 1, padding: "7px 0", borderRadius: 8, fontWeight: 800, fontSize: 12.5,
                          border: "2px solid #6b7684", background: "#e9edf1",
                          color: "#22282f", cursor: "pointer" }}>
                 {t("✖ 취소", "✖ CANCEL")}</button>
