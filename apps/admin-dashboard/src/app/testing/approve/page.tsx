@@ -547,6 +547,36 @@ export default function ApprovePage() {
             </table>}
       </div>
 
+      {/* ─ 🏳 THE GIVE-UP LAW (boss 2026-09-03: "make a table for give up price,
+          different for each stock, find the best efficient limitation with our
+          historical data") — a waiting limit is cancelled once the live price
+          runs this far away from the offer ─ */}
+      <div style={{ marginTop: 12, border: "1px solid rgba(142,36,170,0.5)", borderRadius: 10, padding: 12 }}>
+        <b style={{ fontSize: 13.5 }}>{t("🏳 포기 규칙 — 종목별 한계", "🏳 Give-up rule — per-stock limits")}
+          <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6, marginLeft: 6 }}>
+            {t("제안가에서 이만큼 멀어지면 주문을 포기(취소)합니다 — 1년 분봉 연구로 정한 값",
+               "an unfilled offer is abandoned once price runs this far away — set by a 1-year minute-bar study")}</span></b>
+        <table style={{ width: "100%", fontSize: 12.5, marginTop: 6, borderCollapse: "collapse" }}>
+          <thead><tr style={{ opacity: 0.6, textAlign: "left" }}>
+            <th>{t("종목", "Stock")}</th><th>{t("포기 한계", "Give-up limit")}</th><th>{t("근거", "Why")}</th></tr></thead>
+          <tbody>
+            {[
+              { n: "SK하이닉스", w: "₩2,000", ko: "2틱 이상 멀어진 뒤의 체결은 평균 손실 (-0.08%~)", en: "fills after a 2-tick runaway lose on average" },
+              { n: "삼성전자", w: "₩400", ko: "4틱 이후 기다림의 기대수익 0 이하", en: "waiting earns nothing past 4 ticks" },
+              { n: "NAVER", w: "₩3,000", ko: "6틱 이후 재체결 확률 40% 미만", en: "comeback chance under 40% past 6 ticks" },
+              { n: "SK텔레콤", w: "₩1,100", ko: "11틱까지는 기다림이 이익 — 그 뒤 손실", en: "patience pays to 11 ticks, then turns negative" },
+              { n: "한화오션", w: "₩400", ko: "4틱 이후 기다림의 기대수익 0 이하", en: "waiting earns nothing past 4 ticks" },
+              { n: "두산에너빌리티", w: "₩500", ko: "5틱 이후 기다림의 기대수익 0 이하", en: "waiting earns nothing past 5 ticks" },
+              { n: t("그 외 모든 종목", "every other stock"), w: t("4틱 (가격대별)", "4 ticks (of its price band)"), ko: "연구한 6종목의 중앙값", en: "the median of the studied six" },
+            ].map((r, i) => (
+              <tr key={i} style={{ borderTop: "1px solid rgba(128,128,128,0.2)" }}>
+                <td style={{ padding: "4px 0" }}><b>{r.n}</b></td>
+                <td style={{ fontWeight: 800, color: "#8e24aa" }}>{r.w}</td>
+                <td style={{ opacity: 0.8 }}>{t(r.ko, r.en)}</td></tr>))}
+          </tbody>
+        </table>
+      </div>
+
       {/* ─ suggestion POPUPS ─ */}
       <div style={{ position: "fixed", right: 16, bottom: 16, width: 340, zIndex: 60,
                     display: "flex", flexDirection: "column", gap: 10 }}>
