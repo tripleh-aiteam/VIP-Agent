@@ -14,7 +14,7 @@ type Room = { code: string; name: string; score?: number | null; price?: number 
               pnl?: number | null;
               news?: { stamp: string; title: string; link?: string | null } | null };
 type ChkItem = { k: string; v: string; s?: number | null; g?: string; bad?: boolean;
-                 link?: string | null };
+                 link?: string | null; en?: string; ven?: string };
 type Sug = { id: number; hhmm: string; code: string; name: string; side: "BUY" | "SELL";
              reasons: string[]; reasons_en?: string[]; price: number; qty: number; score?: number | null;
              check_items?: ChkItem[] };
@@ -106,6 +106,7 @@ export default function ApprovePage() {
   const [ckOpen, setCkOpen] = useState<string | null>(null);   // opened 100-checklist detail
   const [popTop, setPopTop] = useState<number | null>(null);   // which popup is up front
   const [popBig, setPopBig] = useState(false);                 // ⤢ expanded reading mode
+  const [nbOpen, setNbOpen] = useState<string | null>(null);   // ⛔ why-NOT-buying detail (per stock)
   const [money3, setMoney3] = useState(false);                 // 💰 money law: hidden by default (2026-08-19)
   const [open, setOpen] = useState<string | null>(null);          // opened room code
   const [steps, setSteps] = useState<Step[]>([]);
@@ -247,7 +248,7 @@ export default function ApprovePage() {
           {items.map((it, i9) => (
             <div key={i9} style={{ color: it.bad ? "#c62828" : "inherit",
                                    fontWeight: it.bad ? 700 : 400 }}>
-              {it.bad ? "✗" : "✓"} {it.k} — {it.v}{it.s != null ? ` · ${it.s}${t("점", " pts")}` : ""}
+              {it.bad ? "✗" : "✓"} {t(it.k, it.en || it.k)} — {t(it.v, it.ven || it.v)}{it.s != null ? ` · ${it.s}${t("점", " pts")}` : ""}
               {/* the news item opens the full article (boss 2026-09-03 19:4x) */}
               {it.link && <a href={it.link} target="_blank" rel="noreferrer"
                 onClick={(e) => e.stopPropagation()}
@@ -450,7 +451,11 @@ export default function ApprovePage() {
                   <div key={u.code} style={{ border: `2px solid ${colour}`, borderRadius: 10,
                       padding: "9px 10px", background: "var(--card,#fff)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                      <b style={{ fontSize: 13 }}>🔍 {sixSet.has(u.code) ? "📌 " : ""}{u.name}</b>
+                      <b style={{ fontSize: 13, cursor: "pointer",
+                                  textDecoration: "underline dotted", textUnderlineOffset: 3 }}
+                         onClick={() => setNbOpen(nbOpen === u.code ? null : u.code)}
+                         title={t("클릭하면 사지 않는(또는 사는) 이유를 숫자로 보여줍니다", "click for the buy / not-buy reasons with numbers")}>
+                        🔍 {sixSet.has(u.code) ? "📌 " : ""}{u.name} {nbOpen === u.code ? "▲" : "▼"}</b>
                       {u.pnl != null
                         ? <b style={{ fontSize: 11.5, color: u.pnl >= 0 ? "#c62828" : "#1565c0" }}>
                             {u.pnl >= 0 ? "+" : ""}{u.pnl}%</b>
@@ -479,6 +484,34 @@ export default function ApprovePage() {
                                     fontWeight: 700, lineHeight: 1.4 }}>
                         {t("매수 금지", "DO NOT BUY")} — {(t(u.lane_why || "", u.lane_why_en || "") || "").slice(0, 84)}
                       </div>)}
+                    {/* ⛔ click the name → the NOT-buying case in full numbers
+                        (boss 2026-09-03 20:0x: "when we click the stock name
+                        it should show clear reasons — gap-up not decreased to
+                        yesterday's price with numerical proof, no good news
+                        to push the price, selling zone, and the checklist") */}
+                    {nbOpen === u.code && (
+                      <div style={{ marginTop: 5, padding: "6px 8px", borderRadius: 8,
+                                    background: (u.gates || []).some((g) => g.bad)
+                                      ? "rgba(198,40,40,0.08)" : "rgba(46,125,50,0.08)",
+                                    fontSize: 10.8, lineHeight: 1.55 }}>
+                        <b style={{ color: (u.gates || []).some((g) => g.bad) ? "#c62828" : "#2e7d32" }}>
+                          {(u.gates || []).some((g) => g.bad)
+                            ? `⛔ ${t("사지 않는 이유 (숫자로)", "Why NOT buying — with numbers")}`
+                            : `✅ ${t("관문 전부 통과 — 진입 신호 대기", "All gates passed — waiting for the entry signal")}`}</b>
+                        {(u.gates || []).filter((g) => g.bad).map((g, j9) => (
+                          <div key={j9}>· {t(g.why || `${g.k} — ${g.v}`, g.why_en || `${g.en} — ${g.v}`)}</div>))}
+                        {(() => {
+                          const nw = (u.items || []).find((it) => it.g === "news");
+                          const good = nw && /호재|good/i.test(String(nw.v));
+                          const bad = nw && /위험|danger/i.test(String(nw.v));
+                          if (bad) return <div>· 📰 {t(`위험 뉴스가 있습니다 — ${nw!.v}`, `Danger news stands — ${nw!.ven || nw!.v}`)}</div>;
+                          if (good) return <div>· 📰 {t(`호재 뉴스는 있지만(${nw!.v}) 위 관문이 막고 있습니다.`, `Good news exists (${nw!.ven || nw!.v}) — but the gates above still block the buy.`)}</div>;
+                          return <div>· 📰 {t("가격을 밀어올릴 호재 뉴스가 없습니다.", "No good news that would push the price up.")}</div>;
+                        })()}
+                        {(u.gates || []).every((g) => !g.bad) && (
+                          <div>· {t("남은 것은 진입 신호뿐 — 최저점이 멈추고 3번째 캔들이 서면 팝업이 옵니다.",
+                                    "Only the entry signal remains — when the bottom holds and the 3rd candle stands, the popup comes.")}</div>)}
+                      </div>)}
                     {lane === "HOLD" && (
                       <div style={{ fontSize: 10.5, marginTop: 4, color: "#1565c0", fontWeight: 700 }}>
                         {t("🔵 보유 유지 — 매도 조건 미충족", "🔵 HOLD — no exit condition met")}</div>)}
@@ -499,7 +532,7 @@ export default function ApprovePage() {
                         {(u.items || []).map((it, n) => (
                           <div key={n} style={{ fontSize: 10, padding: "1px 0",
                                                 color: it.bad ? "#c62828" : "inherit" }}>
-                            {it.bad ? "✗" : "✓"} {it.k} <b>{it.v}</b>
+                            {it.bad ? "✗" : "✓"} {t(it.k, it.en || it.k)} <b>{t(it.v, it.ven || it.v)}</b>
                           </div>))}
                       </div>)}
                     {/* BUY only when a popup really exists; a stock that has

@@ -107,6 +107,70 @@ def desk_codes() -> list[tuple[str, str, float | None]]:
     return out[:10]
 
 
+def _vol_at(code: str, hhmm: str):
+    """Trading volume AT a moment, from today's Kiwoom tape (boss 2026-09-03
+    20:0x: 'if we buy at 14:09 it should be THAT time's trading volume').
+    Returns (minute_vol, mult_vs_avg_minute, cum_vol) or (None, None, None)."""
+    try:
+        import json as _j
+        from services.kiwoom_tape import _day as _kd
+        p = _FILE.parent / "kiwoom_tape" / f"{code}_{_kd()}.jsonl"
+        if not p.exists():
+            return None, None, None
+        per_min: dict = {}
+        with p.open(encoding="utf-8") as f:
+            for ln in f:
+                try:
+                    r = _j.loads(ln)
+                    t5 = str(r.get("t") or "")[:5]
+                    if t5:
+                        per_min[t5] = per_min.get(t5, 0) + int(r.get("qty") or 0)
+                except Exception:
+                    continue
+        if not per_min:
+            return None, None, None
+        keys = sorted(per_min)
+        upto = [k for k in keys if k <= hhmm]
+        if not upto:
+            return None, None, None
+        mv = per_min.get(hhmm) or per_min.get(upto[-1]) or 0
+        cum = sum(per_min[k] for k in upto)
+        avg_min = cum / max(1, len(upto))
+        return int(mv), (mv / avg_min if avg_min else None), int(cum)
+    except Exception:
+        return None, None, None
+
+
+# English names for the checklist items (boss 2026-09-03 20:0x: "if it is in
+# English mode it should be in English") — matched by name prefix.
+_ITEM_EN = {
+    "거래대금 회전": "value turnover", "거래량 급증 빈도": "volume-spike frequency",
+    "호가 1틱 비용": "1-tick spread cost", "이평 정배열 5>20>60": "MA alignment 5>20>60",
+    "추세성": "1-year trendiness", "20일 신고가": "20-day new high",
+    "20일선 위 거리": "distance vs 20-day MA", "볼린저 위치": "Bollinger position",
+    "전일 종가 대비": "vs yesterday's close", "RSI 55 근접": "RSI near 55",
+    "MACD 골든크로스": "MACD golden cross", "외국인 3일 순매수": "foreigners' 3-day net buy",
+    "기관 3일 순매수": "institutions' 3-day net buy", "개인 과열 여부": "retail overheating",
+    "공매도 비중": "short-selling share", "뉴스 검사": "news check",
+}
+_VAL_EN = {"아니오": "no", "예": "yes", "부분": "partial", "과열": "overheated",
+           "정상": "normal", "호재": "good", "위험": "danger", "특이 뉴스 없음": "no notable news"}
+
+
+def _fmt_big(v: str) -> str:
+    """7,034,784,542,800 → 7.03조원 — a number a person can read."""
+    try:
+        n = float(str(v).replace(",", ""))
+        a = abs(n)
+        if a >= 1e12:
+            return f"{n / 1e12:.2f}조원"
+        if a >= 1e8:
+            return f"{n / 1e8:.0f}억원"
+        return v
+    except Exception:
+        return v
+
+
 def _vol_ratio(code: str):
     """Today's volume vs the 20-day average — (ratio, today_vol) or (None, None)."""
     try:
@@ -202,8 +266,10 @@ def _enrich_log_rows(st: dict) -> None:
         code, name = l.get("code"), l.get("name")
         try:
             if (not l.get("check_items")
-                    or not any(it.get("g") == "news" for it in l["check_items"])):
-                l["check_items"] = _check_items(code)   # news item joined 19:1x
+                    or not any(it.get("g") == "news" for it in l["check_items"])
+                    or not any(it.get("g") == "volume" for it in l["check_items"])):
+                # time-stamped at the row's own clock (volume of THAT minute)
+                l["check_items"] = _check_items(code, str(l.get("at") or l.get("hhmm") or "")[:5] or None)
             if l.get("score") is None:
                 l["score"] = _score(code)
             sc = l.get("score")
@@ -420,6 +486,13 @@ def _reconcile_positions(db, st) -> bool:
     return changed
 
 
+# THE PATIENT PAIR (boss 2026-09-03 evening: "another rule related to
+# 삼성전자 and SK하이닉스 - exceptional case: even if they decreased -1% do not
+# sell, keep holding, because they are already decreased many %, so -1 is not a
+# big deal"). These two never trigger the -1% sale on any surface.
+NO_STOP = ("005930", "000660")
+
+
 def _lot_basis(lot: dict) -> float:
     """The price the -1% selling law measures from.
 
@@ -506,10 +579,32 @@ def _fold_lots(st) -> bool:
     return changed
 
 
-def _check_items(code: str) -> list[dict]:
+def _check_items(code: str, hhmm: str | None = None) -> list[dict]:
     """The machine-measured 100-checklist items for one stock, saved WITH every
     proposal (boss 2026-09-03 17:0x: 'the ⑤ checklist line should be clickable
-    — if I click it should show all checking cases of the 100 checklist')."""
+    — if I click it should show all checking cases of the 100 checklist').
+    When hhmm is given the inspection is TIME-STAMPED (boss 20:0x: 'the
+    checklist must be real-time and time-based so buy/sell/hold differ'):
+    that moment's tape volume and today's volume change lead the list."""
+    out0: list[dict] = []
+    if hhmm:
+        try:
+            mv, mult, cum = _vol_at(code, hhmm)
+            if mv is not None:
+                out0.append({"k": f"⏱ 그 시각({hhmm}) 거래량", "en": f"volume at {hhmm}",
+                             "v": (f"{mv:,}주 · 평균 분당의 {mult:.1f}배" if mult else f"{mv:,}주"),
+                             "ven": (f"{mv:,} sh · {mult:.1f}× the avg minute" if mult else f"{mv:,} sh"),
+                             "s": min(100, round((mult or 1) * 50)), "g": "volume",
+                             "bad": bool(mult is not None and mult < 0.5)})
+            r9, tv9 = _vol_ratio(code)
+            if r9 is not None:
+                out0.append({"k": "📊 오늘 거래량 변화", "en": "today's volume change",
+                             "v": f"20일 평균의 {r9:.1f}배 ({(r9 - 1) * 100:+.0f}%)",
+                             "ven": f"{r9:.1f}× the 20-day avg ({(r9 - 1) * 100:+.0f}%)",
+                             "s": min(100, round(r9 * 50)), "g": "volume",
+                             "bad": r9 < 0.6})
+        except Exception:
+            pass
     try:
         from services.checklist_reco import _ranking
         rows = (_ranking() or {}).get("rows") or []
@@ -528,7 +623,18 @@ def _check_items(code: str) -> list[dict]:
         out = []
         for gk, lst in ((me or {}).get("detail") or {}).items():
             for it in (lst or []):
-                out.append({"k": it.get("k"), "v": str(it.get("v")),
+                _k9 = str(it.get("k") or "")
+                _base9 = _k9.split(" (")[0]
+                _num9 = _k9[len(_base9):]
+                _en9 = (next((v for p9, v in _ITEM_EN.items()
+                              if _base9.startswith(p9)), _base9) + _num9)
+                _v9 = str(it.get("v"))
+                _digits9 = _v9.replace(",", "").replace("-", "")
+                if _digits9.isdigit() and len(_digits9) > 8:
+                    _v9 = _fmt_big(_v9)          # 7,034,784,542,800 → 7.03조원
+                _ven9 = _VAL_EN.get(_v9, _v9).replace("조원", "T won").replace("억원", "00M won") \
+                    if _v9 in _VAL_EN or "조원" in _v9 or "억원" in _v9 else _v9
+                out.append({"k": _k9, "en": _en9, "v": _v9, "ven": _ven9,
                             "s": it.get("s"), "g": gk,
                             "bad": (it.get("s") or 0) < 40})
         # 📰 NEWS joins the clickable inspection (boss 2026-09-03 19:1x: "in
@@ -563,20 +669,22 @@ def _check_items(code: str) -> list[dict]:
                             "link": (_arts9[0].get("link") if _arts9 else None)})
         except Exception:
             pass
-        return out
+        return out0 + out
     except Exception:
-        return []
+        return out0
 
 
 def _mk_sug(st, code, name, side, reasons, price, qty, score, reasons_en=None):
     st["seq"] = int(st.get("seq") or 0) + 1
-    sug = {"id": st["seq"], "ts": time.time(), "hhmm": _hhmm(), "code": code,
+    _hh9 = _hhmm()
+    sug = {"id": st["seq"], "ts": time.time(), "hhmm": _hh9, "code": code,
            "name": name, "side": side, "reasons": reasons,
            "reasons_en": reasons_en or reasons,
            "price": price, "qty": int(qty), "score": score,
-           # every proposal carries its full checklist inspection — it rides
-           # into the log on decide(), so history clicks can unfold it forever
-           "check_items": _check_items(code)}
+           # every proposal carries its full TIME-STAMPED inspection — it rides
+           # into the log on decide(), so buy/sell/hold snapshots differ and
+           # history clicks can unfold them forever
+           "check_items": _check_items(code, _hh9)}
     st.setdefault("pending", []).append(sug)
     st.setdefault("cool", {})[f"{side}:{code}"] = time.time()
     return sug
@@ -798,6 +906,11 @@ def scan(db) -> dict:
             # from this desk; the one and only sell trigger is the -1% law.
             if lot:
                 pnl9 = (px / _lot_basis(lot) - 1) * 100
+                if code in NO_STOP:
+                    # his patient pair - a -1% wobble on a stock already far
+                    # off its highs is noise. NOTHING else in Menu 3 sells, so
+                    # these two are held until he sells them himself.
+                    continue
                 if pnl9 > -1.0:
                     continue                      # otherwise: HOLD, always
                 if ("SELL", code) in pending_codes:
@@ -815,6 +928,21 @@ def scan(db) -> dict:
                          "① The continuous rise has stopped and price started to decrease.",
                          f"② Bought ₩{_lot_basis(lot):,.0f} → now ₩{px:,.0f} — the total decrease reached -1%.",
                          "③ Our rule — when the rise ends and the total fall hits -1%, we sell it all. Sold by the rule."]
+                # ④ that MOMENT's volume (boss 20:0x: volume-with-time on the
+                # sell too — a heavy-volume fall confirms the exit)
+                try:
+                    _shh = _hhmm()
+                    _smv, _smu, _ = _vol_at(code, _shh)
+                    if _smv is not None:
+                        _shi = _smu is not None and _smu >= 1.5
+                        _rs9.append(f"④ 📊 거래량({_shh} 기준) — 그 시각 {_smv:,}주"
+                                    + (f" · 평균 분당의 {_smu:.1f}배" if _smu else "")
+                                    + (". 거래량이 실린 하락이라 매도 판단을 뒷받침합니다." if _shi else "."))
+                        _rse9.append(f"④ 📊 Volume (as of {_shh}) — {_smv:,} sh that minute"
+                                     + (f" · {_smu:.1f}× the average minute" if _smu else "")
+                                     + (". A heavy-volume fall — it backs the sell decision." if _shi else "."))
+                except Exception:
+                    pass
                 _sp9, _sko9, _sen9 = _book_price(code, "SELL", px)
                 _rs9.append("💰 왜 이 가격인가 — " + _sko9)
                 _rse9.append("💰 WHY THIS PRICE — " + _sen9)
@@ -1396,8 +1524,15 @@ def _why_buy(code: str, name: str, hold: dict):
     except Exception:
         pass
     _gapped = _gapv is not None and _gapv >= 1.5
-    gk = [f"갭상승(+{_gapv:.1f}%) 후 눌림 진입" if _gapped else "갭상승 아님"]
-    ge = [f"gap-up (+{_gapv:.1f}%) then the dip entry" if _gapped else "no gap-up"]
+    # the gap is a MORNING story (boss 2026-09-03 20:0x: "13:16 — we should
+    # not tell about 갭상승 because it is already passed time; around 9-10 we
+    # can say it"): after 10:30 the verdict skips the gap talk entirely.
+    _gap_talk = (not bt) or bt < "10:30"
+    if _gap_talk:
+        gk = [f"갭상승(+{_gapv:.1f}%) 후 눌림 진입" if _gapped else "갭상승 아님"]
+        ge = [f"gap-up (+{_gapv:.1f}%) then the dip entry" if _gapped else "no gap-up"]
+    else:
+        gk, ge = [], []
     if zone == "buy":
         gk.append(f"매수구간 (1년 바닥 {zpos}%)"); ge.append(f"BUYING zone ({zpos}% of the year)")
     else:
@@ -1407,12 +1542,12 @@ def _why_buy(code: str, name: str, hold: dict):
     R.append("✅ 살 수 있는 자리입니다 — " + " · ".join(gk))
     E.append("✅ THIS IS A PLACE TO BUY — " + " · ".join(ge))
 
-    if _gapped:
+    if _gap_talk and _gapped:
         R.append(f"① 갭상승 출발(+{_gapv:.1f}%)이었지만 — 가격이 내려와 최저점이 멈추고 "
                  f"3번째 캔들에서 사는 규칙(중앙값-딥3)을 통과했고, 뉴스도 확인하고 샀습니다.")
         E.append(f"① It DID open gap-up (+{_gapv:.1f}%) — but the price came down, the bottom "
                  f"held, the 3rd-candle rule (median-dip3) cleared, and we checked the news before buying.")
-    else:
+    elif _gap_talk:
         R.append("① 갭상승 아님 — 오늘 시가가 어제 종가보다 크게 뛰지 않았습니다.")
         E.append("① No gap-up — it did not open far above yesterday's close.")
     if zone == "buy":
@@ -1457,6 +1592,32 @@ def _why_buy(code: str, name: str, hold: dict):
                 score = rm.get("score")
         except Exception:
             pass
+    # ⑤ 📊 THE VOLUME OF THAT MOMENT (boss 2026-09-03 20:0x: "add trading
+    # volume with time — if we buy at 14:09 it should be that time's volume —
+    # and how many % the trading number changed; high volume pushes the price
+    # up, a good buying reason"):
+    try:
+        _bt5 = bt or _hhmm()
+        _mv5, _mult5, _cum5 = _vol_at(code, _bt5)
+        _r5, _tv5 = _vol_ratio(code)
+        if _mv5 is not None:
+            _chg5 = f" ({(_r5 - 1) * 100:+.0f}%)" if _r5 else ""
+            _hi5 = _mult5 is not None and _mult5 >= 1.5
+            _lo5 = _mult5 is not None and _mult5 < 0.5
+            R.append(f"⑤ 📊 거래량({_bt5} 기준) — 그 시각 {_mv5:,}주"
+                     + (f" · 평균 분당의 {_mult5:.1f}배" if _mult5 else "")
+                     + (f" · 오늘 누적은 20일 평균의 {_r5:.1f}배{_chg5}" if _r5 else "")
+                     + (". 거래량이 많을 때는 가격이 오르기 쉬워 좋은 매수 근거입니다." if _hi5
+                        else ". 거래량이 적은 시각이라 조심스럽게 봅니다." if _lo5
+                        else ". 거래량은 평소 수준입니다."))
+            E.append(f"⑤ 📊 Volume (as of {_bt5}) — {_mv5:,} sh that minute"
+                     + (f" · {_mult5:.1f}× the average minute" if _mult5 else "")
+                     + (f" · today's total is {_r5:.1f}× the 20-day average{_chg5}" if _r5 else "")
+                     + (". High volume pushes the price up — a good buying reason." if _hi5
+                        else ". A quiet minute — we stay careful." if _lo5
+                        else ". Volume is at its normal level."))
+    except Exception:
+        pass
     # ⑥ THE NEWS CHECK, after gap/volume/positions (boss 2026-09-03 18:2x:
     # "it should check news also after 갭상승 and volume and daily, yearly
     # position — good news affects the price increasing, like 한화오션's ship
@@ -1475,9 +1636,8 @@ def _why_buy(code: str, name: str, hold: dict):
             _t6 = str(_good6[-1].get("title") or "")[:42]
             R.append(f"⑥ 📰 뉴스 확인 — 좋은 뉴스가 있습니다: \"{_t6}\" — 가격 상승에 힘을 보태는 재료입니다.")
             E.append(f"⑥ 📰 News check — GOOD news: \"{_t6}\" — a story that helps push the price UP.")
-        else:
-            R.append("⑥ 📰 뉴스 확인 — 특이 뉴스 없음. 가격을 흔들 재료가 보이지 않습니다.")
-            E.append("⑥ 📰 News check — nothing notable. No story that would shake the price.")
+        # no notable news → SKIP the line entirely (boss 2026-09-03 20:0x:
+        # "if no news just skip it")
     except Exception:
         pass
     # THE CHECKLIST STATEMENT LEADS (boss 2026-09-03 17:2x: "start write we

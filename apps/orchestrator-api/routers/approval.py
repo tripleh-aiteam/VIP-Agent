@@ -716,9 +716,19 @@ def _brain_compute():
         # original checklist number. They ride alongside the six gates so a card
         # can list every check the desk actually performs.
         _items = []
+        from services.approval_desk import _ITEM_EN, _VAL_EN, _fmt_big
         for _gk, _lst in (r.get("detail") or {}).items():
             for _it in (_lst or []):
-                _items.append({"k": _it.get("k"), "v": str(_it.get("v")),
+                _k0 = str(_it.get("k") or "")
+                _b0 = _k0.split(" (")[0]
+                _e0 = (next((v for p0, v in _ITEM_EN.items() if _b0.startswith(p0)), _b0)
+                       + _k0[len(_b0):])
+                _v0 = str(_it.get("v"))
+                _d0 = _v0.replace(",", "").replace("-", "")
+                if _d0.isdigit() and len(_d0) > 8:
+                    _v0 = _fmt_big(_v0)
+                _ve0 = _VAL_EN.get(_v0, _v0)
+                _items.append({"k": _k0, "en": _e0, "v": _v0, "ven": _ve0,
                                "s": _it.get("s"), "g": _gk,
                                "bad": (_it.get("s") or 0) < 40})
         entry = {"code": code, "name": r.get("name"), "items": _items,
