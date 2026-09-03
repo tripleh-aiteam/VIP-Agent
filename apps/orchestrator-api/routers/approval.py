@@ -79,6 +79,16 @@ def _market_move_lines(rooms: list):
                 bads.append(s)
             elif st9 == "호재":
                 goods.append(s)
+    # the boss's own Naver API adds the FRESHEST market headline (minutes old)
+    live_ko = live_en = None
+    try:
+        from services.naver_news import search_news
+        arts = search_news("코스피 증시", display=2)
+        if arts:
+            live_ko = f"🗞 방금 나온 시장 뉴스(네이버): \"{arts[0]['title'][:52]}\""
+            live_en = f"🗞 Freshest market news (Naver API): \"{arts[0]['title'][:52]}\""
+    except Exception:
+        pass
     if broad_dn:
         head_ko = f"🚨 시장 전체가 내리고 있습니다 — {len(chgs)}종목 중 {n_dn}개 하락 (평균 {avg:+.2f}%). 뉴스를 확인했습니다."
         head_en = f"🚨 The whole board is falling — {n_dn} of {len(chgs)} stocks down (avg {avg:+.2f}%). We checked the news."
@@ -86,26 +96,26 @@ def _market_move_lines(rooms: list):
             t9 = str(bads[-1].get("title") or "")[:46]
             return ([head_ko,
                      f"📰 위험 뉴스 {len(bads)}건 발견 — 최근: \"{t9}\"",
-                     "→ 판단: 나쁜 뉴스가 시장을 누르고 있습니다 — 신규 매수는 보류(HOLD), 보유 종목은 -1% 규칙 그대로 지킵니다."],
+                     "→ 판단: 나쁜 뉴스가 시장을 누르고 있습니다 — 신규 매수는 보류(HOLD), 보유 종목은 -1% 규칙 그대로 지킵니다."] + ([live_ko] if live_ko else []),
                     [head_en,
                      f"📰 {len(bads)} danger stories found — latest: \"{t9}\"",
-                     "→ Verdict: bad news is pressing the market — new buys on HOLD; held stocks keep the -1% rule."])
+                     "→ Verdict: bad news is pressing the market — new buys on HOLD; held stocks keep the -1% rule."] + ([live_en] if live_en else []))
         return ([head_ko,
                  "📰 20종목 뉴스를 모두 확인했지만 큰 나쁜 뉴스는 없습니다.",
-                 "→ 판단: 뉴스 없는 수급 하락입니다 — 서두르지 않습니다. 매수는 관문 통과를 기다리고, 보유는 -1% 규칙대로."],
+                 "→ 판단: 뉴스 없는 수급 하락입니다 — 서두르지 않습니다. 매수는 관문 통과를 기다리고, 보유는 -1% 규칙대로."] + ([live_ko] if live_ko else []),
                 [head_en,
                  "📰 We checked the news across all 20 stocks — no big bad story.",
-                 "→ Verdict: a flow-driven dip, not a news event — no hurry. Buys wait for the gates; holds keep the -1% rule."])
+                 "→ Verdict: a flow-driven dip, not a news event — no hurry. Buys wait for the gates; holds keep the -1% rule."] + ([live_en] if live_en else []))
     head_ko = f"📈 시장 전체가 오르고 있습니다 — {len(chgs)}종목 중 {n_up}개 상승 (평균 {avg:+.2f}%). 뉴스를 확인했습니다."
     head_en = f"📈 The whole board is rising — {n_up} of {len(chgs)} stocks up (avg {avg:+.2f}%). We checked the news."
     if goods:
         t9 = str(goods[-1].get("title") or "")[:46]
         return ([head_ko, f"📰 호재 뉴스 {len(goods)}건 — 최근: \"{t9}\"",
-                 "→ 판단: 좋은 뉴스가 가격을 밀어올리고 있습니다 — 관문을 통과하는 종목은 바로 매수 제안이 나옵니다."],
+                 "→ 판단: 좋은 뉴스가 가격을 밀어올리고 있습니다 — 관문을 통과하는 종목은 바로 매수 제안이 나옵니다."] + ([live_ko] if live_ko else []),
                 [head_en, f"📰 {len(goods)} good-news stories — latest: \"{t9}\"",
-                 "→ Verdict: good news is pushing prices up — any stock that clears the gates gets an instant BUY proposal."])
-    return ([head_ko, "📰 특별한 호재 뉴스는 없습니다 — 수급 상승으로 판단, 규칙대로만 삽니다."],
-            [head_en, "📰 No standout good news — a flow-driven rise; we buy only by the rules."])
+                 "→ Verdict: good news is pushing prices up — any stock that clears the gates gets an instant BUY proposal."] + ([live_en] if live_en else []))
+    return ([head_ko, "📰 특별한 호재 뉴스는 없습니다 — 수급 상승으로 판단, 규칙대로만 삽니다."] + ([live_ko] if live_ko else []),
+            [head_en, "📰 No standout good news — a flow-driven rise; we buy only by the rules."] + ([live_en] if live_en else []))
 
 
 def _watch_note(pending: list, n_held: int = 0, rooms: list | None = None) -> dict | None:
