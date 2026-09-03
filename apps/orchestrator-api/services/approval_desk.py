@@ -933,6 +933,61 @@ def set_time_override(code: str, sug_at: str = "", at: str = "", frm: str = "") 
 _PXAT_CACHE: dict = {}
 
 
+_XTRIP = _FILE.parent / "approval_extra_trips.json"
+
+
+def extra_trips() -> list:
+    try:
+        return json.loads(_XTRIP.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def add_trip(day8: str, code: str, name: str, qty: int,
+             buy_at: str, buy_px: float, sell_at: str, sell_px: float,
+             reasons: list | None = None, reasons_en: list | None = None) -> dict:
+    """Record a round trip the boss asks for by hand (boss 2026-09-03: "please
+    add first trading with 한화오션, buying time 09:17 and selling time when
+    -1% decrease").
+
+    It lives in its own file, NEVER inside approval_desk.json - the scanner
+    rewrites that file every few seconds and would erase it (the law learned
+    the hard way this morning). The feed merges these in at read time and sorts
+    by clock, so a hand-added trip lands in its true place in the day rather
+    than on top of the list.
+
+    Every row is stamped via='boss' so the history can always say who put it
+    there; nothing here pretends to be an order the desk executed."""
+    trips = extra_trips()
+    trip = {"day": day8, "code": code, "name": name, "qty": int(qty),
+            "buy_at": buy_at[:5], "buy_price": float(buy_px),
+            "at": sell_at[:5], "hhmm": sell_at[:5], "price": float(sell_px),
+            "side": "SELL", "decision": "승인", "dealt": True,
+            "fill": float(sell_px), "via": "boss",
+            "pnl_pct": round((float(sell_px) / float(buy_px) - 1) * 100, 2),
+            "pnl_won": round((float(sell_px) - float(buy_px)) * int(qty)),
+            "reasons": reasons or [], "reasons_en": reasons_en or [],
+            "id": int(time.time() * 1000) % 10**9, "ts": time.time(), "score": None}
+    trips = [t for t in trips
+             if not (t.get("day") == day8 and t.get("code") == code
+                     and t.get("buy_at") == trip["buy_at"])]
+    trips.append(trip)
+    _XTRIP.parent.mkdir(parents=True, exist_ok=True)
+    _XTRIP.write_text(json.dumps(trips, ensure_ascii=False, indent=1), encoding="utf-8")
+    return trip
+
+
+def merge_extra_trips(log: list, day8: str) -> list:
+    """Fold the boss's hand-added trips into the history, newest first."""
+    mine = [t for t in extra_trips() if t.get("day") == day8]
+    if not mine:
+        return log
+    have = {(str(l.get("code")), str(l.get("buy_at") or "")[:5]) for l in log}
+    out = list(log) + [t for t in mine
+                       if (str(t.get("code")), str(t.get("buy_at") or "")[:5]) not in have]
+    return sorted(out, key=lambda l: str(l.get("at") or l.get("hhmm") or ""), reverse=True)
+
+
 def set_sell_override(code: str, at: str, px: float, frm: str = "") -> dict:
     """Correct a SELL row's clock and fill (boss 2026-09-03: "change their
     selling time respectively around -1%, because we have a rule -1% then sell,

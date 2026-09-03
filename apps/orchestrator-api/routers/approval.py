@@ -166,6 +166,9 @@ def feed(db: Session = Depends(get_db)):
         _d8 = _kd()
         _held9 = filter_m3_held(_held9, _d8)
         _log9 = filter_m3_log(_log9, _d8)
+        # the boss's hand-added round trips land in their true place in the day
+        from services.approval_desk import merge_extra_trips
+        _log9 = merge_extra_trips(_log9, _d8)
     except Exception:
         pass
     # the stats card judges the SAME rows the boards render (post-filter)
