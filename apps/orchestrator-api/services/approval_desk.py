@@ -591,6 +591,14 @@ def scan(db) -> dict:
             return st
     except Exception:
         pass
+    # NO SUGGESTIONS AFTER 15:20 (boss 2026-09-03 18:1x: "after 15:20 our
+    # agent should not give suggestions because the market is closing") — the
+    # closing auction is no place to propose; unanswered popups die with it.
+    if _hhmm() >= "15:20":
+        if st["pending"]:
+            st["pending"] = []
+        _save(st)
+        return st
     from services.paper_desk import fast_price
     _fold_lots(st)                 # one position per stock, including inherited ones
     _reconcile_positions(db, st)   # and never show a lot the desk no longer holds

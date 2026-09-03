@@ -296,13 +296,25 @@ export default function ApprovePage() {
         <b style={{ color: "#2e7d32" }}>{t("🖥 메뉴3 실시간 모니터링", "🖥 Menu 3 Real Time Monitoring")}</b>
       </div>
       <h1 style={{ fontSize: 22, fontWeight: 800 }}>{t("🖥 실시간 모니터링", "🖥 Real Time Monitoring")}
-        <span style={{ marginLeft: 10, display: "inline-flex", alignItems: "center", gap: 5,
-                       padding: "3px 10px", borderRadius: 999, background: "#e53935",
-                       verticalAlign: "middle" }}>
-          <span style={{ width: 8, height: 8, borderRadius: 99, background: "#fff",
-                         animation: "railPulse 1s infinite" }} />
-          <b style={{ fontSize: 12, color: "#fff", letterSpacing: ".08em" }}>LIVE</b>
-        </span>
+        {/* LIVE while the market runs; a solid red MARKET CLOSED sign after
+            the bell (boss 2026-09-03 18:1x: "instead of Live it should be a
+            red color sign Market Closed") */}
+        {feed?.market_open !== false ? (
+          <span style={{ marginLeft: 10, display: "inline-flex", alignItems: "center", gap: 5,
+                         padding: "3px 10px", borderRadius: 999, background: "#e53935",
+                         verticalAlign: "middle" }}>
+            <span style={{ width: 8, height: 8, borderRadius: 99, background: "#fff",
+                           animation: "railPulse 1s infinite" }} />
+            <b style={{ fontSize: 12, color: "#fff", letterSpacing: ".08em" }}>LIVE</b>
+          </span>
+        ) : (
+          <span style={{ marginLeft: 10, display: "inline-flex", alignItems: "center", gap: 6,
+                         padding: "3px 12px", borderRadius: 999, background: "#b71c1c",
+                         border: "2px solid #7f0000", verticalAlign: "middle" }}>
+            <b style={{ fontSize: 12, color: "#fff", letterSpacing: ".08em" }}>
+              ⛔ {t("장 마감", "MARKET CLOSED")}</b>
+          </span>
+        )}
         <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 10, opacity: 0.7 }}>
           {t("Real Time Monitoring — 에이전트가 제안하고, 사람이 승인합니다", "the agent proposes — the human approves")}</span></h1>
       <div style={{ fontSize: 14.5, lineHeight: 1.55, opacity: 0.92, margin: "8px 0 15px",
