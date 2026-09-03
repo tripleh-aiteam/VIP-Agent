@@ -543,11 +543,13 @@ def _check_items(code: str) -> list[dict]:
             if _badn:
                 out.append({"k": "📰 뉴스 검사 (AI 인턴)",
                             "v": f"위험: {str(_badn[-1].get('title'))[:40]}",
-                            "s": 15, "g": "news", "bad": True})
+                            "s": 15, "g": "news", "bad": True,
+                            "link": _badn[-1].get("link")})
             elif _goodn:
                 out.append({"k": "📰 뉴스 검사 (AI 인턴)",
                             "v": f"호재: {str(_goodn[-1].get('title'))[:40]}",
-                            "s": 85, "g": "news", "bad": False})
+                            "s": 85, "g": "news", "bad": False,
+                            "link": _goodn[-1].get("link")})
             else:
                 _nm9 = (me or {}).get("name")
                 _arts9 = []
@@ -557,7 +559,8 @@ def _check_items(code: str) -> list[dict]:
                 out.append({"k": "📰 뉴스 검사",
                             "v": (f"특이 없음 · 최신: {_arts9[0]['title'][:36]}" if _arts9
                                   else "특이 뉴스 없음"),
-                            "s": 50, "g": "news", "bad": False})
+                            "s": 50, "g": "news", "bad": False,
+                            "link": (_arts9[0].get("link") if _arts9 else None)})
         except Exception:
             pass
         return out
@@ -608,12 +611,58 @@ def scan_async() -> None:
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _flat_close(db, st: dict) -> None:
+    """🔔 THE 15:20 FLAT CLOSE (boss 2026-09-03 19:4x: 'make sure at 15:20 we
+    sell all stock — we do not hold for next days'): every held lot sells in
+    full at market and joins the history as a closing-sweep trip. Runs on the
+    first poll at/after 15:20, evening polls included."""
+    from services.paper_desk import place_order
+    for lot in list(st.get("held") or []):
+        try:
+            res = place_order(db, lot["code"], "SELL", int(lot["qty"]),
+                              order_type="market", source="semi", direct=True)
+            fill = float(res.get("fill_price") or res.get("live_price")
+                         or lot.get("price") or 0)
+            bp = float(lot.get("price") or 0)
+            pnl = round((fill / bp - 1) * 100, 2) if bp else None
+            st.setdefault("log", []).append(
+                {"id": int(time.time() * 1000) % 10**9, "ts": time.time(),
+                 "hhmm": "15:20", "code": lot["code"], "name": lot.get("name"),
+                 "side": "SELL", "price": fill, "qty": int(lot["qty"]),
+                 "score": None, "decision": "승인", "at": _hhmm(),
+                 "dealt": True, "fill": fill,
+                 "buy_at": lot.get("at"), "buy_price": bp or None,
+                 "pnl_pct": pnl,
+                 "pnl_won": (round((fill - bp) * int(lot["qty"])) if bp else None),
+                 "via": "close",
+                 "reasons": ["🔔 15:20 마감 정리 — 이 데스크는 보유를 다음 날로 넘기지 않습니다.",
+                             f"① 매수가 ₩{bp:,.0f} ({lot.get('at')}) → 마감 매도 ₩{fill:,.0f}"
+                             + (f" = {pnl:+.2f}% 확정." if pnl is not None else "."),
+                             "② 우리의 규칙 — 장이 닫히기 전(15:20)에 전량 정리하고 내일은 새로 시작합니다."],
+                 "reasons_en": ["🔔 The 15:20 closing sweep — this desk never carries a position overnight.",
+                                f"① Bought ₩{bp:,.0f} ({lot.get('at')}) → closing sell ₩{fill:,.0f}"
+                                + (f" = {pnl:+.2f}% realised." if pnl is not None else "."),
+                                "② Our rule — everything is sold before the close (15:20); tomorrow starts fresh."]})
+        except Exception as e:
+            log.warning(f"flat close {lot.get('code')}: {str(e)[:80]}")
+            continue
+        st["held"] = [h for h in st["held"] if h is not lot]
+    st["log"] = st["log"][-200:]
+    _save(st)
+
+
 def scan(db) -> dict:
     """Evaluate all ten rooms; append new suggestions. Called on page poll."""
     st = _load()
     st.setdefault("pending", [])
     st.setdefault("held", [])
     st.setdefault("cool", {})
+    # the flat close runs BEFORE any market-hours gate — evening polls too
+    if _hhmm() >= "15:20" and st.get("held"):
+        try:
+            _flat_close(db, st)
+        except Exception:
+            pass
     # expire unanswered popups
     st["pending"] = [p for p in st["pending"] if time.time() - p["ts"] < _EXPIRE]
     # planted TEST rows never survive (boss 2026-09-03: 'remove this, it is old

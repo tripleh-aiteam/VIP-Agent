@@ -11,8 +11,10 @@ import { API } from "../../../components/api";
 type Zone = { pos: number; zone: "buy" | "sell" | "mid" } | null;
 type Room = { code: string; name: string; score?: number | null; price?: number | null;
               chg?: number | null; zone?: Zone; held?: { qty: number; price: number; at: string } | null;
-              pnl?: number | null; news?: { stamp: string; title: string } | null };
-type ChkItem = { k: string; v: string; s?: number | null; g?: string; bad?: boolean };
+              pnl?: number | null;
+              news?: { stamp: string; title: string; link?: string | null } | null };
+type ChkItem = { k: string; v: string; s?: number | null; g?: string; bad?: boolean;
+                 link?: string | null };
 type Sug = { id: number; hhmm: string; code: string; name: string; side: "BUY" | "SELL";
              reasons: string[]; reasons_en?: string[]; price: number; qty: number; score?: number | null;
              check_items?: ChkItem[] };
@@ -246,6 +248,11 @@ export default function ApprovePage() {
             <div key={i9} style={{ color: it.bad ? "#c62828" : "inherit",
                                    fontWeight: it.bad ? 700 : 400 }}>
               {it.bad ? "✗" : "✓"} {it.k} — {it.v}{it.s != null ? ` · ${it.s}${t("점", " pts")}` : ""}
+              {/* the news item opens the full article (boss 2026-09-03 19:4x) */}
+              {it.link && <a href={it.link} target="_blank" rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                style={{ marginLeft: 6, fontWeight: 800, color: "#1565c0" }}>
+                📎 {t("기사 읽기", "read article")}</a>}
             </div>))}
         </div>)}
     </div>);
@@ -527,7 +534,9 @@ export default function ApprovePage() {
             </div>
           </div>);
       })()}
-      {/* ─ the ten rooms ─ */}
+      {/* ─ the ten rooms — market hours only (boss 2026-09-03 19:4x: "these
+          things also no need after market") ─ */}
+      {feed?.market_open !== false && <>
       {!feed && <div style={{ padding: "26px 0", fontSize: 13.5, opacity: 0.7 }}>
         {t("⏳ 데스크를 깨우는 중입니다 — 10개 방을 준비하고 있어요… (첫 로딩은 몇 초 걸릴 수 있습니다)", "⏳ Waking the desk — preparing the 10 rooms… (the first load can take a few seconds)")}</div>}
       {feed && (feed.rooms || []).length === 0 &&
@@ -556,6 +565,7 @@ export default function ApprovePage() {
           </div>
         ))}
       </div>
+      </>}
 
       {/* ─ the opened room: the agent at work ─ */}
       {open && (
@@ -906,6 +916,9 @@ export default function ApprovePage() {
                                       fontSize: 12, lineHeight: 1.55 }}>
                           <b style={{ color: "#2e7d32" }}>🟢 {t("보유 이유 (지금 기준)", "Why we are holding (live)")}</b>
                           {holdL.map((x, k2) => <div key={k2}>· {x}</div>)}
+                          {nw9?.link && <a href={nw9.link} target="_blank" rel="noreferrer"
+                            style={{ fontWeight: 800, color: "#1565c0", fontSize: 11.5 }}>
+                            📎 {t("뉴스 기사 전체 읽기", "read the full news article")}</a>}
                           {chkList(`hg${i}`, bEnt?.items)}
                         </div>
                       </td></tr>);
@@ -1112,6 +1125,46 @@ export default function ApprovePage() {
                               {t("🏳 포기 (가격이 멀어짐)", "🏳 GAVE UP (price ran away)")} {guOpen === i ? "▲" : "▼"}</span>
                           : <span style={{ color: "#b26a00" }}>{t("🕐 미체결 (대기 중)", "🕐 NOT DEAL (waiting)")}</span>}</td>
                   <td>{l.fill ? W(l.fill) : "-"}</td></tr>
+                {/* 🎯 THE EFFICIENT ORDER'S PRICE PROCESS, live (boss 2026-09-03
+                    19:4x: "if we clicked efficient price it should show how the
+                    price is changing — to see our agent is offering a price and
+                    not saying randomly"): the waiting row carries the offer,
+                    the live price, the gap, the give-up line, and a real price
+                    trail drawn from our own recent samples. */}
+                {l.decision === "승인" && !l.dealt && !l.fill && !l.gave_up && (() => {
+                  const room9 = feed!.rooms.find((r) => r.code === l.code);
+                  const live9 = room9?.price ?? null;
+                  const gapW9 = live9 != null ? live9 - l.price : null;
+                  const trail = (pxHist.current[l.code] || []).slice(-40);
+                  const guW9 = GU[l.code]?.w ?? 4 * tick(l.price || 0);
+                  return (
+                    <tr><td colSpan={8} style={{ padding: "5px 10px 8px", fontSize: 12,
+                          background: "rgba(106,27,154,0.05)", lineHeight: 1.5,
+                          borderLeft: "3px solid #6a1b9a" }}>
+                      🎯 <b>{t("에이전트 효율가 대기 중", "waiting at the agent's efficient price")}</b>
+                      {" — "}{t("제안가 ", "offer ")}<b>{W(l.price)}</b>
+                      {live9 != null && <> · {t("현재가 ", "live ")}<b>{W(live9)}</b>
+                        {" "}<b style={{ color: (gapW9 ?? 0) > 0 ? "#e53935" : "#1e88e5" }}>
+                          ({(gapW9 ?? 0) >= 0 ? "+" : ""}₩{Math.abs(gapW9 ?? 0).toLocaleString()}
+                          {l.side === "BUY"
+                            ? t(" 내려오면 체결", " dip fills it")
+                            : t(" 올라오면 체결", " rise fills it")})</b></>}
+                      {" · "}{t("포기선 ", "give-up at ")}₩{(l.side === "BUY"
+                        ? l.price + guW9 : l.price - guW9).toLocaleString()}
+                      {trail.length >= 3 && (() => {
+                        const xs = trail.map((s) => s.px);
+                        const lo9 = Math.min(...xs, l.price), hi9 = Math.max(...xs, l.price);
+                        const y9 = (v: number) => 22 - ((v - lo9) / Math.max(1, hi9 - lo9)) * 18;
+                        const pts = xs.map((v, i2) => `${(i2 / (xs.length - 1)) * 118 + 1},${y9(v)}`).join(" ");
+                        return (
+                          <svg width={120} height={26} style={{ verticalAlign: "middle", marginLeft: 8 }}>
+                            <line x1={1} x2={119} y1={y9(l.price)} y2={y9(l.price)}
+                                  stroke="#6a1b9a" strokeDasharray="3,2" strokeWidth={1} />
+                            <polyline points={pts} fill="none" stroke="#e6a817" strokeWidth={1.5} />
+                          </svg>);
+                      })()}
+                    </td></tr>);
+                })()}
                 {/* the clicked give-up row unfolds its own law (the round-trip
                     detail lives in the clean 📜 history table above) */}
                 {l.gave_up && guOpen === i && (
@@ -1217,7 +1270,12 @@ export default function ApprovePage() {
               })}
             </ul>
             {/* the ⑤ line's full inspection, clickable (boss 2026-09-03 17:0x) */}
-            <div style={{ margin: "-4px 0 6px 2px" }}>{chkList(`p${p.id}`, p.check_items)}</div>
+            <div style={{ margin: "-4px 0 6px 2px" }}>
+              {(() => { const nl9 = (p.check_items || []).find((it) => it.g === "news" && it.link);
+                return nl9 ? <a href={nl9.link!} target="_blank" rel="noreferrer"
+                  style={{ fontWeight: 800, color: "#1565c0", fontSize: 11.5, display: "block", marginBottom: 2 }}>
+                  📎 {t("⑥ 뉴스 기사 전체 읽기", "⑥ read the full news article")}</a> : null; })()}
+              {chkList(`p${p.id}`, p.check_items)}</div>
             {/* editable numbers */}
             <div style={{ display: "flex", gap: 8, marginBottom: 9 }}>
               <div style={{ flex: 1 }}>
@@ -1241,13 +1299,25 @@ export default function ApprovePage() {
               {p.score != null && <span style={{ marginLeft: 8, fontWeight: 700, color: "#8a6100" }}>
                 {t("체크리스트 ", "checklist ")}{p.score}{t("점", " pts")}</span>}
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button disabled={busy === p.id} onClick={() => decide(p.id, true, pv, qv, changed)}
-                style={{ flex: 1, padding: "7px 0", borderRadius: 8, border: "none", fontWeight: 900,
-                         fontSize: 12.5, background: "#e53935", color: "#fff", cursor: "pointer" }}>
-                {t("✅ 승인", "✅ APPROVE")}</button>
+            {/* TWO WAYS TO APPROVE (boss 2026-09-03 19:4x: "many tradings were
+                cancelled because of the price dealing — give 2 options: market
+                price and the efficient agent suggestion, with buttons; the
+                efficient one's price process shows in the Trading List") */}
+            <div style={{ display: "flex", gap: 6 }}>
+              <button disabled={busy === p.id} onClick={() => decide(p.id, true, pv, qv, false)}
+                style={{ flex: 1.05, padding: "6px 2px", borderRadius: 8, border: "none",
+                         fontWeight: 900, fontSize: 11.6, background: "#e53935",
+                         color: "#fff", cursor: "pointer", lineHeight: 1.25 }}>
+                {t("✅ 시장가", "✅ MARKET")}<br />
+                <span style={{ fontWeight: 600, fontSize: 9.5 }}>{t("지금 바로 체결", "fills right now")}</span></button>
+              <button disabled={busy === p.id} onClick={() => decide(p.id, true, pv, qv, true)}
+                style={{ flex: 1.35, padding: "6px 2px", borderRadius: 8, border: "none",
+                         fontWeight: 900, fontSize: 11.6, background: "#6a1b9a",
+                         color: "#fff", cursor: "pointer", lineHeight: 1.25 }}>
+                {t(`🎯 효율가 ${W(pv)}`, `🎯 EFFICIENT ${W(pv)}`)}<br />
+                <span style={{ fontWeight: 600, fontSize: 9.5 }}>{t("대기 — 과정은 거래 목록에서", "queues — watch it in the list")}</span></button>
               <button disabled={busy === p.id} onClick={() => decide(p.id, false)}
-                style={{ flex: 1, padding: "7px 0", borderRadius: 8, fontWeight: 800, fontSize: 12.5,
+                style={{ flex: 0.7, padding: "6px 0", borderRadius: 8, fontWeight: 800, fontSize: 11.6,
                          border: "2px solid #6b7684", background: "#e9edf1",
                          color: "#22282f", cursor: "pointer" }}>
                 {t("✖ 취소", "✖ CANCEL")}</button>

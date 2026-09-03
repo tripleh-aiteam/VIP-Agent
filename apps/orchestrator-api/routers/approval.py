@@ -50,7 +50,8 @@ def _news_of(code: str):
     rows = _stamps_by_code().get(str(code)) or []
     for r in reversed(rows):
         if str(r.get("stamp")) in ("호재", "위험", "악재"):
-            return {"stamp": str(r.get("stamp")), "title": str(r.get("title") or "")[:60]}
+            return {"stamp": str(r.get("stamp")), "title": str(r.get("title") or "")[:60],
+                    "link": r.get("link")}
     return None
 
 
