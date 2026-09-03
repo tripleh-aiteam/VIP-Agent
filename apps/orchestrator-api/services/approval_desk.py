@@ -1478,6 +1478,87 @@ def _why_qty(price: float, qty: int, budget: int = 10_000_000):
     return ko, en
 
 
+def trade_story(code: str, name: str = "") -> dict:
+    """ONE STORY, TOLD THE SAME WAY EVERYWHERE (boss 2026-09-03 evening: "I
+    wanna improve the chatbot - during trading I could get an explanation like
+    why you bought this stock, why you are holding, why you are selling; use
+    today's dropdown explanation and in the chatbot it must be CONSISTENT").
+
+    Menu 3's dropdown and the chatbot must never tell him two different
+    stories about the same trade, and the only way to guarantee that is to
+    have one text. This returns the stock's current position in the day -
+    held, sold, or neither - with the very lines Menu 3 renders, in Korean and
+    English. Both surfaces read this; neither writes its own words.
+
+    state: 'holding' | 'sold' | 'none'
+    """
+    st = _load()
+    code = str(code or "")
+    lot = next((h for h in (st.get("held") or []) if h.get("code") == code), None)
+    nm = name or (lot or {}).get("name") or code
+
+    if lot:
+        px = None
+        try:
+            from services.paper_desk import fast_price
+            px = float(fast_price(code)[0] or 0) or None
+        except Exception:
+            pass
+        base = _lot_basis(lot)
+        pnl = round((px / base - 1) * 100, 2) if (px and base) else None
+        ko, en = [], []
+        # why we bought it - the same gate-by-gate lines the popup carried
+        try:
+            bk, be = _why_buy(code, nm, {})
+            ko += list(bk or [])
+            en += list(be or [])
+        except Exception:
+            pass
+        # and why it is STILL ours
+        if code in NO_STOP:
+            ko.append("🤝 이 종목은 -1%로 팔지 않습니다 — 이미 많이 내려온 종목이라 "
+                      "-1%는 큰 의미가 없다는 사장님 규칙입니다.")
+            en.append("🤝 This one is NOT sold at -1% - your rule: it has already "
+                      "fallen a long way, so -1% means little here.")
+        elif pnl is not None:
+            ko.append(f"✋ 아직 보유 중 — 매수가 ₩{base:,.0f} 대비 지금 {pnl:+.2f}%. "
+                      f"-1%에 닿기 전까지는 팔지 않습니다.")
+            en.append(f"✋ Still holding - {pnl:+.2f}% against our buy at "
+                      f"₩{base:,.0f}. We do not sell until it reaches -1%.")
+        return {"state": "holding", "code": code, "name": nm,
+                "qty": lot.get("qty"), "buy_at": lot.get("at"),
+                "buy_price": base, "price": px, "pnl_pct": pnl,
+                "ko": ko, "en": en}
+
+    # the most recent completed round trip for this stock today
+    rows = [l for l in (st.get("log") or [])
+            if l.get("code") == code and l.get("side") == "SELL" and l.get("buy_price")]
+    try:
+        from services.kiwoom_tape import _day as _kd9
+        rows += [t for t in extra_trips()
+                 if t.get("day") == _kd9() and t.get("code") == code]
+    except Exception:
+        pass
+    if rows:
+        r = sorted(rows, key=lambda x: str(x.get("at") or ""))[-1]
+        return {"state": "sold", "code": code, "name": r.get("name") or nm,
+                "qty": r.get("qty"), "buy_at": r.get("buy_at"),
+                "buy_price": r.get("buy_price"), "sell_at": r.get("at"),
+                "price": r.get("price"), "pnl_pct": r.get("pnl_pct"),
+                "pnl_won": r.get("pnl_won"),
+                "ko": list(r.get("reasons") or []),
+                "en": list(r.get("reasons_en") or r.get("reasons") or [])}
+
+    # never traded today - say what the gates think of it right now
+    ko, en = [], []
+    try:
+        bk, be = _why_buy(code, nm, {})
+        ko, en = list(bk or []), list(be or [])
+    except Exception:
+        pass
+    return {"state": "none", "code": code, "name": nm, "ko": ko, "en": en}
+
+
 def _why_buy(code: str, name: str, hold: dict):
     """WHY WE BUY, GATE BY GATE, IN PLAIN WORDS (boss 2026-09-03 09:5x: "the
     explanation should START WITH CLEAR GATES - for not-buy: 갭상승, selling

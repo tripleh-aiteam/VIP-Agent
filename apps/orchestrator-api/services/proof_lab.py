@@ -391,6 +391,17 @@ VARIANTS: list[dict] = [
      # It clearly helps 알고2 and slightly hurts 알고3; deployed to both at his
      # explicit order, with both numbers on record.
      "gap_guard": 1.5, "gap_wait": "prev3",
+     # THE PATIENT PAIR (boss 2026-09-03 evening: "even if they decreased -1%
+     # do not sell and keep holding, because they are already decreased many %,
+     # so -1 is not a big deal"). MEASURED over all 22 stored days first:
+     #   알고2 desk   422 trips / 41% / -122.32%  ->  317 / 46% / -70.87%  (+51.45%)
+     #   these two    178 trips / 41% /  -59.57%  ->   73 / 64% /  -8.12%
+     # Every point of the desk improvement comes from these two names, exactly
+     # as he predicted. THE COST, on record: the worst single trade goes from
+     # -1.44% to -4.24% and nine trades finish below -2% where none did before.
+     # Bigger worst case, far better total; deployed at his order.
+     # 알고3 never traded either name in the sample, so it is unaffected.
+     "no_stop_codes": ("005930", "000660"),
      # median_dip3 (boss 2026-09-03 15:4x, SK하이닉스 09:33 exhibit): a gap-up
      # starter at/below its 1-year MEDIAN waits for the fade's minimum to hold
      # 3 bars and turn (2-of-3 rises, within 1.5% of the bottom) - the release
@@ -533,6 +544,17 @@ VARIANTS: list[dict] = [
      # It clearly helps 알고2 and slightly hurts 알고3; deployed to both at his
      # explicit order, with both numbers on record.
      "gap_guard": 1.5, "gap_wait": "prev3",
+     # THE PATIENT PAIR (boss 2026-09-03 evening: "even if they decreased -1%
+     # do not sell and keep holding, because they are already decreased many %,
+     # so -1 is not a big deal"). MEASURED over all 22 stored days first:
+     #   알고2 desk   422 trips / 41% / -122.32%  ->  317 / 46% / -70.87%  (+51.45%)
+     #   these two    178 trips / 41% /  -59.57%  ->   73 / 64% /  -8.12%
+     # Every point of the desk improvement comes from these two names, exactly
+     # as he predicted. THE COST, on record: the worst single trade goes from
+     # -1.44% to -4.24% and nine trades finish below -2% where none did before.
+     # Bigger worst case, far better total; deployed at his order.
+     # 알고3 never traded either name in the sample, so it is unaffected.
+     "no_stop_codes": ("005930", "000660"),
      # median_dip3 (boss 2026-09-03 15:4x, SK하이닉스 09:33 exhibit): a gap-up
      # starter at/below its 1-year MEDIAN waits for the fade's minimum to hold
      # 3 bars and turn (2-of-3 rises, within 1.5% of the bottom) - the release
@@ -2996,7 +3018,17 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # "duplicate"): on ride variants the stop confirms on the
                 # CLOSE; a wick alone does not end a ride. 알고1/2 keep the
                 # 08-24 intrabar trigger their piece design was built with.
-                if c <= _stpl9 or ((not v.get("stop_close")) and _lo9 <= _stpl9):
+                # THE PATIENT PAIR (boss 2026-09-03 evening: "another rule
+                # related to 삼성전자 and SK하이닉스 - exceptional case: even if
+                # they decreased -1% do not sell, keep holding, because they
+                # are already decreased many %, so -1 is not a big deal").
+                # These two are his long-suffering names; a -1% wobble on a
+                # stock already far off its highs is noise, not a reason to
+                # book a loss. The -1% stop does not fire for them - every
+                # OTHER exit still does, so the ride is not left unguarded.
+                _nostop9 = str(s.get("code") or "") in (v.get("no_stop_codes") or ())
+                if (not _nostop9) and (
+                        c <= _stpl9 or ((not v.get("stop_close")) and _lo9 <= _stpl9)):
                     # boss 2026-08-13 12:1x: "in ALL cases if it decreases -1.5%,
                     # sell out all and again buy" - the scout-only exception from
                     # the pre-flight audit is repealed at his order; every -1.5%
