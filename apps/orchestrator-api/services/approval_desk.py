@@ -51,6 +51,27 @@ def _save(st: dict) -> None:
         pass
 
 
+def can_propose(now=None) -> bool:
+    """May the desk ask for a decision RIGHT NOW? (boss 2026-09-03 16:4x: the
+    watch note was still speaking at 16:40 - "make sure after 15:20 it should
+    not show popup because market already closed".)
+
+    market_open() runs to 15:30, but 15:20-15:30 is the closing auction and
+    place_order already refuses there - so a proposal made after 15:20 could
+    never be filled even if he approved it. Asking anyway is asking for a
+    decision we cannot honour. The desk goes quiet at 15:20 and stays quiet
+    until the next session."""
+    from datetime import datetime
+    try:
+        from services.kiwoom_tape import KST
+        n = now or datetime.now(KST)
+    except Exception:
+        n = now or datetime.now()
+    if n.weekday() >= 5:
+        return False
+    return (9, 0) <= (n.hour, n.minute) < (15, 20)
+
+
 def _hhmm() -> str:
     return time.strftime("%H:%M", time.gmtime(time.time() + 9 * 3600))
 
@@ -121,6 +142,11 @@ def chat_mirror(code: str, name: str, side: str, qty: int, fill: float) -> bool:
     st = _load()
     _trip: dict = {}
     if side == "BUY":
+        try:                   # the chatbot's buys join the collector too
+            from services.kiwoom_tape import ensure_watched
+            ensure_watched(code, name)
+        except Exception:
+            pass
         st.setdefault("held", []).append(
             {"code": code, "name": name, "qty": int(qty), "price": float(fill),
              "sug_at": _hhmm(), "at": _hhmm(), "via": "chat"})
@@ -430,6 +456,11 @@ def _add_lot(st, code, name, qty, price, sug_at=None, at=None) -> None:
     becomes the size-weighted average of what we actually paid, and the earlier
     buy time is kept. Nothing is discarded - both fills survive inside one
     position, which is what one-position-per-stock means."""
+    try:                       # a stock we own must be a stock we record
+        from services.kiwoom_tape import ensure_watched
+        ensure_watched(code, name)
+    except Exception:
+        pass
     lot = next((h for h in st.setdefault("held", []) if h["code"] == code), None)
     if lot is None:
         st["held"].append({"code": code, "name": name, "qty": int(qty),
@@ -584,13 +615,19 @@ def scan(db) -> dict:
         st["meta_at"] = time.time()
     except Exception:
         pass
-    try:
-        from services.kiwoom_tape import market_open
-        if not market_open():
-            _save(st)
-            return st
-    except Exception:
-        pass
+    if not can_propose():
+        # AND CLEAR THE SCREEN. A popup left standing after the bell is a
+        # question he can no longer answer - approving it would only be
+        # refused by the exchange (boss 2026-09-03 16:4x).
+        if st.get("pending"):
+            for _p9 in st["pending"]:
+                st.setdefault("log", []).append(
+                    {**_p9, "decision": "자동 취소", "at": _hhmm(), "dealt": None,
+                     "why_gone": "장 마감 — 제안을 거둡니다 / market closed"})
+            st["pending"] = []
+            st["log"] = st["log"][-200:]
+        _save(st)
+        return st
     # NO SUGGESTIONS AFTER 15:20 (boss 2026-09-03 18:1x: "after 15:20 our
     # agent should not give suggestions because the market is closing") — the
     # closing auction is no place to propose; unanswered popups die with it.

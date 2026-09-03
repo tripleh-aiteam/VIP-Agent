@@ -121,6 +121,12 @@ def _watch_note(pending: list, n_held: int = 0, rooms: list | None = None) -> di
     blocked and by WHICH gate, how many are already answered or held, so the
     silence carries its own reason."""
     import time as _t
+    from services.approval_desk import can_propose
+    if not can_propose():
+        # the desk has nothing to say once it can no longer act (boss
+        # 2026-09-03 16:4x: the note was still talking at 16:40)
+        _NOTE9["v"] = None
+        return None
     if pending:
         _NOTE9["v"] = None            # a real proposal is on screen - hush
         return None
@@ -523,7 +529,16 @@ def _brain_compute():
         # The chip keeps the short number; `why` is the sentence, and it is the
         # sentence that appears beside a NO BUY.
         gates = []
-        gv, gbad = (_gap(code) if code in watch_codes else (None, None))
+        # THE GAP GATE MUST JUDGE EVERY STOCK IT CAN (boss 2026-09-03 evening,
+        # asked directly: "are you sure things from tomorrow will implement
+        # right for ALL stocks?"). It did not. This ran only for the six names
+        # on the live WATCH list, so fourteen of the twenty skipped the 갭상승
+        # check altogether and PASSED IT BY DEFAULT - his newest rule was
+        # protecting less than a third of the board. The stored tape exists for
+        # almost all of them; _gap already returns (None, None) when it cannot
+        # read one, so asking unconditionally is safe and covers everything we
+        # have data for.
+        gv, gbad = _gap(code)
         # (stocks outside the collector are scored but never tape-read here)
         gates.append({
             "k": "갭상승", "en": "gap-up open",

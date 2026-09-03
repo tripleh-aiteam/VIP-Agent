@@ -52,6 +52,27 @@ WATCH: list[tuple[str, str]] = [
 _watch_day = ""         # the day WATCH was last chosen for
 
 
+def ensure_watched(code: str, name: str = "") -> bool:
+    """Start collecting a stock we have just taken a position in.
+
+    Boss 2026-09-03 evening, asked directly: "are you sure things from tomorrow
+    will implement right for ALL stocks?" - they would not have. The collector
+    watches his six plus the checklist's fourteen, but a stock he BUYS from
+    outside that twenty was never collected at all. 카카오 and 한화에어로스페이스
+    ended today with zero minute bars, and with no tape the 갭상승 gate and the
+    오늘 위치 gate cannot judge them - both silently PASS, so the two newest
+    rules protected everything except the stocks he had actually bought.
+
+    This is purely ADDITIVE, which is why it is safe mid-session: the refresh
+    ban exists so a swap cannot abandon half a day of a stock's tape, and
+    nothing here removes anyone."""
+    code = str(code or "").strip()
+    if not code or any(c == code for c, _n in WATCH):
+        return False
+    WATCH.append((code, name or code))
+    return True
+
+
 def refresh_watch(force: bool = False) -> list[tuple[str, str]]:
     """Point the collector at TODAY's five (boss 2026-08-10: the checklist chooses the
     stocks every morning, not once). Runs before the open; never mid-session, because
