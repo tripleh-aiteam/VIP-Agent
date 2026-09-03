@@ -156,6 +156,14 @@ export default function ApprovePage() {
 
   const decide = useCallback((sid: number, ok: boolean, price?: number, qty?: number) => {
     setBusy(sid);
+    // INSTANT ACKNOWLEDGEMENT (boss 2026-09-03 14:1x: "when I click approve or
+    // cancel I do not know either I clicked or not — it should gone
+    // immediately and say clicked"): the popup leaves the screen NOW and a
+    // toast confirms the click; the server's real answer replaces it in a
+    // moment. If the request fails, the 5s feed poll brings the popup back.
+    setFeed((f) => f ? { ...f, pending: (f.pending || []).filter((p) => p.id !== sid) } : f);
+    setToast(ok ? t("👆 승인 클릭됨 — 주문 실행 중…", "👆 APPROVE clicked — executing the order…")
+                : t("👆 취소 클릭됨 — 처리 중…", "👆 CANCEL clicked — processing…"));
     // the edited numbers ride along; omitted = take the agent's own proposal
     const q = ok && (price || qty)
       ? `?qty=${Math.max(0, Math.round(qty || 0))}&price=${Math.max(0, price || 0)}` : "";
