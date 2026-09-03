@@ -79,3 +79,40 @@ def filter_holding(hold: list, day8: str) -> list:
 
 def hidden_count(day8: str) -> int:
     return sum(1 for x in _load() if x.get("day") == day8)
+
+
+def filter_m3_log(log: list, day8: str) -> list:
+    """MENU 3's trading history obeys the eraser too (boss 2026-09-03 13:5x:
+    'he said deleted and when I check it is not deleting' — the chat lane
+    registered the hide but only menus 1/2 read the registry). A Menu 3 log
+    row matches a rule by code + the trip's BUY time: for a SELL row that is
+    buy_at, for a BUY row its own at/hhmm; t empty hides the whole stock."""
+    rules = [x for x in _load() if x.get("day") == day8]
+    if not rules:
+        return log
+    out = []
+    for l in log:
+        code = str(l.get("code") or "")
+        bt = (str(l.get("buy_at") or "")[:5] if l.get("side") == "SELL"
+              else str(l.get("at") or l.get("hhmm") or "")[:5])
+        hidden = any(x.get("code") == code and (not x.get("t") or x.get("t") == bt)
+                     for x in rules)
+        if not hidden:
+            out.append(l)
+    return out
+
+
+def filter_m3_held(held: list, day8: str) -> list:
+    """Menu 3 holding rows: match by code + the lot's buy time (at)."""
+    rules = [x for x in _load() if x.get("day") == day8]
+    if not rules:
+        return held
+    out = []
+    for h in held:
+        code = str(h.get("code") or "")
+        bt = str(h.get("at") or "")[:5]
+        hidden = any(x.get("code") == code and (not x.get("t") or x.get("t") == bt)
+                     for x in rules)
+        if not hidden:
+            out.append(h)
+    return out

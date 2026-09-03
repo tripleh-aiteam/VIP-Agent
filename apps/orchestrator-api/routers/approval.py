@@ -51,15 +51,29 @@ def feed(db: Session = Depends(get_db)):
         _st9 = semi_stats(db)
     except Exception:
         _st9 = None
+    _held9 = st.get("held") or []
+    _log9 = [l for l in reversed((st.get("log") or [])[-40:])
+             if not l.get("hidden")]
+    # THE CHAT ERASER REACHES MENU 3 TOO (boss 2026-09-03 13:5x: "he said I
+    # deleted and when I check it is not deleting" — the chat lane registered
+    # the hide in hidden_trips.json but only menus 1/2 read that registry).
+    # Display filter only, records stay; "복원해줘" brings rows back.
+    try:
+        from services.kiwoom_tape import _day as _kd
+        from services.trip_eraser import filter_m3_held, filter_m3_log
+        _d8 = _kd()
+        _held9 = filter_m3_held(_held9, _d8)
+        _log9 = filter_m3_log(_log9, _d8)
+    except Exception:
+        pass
     return {"ok": True, "market_open": mkt, "rooms": rooms,
             "pending": st.get("pending") or [],
-            "held": st.get("held") or [],
+            "held": _held9,
             # rows the boss struck stay in the record but leave the board
             # (2026-09-03 12:2x, the 현대모비스 09:50 entry: "remove this, it is
             # not a good condition to buy") - never a deletion, only a display
             # filter, the same law every other board here follows
-            "log": [l for l in reversed((st.get("log") or [])[-40:])
-                    if not l.get("hidden")], "stats": _st9}
+            "log": _log9, "stats": _st9}
 @router.get("/process/{code}")
 def process(code: str, db: Session = Depends(get_db)):
     from services import approval_desk as ad
