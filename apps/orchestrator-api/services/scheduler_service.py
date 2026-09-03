@@ -59,6 +59,22 @@ def _add_report_job(*args, **kwargs):
     structurally impossible instead of configuration-dependent."""
     if not REPORTS_ENABLED:
         return None
+    # THE 4-REPORT LAW (boss 2026-09-04 morning: "we need only 4 reports —
+    # Kiwoom, Asset, Real Estate, Stock News. No others, no duplicates, no
+    # daily recommendation, no weekly or monthly"): every other outbound
+    # report job is refused HERE, at the single registration gate, so a new
+    # call site cannot quietly re-add an email. The weekend editions are the
+    # same 4 reports (Sat/Sun form of Kiwoom/Newspaper); the health/watchdog
+    # jobs only backfill and verify these same 4.
+    _KEEP = {"kiwoom-daily-report", "kiwoom-weekend-weekly",
+             "newspaper-daily-report", "newspaper-weekend-weekly",
+             "asset-daily-report", "realty-daily-report",
+             "watchdog-morning-reports"}
+    _jid = str(kwargs.get("id") or getattr(args[0] if args else None, "__name__", ""))
+    if _jid and _jid not in _KEEP and not _jid.startswith("ensure-report-health"):
+        log.info(f"report job '{_jid}' NOT registered — outside the boss's 4-report lineup",
+                 extra={"action": "scheduler.report_job_skipped", "job": _jid})
+        return None
     if args:
         job_name = kwargs.get("id") or getattr(args[0], "__name__", "report-job")
         args = (_claim_wrapped(job_name, args[0]),) + tuple(args[1:])
