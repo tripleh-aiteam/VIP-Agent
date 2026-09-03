@@ -13,12 +13,12 @@ type Room = { code: string; name: string; score?: number | null; price?: number 
               chg?: number | null; zone?: Zone; held?: { qty: number; price: number; at: string } | null;
               pnl?: number | null };
 type Sug = { id: number; hhmm: string; code: string; name: string; side: "BUY" | "SELL";
-             reasons: string[]; price: number; qty: number; score?: number | null };
+             reasons: string[]; reasons_en?: string[]; price: number; qty: number; score?: number | null };
 type LogRow = Sug & { decision: string; fill?: number; at: string };
 type Feed = { ok: boolean; market_open: boolean; rooms: Room[]; pending: Sug[];
               held: { code: string; name: string; qty: number; price: number; at: string }[];
               log: LogRow[] };
-type Step = { icon: string; t: string; d: string };
+type Step = { icon: string; t: string; d: string; t_en?: string; d_en?: string };
 
 const W = (n?: number | null) => (n == null ? "-" : "₩" + Math.round(n).toLocaleString());
 
@@ -26,7 +26,7 @@ type CBar = { t: string; o?: number | null; h?: number | null; l?: number | null
 /* tiny self-contained candle chart — red up / blue down, like the desks */
 function MiniCandles({ bars }: { bars: CBar[] }) {
   const bs = bars.filter((b) => b.h != null && b.l != null && b.o != null && b.c != null);
-  if (!bs.length) return <div style={{ fontSize: 12, opacity: 0.6, padding: 10 }}>차트 데이터 없음</div>;
+  if (!bs.length) return <div style={{ fontSize: 12, opacity: 0.6, padding: 10 }}>no chart data</div>;
   const Wd = 760, H = 220, pad = 4;
   const hi = Math.max(...bs.map((b) => b.h as number));
   const lo = Math.min(...bs.map((b) => b.l as number));
@@ -120,10 +120,10 @@ export default function ApprovePage() {
     setBusy(sid);
     fetch(`${base}/approval/${ok ? "approve" : "reject"}/${sid}`, { method: "POST" })
       .then((r) => r.json())
-      .then((d) => { setToast(ok ? (d?.ok ? `✅ 승인 완료 — 체결 ${W(d.fill)}` : `⚠️ ${d?.error || "실패"}`)
-                                 : "🚫 취소했습니다 — 감시는 계속됩니다");
+      .then((d) => { setToast(ok ? (d?.ok ? t(`✅ 승인 완료 — 체결 ${W(d.fill)}`, `✅ Approved — filled ${W(d.fill)}`) : `⚠️ ${d?.error || t("실패", "failed")}`)
+                                 : t("🚫 취소했습니다 — 감시는 계속됩니다", "🚫 Cancelled — the watch continues"));
                      setTimeout(() => setToast(null), 3500); pull(); })
-      .catch(() => setToast("⚠️ 요청 실패"))
+      .catch(() => setToast(t("⚠️ 요청 실패", "⚠️ request failed")))
       .finally(() => setBusy(null));
   }, [base, pull]);
 
@@ -131,25 +131,23 @@ export default function ApprovePage() {
     <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8,
                    background: z.zone === "buy" ? "#0d47a1" : z.zone === "sell" ? "#b71c1c" : "#555",
                    color: "#fff" }}>
-      {z.zone === "buy" ? `매수구간 ${z.pos}%` : z.zone === "sell" ? `매도구간 ${z.pos}%` : `중간 ${z.pos}%`}
+      {z.zone === "buy" ? t(`매수구간 ${z.pos}%`, `BUY zone ${z.pos}%`) : z.zone === "sell" ? t(`매도구간 ${z.pos}%`, `SELL zone ${z.pos}%`) : t(`중간 ${z.pos}%`, `mid ${z.pos}%`)}
     </span>);
 
   return (
     <div style={{ maxWidth: 1080, margin: "0 auto", padding: 16, fontFamily: "inherit" }}>
       <div style={{ fontSize: 11.5, marginBottom: 6, display: "flex", gap: 12, opacity: 0.85 }}>
-        <a href="/testing" style={{ color: "inherit" }}>← 모의투자 메뉴</a>
-        <a href="/testing/live" style={{ color: "#00838f" }}>📡 메뉴1 실시간 키움</a>
-        <a href="/testing/reco" style={{ color: "#e65100" }}>🎯 메뉴2 추천 (자동)</a>
-        <b style={{ color: "#2e7d32" }}>🖥 메뉴3 실시간 모니터링</b>
+        <a href="/testing" style={{ color: "inherit" }}>{t("← 모의투자 메뉴", "← Paper Trading menu")}</a>
+        <a href="/testing/live" style={{ color: "#00838f" }}>{t("📡 메뉴1 실시간 키움", "📡 Menu 1 Live Kiwoom")}</a>
+        <a href="/testing/reco" style={{ color: "#e65100" }}>{t("🎯 메뉴2 추천 (자동)", "🎯 Menu 2 Reco (auto)")}</a>
+        <b style={{ color: "#2e7d32" }}>{t("🖥 메뉴3 실시간 모니터링", "🖥 Menu 3 Real Time Monitoring")}</b>
       </div>
-      <h1 style={{ fontSize: 22, fontWeight: 800 }}>🖥 실시간 모니터링
+      <h1 style={{ fontSize: 22, fontWeight: 800 }}>{t("🖥 실시간 모니터링", "🖥 Real Time Monitoring")}
         <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 10, opacity: 0.7 }}>
-          Real Time Monitoring — 에이전트가 제안하고, 사람이 승인합니다</span></h1>
+          {t("Real Time Monitoring — 에이전트가 제안하고, 사람이 승인합니다", "the agent proposes — the human approves")}</span></h1>
       <div style={{ fontSize: 12.5, opacity: 0.8, margin: "6px 0 14px" }}>
-        에이전트가 100 체크리스트·1년 역사 데이터·호가창·거래량·뉴스를 실시간으로 검사하다가
-        기회가 오면 <b style={{ color: "#e53935" }}>매수</b>/<b style={{ color: "#1e88e5" }}>매도</b> 팝업으로
-        이유·가격·수량까지 제안합니다. <b>승인</b>을 눌러야만 실행됩니다 — 절대 혼자 사고팔지 않습니다.
-        {feed && <span style={{ marginLeft: 8 }}>{feed.market_open ? "🟢 장중" : "🌙 장 마감 — 제안은 장중에만 나옵니다"}</span>}
+        {t("에이전트가 100 체크리스트·1년 역사 데이터·호가창·거래량·뉴스를 실시간으로 검사하다가 기회가 오면 매수/매도 팝업으로 이유·가격·수량까지 제안합니다. 승인을 눌러야만 실행됩니다 — 절대 혼자 사고팔지 않습니다.", "The agent live-checks the 100-item checklist, 1-year history, the order book, volume and news; when a chance appears it proposes BUY/SELL popups with reasons, price and share count. Nothing executes until you press Approve — it never trades alone.")}
+        {feed && <span style={{ marginLeft: 8 }}>{feed.market_open ? t("🟢 장중", "🟢 market open") : t("🌙 장 마감 — 제안은 장중에만 나옵니다", "🌙 market closed — proposals come only in market hours")}</span>}
       </div>
 
       {/* ─ THE AGENT, above the rooms, working on ALL stocks at once ─ */}
@@ -259,10 +257,10 @@ export default function ApprovePage() {
       })()}
       {/* ─ the ten rooms ─ */}
       {!feed && <div style={{ padding: "26px 0", fontSize: 13.5, opacity: 0.7 }}>
-        ⏳ 데스크를 깨우는 중입니다 — 10개 방을 준비하고 있어요… (첫 로딩은 몇 초 걸릴 수 있습니다)</div>}
+        {t("⏳ 데스크를 깨우는 중입니다 — 10개 방을 준비하고 있어요… (첫 로딩은 몇 초 걸릴 수 있습니다)", "⏳ Waking the desk — preparing the 10 rooms… (the first load can take a few seconds)")}</div>}
       {feed && (feed.rooms || []).length === 0 &&
         <div style={{ padding: "26px 0", fontSize: 13.5, opacity: 0.7 }}>
-          ⏳ 에이전트가 첫 스캔을 돌리는 중 — 잠시 후 방이 나타납니다 (자동 새로고침).</div>}
+          {t("⏳ 에이전트가 첫 스캔을 돌리는 중 — 잠시 후 방이 나타납니다 (자동 새로고침).", "⏳ The agent is running its first scan — rooms appear shortly (auto-refresh).")}</div>}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(196px,1fr))", gap: 10 }}>
         {(feed?.rooms || []).map((r) => (
           <div key={r.code} onClick={() => openRoom(r.code)}
@@ -270,7 +268,7 @@ export default function ApprovePage() {
                         borderRadius: 10, padding: "10px 12px", cursor: "pointer" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <b style={{ fontSize: 13.5 }}>{r.held ? "📦 " : ""}{r.name}</b>
-              {r.score != null && <span style={{ fontSize: 11, color: "#e6a817" }}>{r.score}점</span>}
+              {r.score != null && <span style={{ fontSize: 11, color: "#e6a817" }}>{r.score}{t("점", " pts")}</span>}
             </div>
             <div style={{ fontSize: 12.5, marginTop: 3 }}>
               {W(r.price)} {r.chg != null &&
@@ -281,7 +279,7 @@ export default function ApprovePage() {
               {zoneChip(r.zone)}
               {r.held && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8,
                                         background: "#2e7d32", color: "#fff" }}>
-                보유 {r.held.qty.toLocaleString()}주 {r.pnl != null ? `(${r.pnl >= 0 ? "+" : ""}${r.pnl}%)` : ""}</span>}
+                {t("보유 ", "held ")}{r.held.qty.toLocaleString()}{t("주", " sh")} {r.pnl != null ? `(${r.pnl >= 0 ? "+" : ""}${r.pnl}%)` : ""}</span>}
             </div>
           </div>
         ))}
@@ -290,17 +288,17 @@ export default function ApprovePage() {
       {/* ─ the opened room: the agent at work ─ */}
       {open && (
         <div style={{ border: "1px solid #e6a817", borderRadius: 10, padding: 14, marginTop: 14 }}>
-          <b style={{ fontSize: 14 }}>🔍 {feed?.rooms.find((x) => x.code === open)?.name} — 에이전트 작업 화면</b>
+          <b style={{ fontSize: 14 }}>🔍 {feed?.rooms.find((x) => x.code === open)?.name} {t(" — 에이전트 작업 화면", " — the agent at work")}</b>
           <div style={{ marginTop: 8 }}>
             {steps.slice(0, shown).map((s, i) => (
               <div key={i} style={{ fontSize: 13, padding: "4px 0", opacity: i === shown - 1 ? 1 : 0.85 }}>
-                {s.icon} <b>{s.t}</b> — {s.d} <span style={{ color: "#2e7d32" }}>✓</span>
+                {s.icon} <b>{t(s.t, s.t_en || s.t)}</b> — {t(s.d, s.d_en || s.d)} <span style={{ color: "#2e7d32" }}>✓</span>
               </div>))}
             {shown < steps.length &&
-              <div style={{ fontSize: 12.5, opacity: 0.6, padding: "4px 0" }}>⏳ 검사 중…</div>}
+              <div style={{ fontSize: 12.5, opacity: 0.6, padding: "4px 0" }}>{t("⏳ 검사 중…", "⏳ checking…")}</div>}
             {shown >= steps.length && steps.length > 0 &&
               <div style={{ fontSize: 12.5, marginTop: 6, color: "#e6a817" }}>
-                👀 감시 계속 중 — 조건이 맞으면 이 화면과 팝업으로 제안합니다.</div>}
+                {t("👀 감시 계속 중 — 조건이 맞으면 이 화면과 팝업으로 제안합니다.", "👀 Still watching — when conditions align, a proposal appears here and as a popup.")}</div>}
           </div>
           {/* ─ charts: 분 / 월 / 연 (boss 2026-09-02) ─ */}
           <div style={{ marginTop: 12 }}>
@@ -311,10 +309,10 @@ export default function ApprovePage() {
                            border: "1px solid rgba(128,128,128,0.4)",
                            background: cMode === m ? "#e6a817" : "transparent",
                            color: cMode === m ? "#000" : "inherit", fontWeight: 700 }}>
-                  {m === "min" ? "분봉 (오늘)" : m === "month" ? "일봉 1개월" : "일봉 1년"}
+                  {m === "min" ? t("분봉 (오늘)", "1-min (today)") : m === "month" ? t("일봉 1개월", "daily · 1 month") : t("일봉 1년", "daily · 1 year")}
                 </button>))}
             </div>
-            {cBusy ? <div style={{ fontSize: 12, opacity: 0.6, padding: 8 }}>⏳ 차트 로딩…</div>
+            {cBusy ? <div style={{ fontSize: 12, opacity: 0.6, padding: 8 }}>{t("⏳ 차트 로딩…", "⏳ loading chart…")}</div>
                    : <MiniCandles bars={cBars} />}
           </div>
           {/* ─ this room's own trading history (semi-auto decisions) ─ */}
@@ -323,15 +321,15 @@ export default function ApprovePage() {
             const rows = (feed?.log || []).filter((l) => l.code === open);
             if (!lot && rows.length === 0) return (
               <div style={{ fontSize: 12, marginTop: 10, opacity: 0.6 }}>
-                📜 이 방의 매매 기록: 아직 없음 — 첫 제안을 승인하면 여기 쌓입니다.</div>);
+                {t("📜 이 방의 매매 기록: 아직 없음 — 첫 제안을 승인하면 여기 쌓입니다.", "📜 This room has no trading record yet — approve the first proposal and it builds here.")}</div>);
             return (<div style={{ marginTop: 10 }}>
-              <b style={{ fontSize: 12.5 }}>📜 이 방의 매매 기록</b>
+              <b style={{ fontSize: 12.5 }}>{t("📜 이 방의 매매 기록", "📜 This room: trading record")}</b>
               {lot && <div style={{ fontSize: 12, padding: "3px 0", color: "#2e7d32" }}>
-                📦 보유 중: {lot.qty.toLocaleString()}주 @ {W(lot.price)} ({lot.at} 승인 매수)</div>}
+                {t("📦 보유 중: ", "📦 Holding: ")}{lot.qty.toLocaleString()}{t("주", " sh")} @ {W(lot.price)} ({lot.at}{t(" 승인 매수", " approved buy")})</div>}
               {rows.map((l, i) => (
                 <div key={i} style={{ fontSize: 12, padding: "2px 0", opacity: 0.9 }}>
-                  {l.at} · {l.side === "BUY" ? "🔴 매수" : "🔵 매도"} {l.qty.toLocaleString()}주
-                  — <b>{l.decision}</b>{l.fill ? ` @ ${W(l.fill)}` : ""}</div>))}
+                  {l.at} · {l.side === "BUY" ? t("🔴 매수", "🔴 BUY") : t("🔵 매도", "🔵 SELL")} {l.qty.toLocaleString()}{t("주", " sh")}
+                  — <b>{t(l.decision, l.decision === "승인" ? "approved" : "cancelled")}</b>{l.fill ? ` @ ${W(l.fill)}` : ""}</div>))}
             </div>);
           })()}
         </div>
@@ -340,20 +338,20 @@ export default function ApprovePage() {
       {/* ─ 📦 HOLDING LIST — always visible, even empty (boss 2026-09-02:
           "in any case please make a trading history and holding list") ─ */}
       <div style={{ marginTop: 18, border: "1px solid rgba(46,125,50,0.5)", borderRadius: 10, padding: 12 }}>
-        <b style={{ fontSize: 13.5 }}>📦 보유 목록 <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6 }}>
-          이 메뉴에서 승인한 매수만 여기 담깁니다</span></b>
+        <b style={{ fontSize: 13.5 }}>{t("📦 보유 목록", "📦 Holding list")} <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6 }}>
+          {t("이 메뉴에서 승인한 매수만 여기 담깁니다", "only buys approved on this menu land here")}</span></b>
         {(feed?.held?.length || 0) === 0
           ? <div style={{ fontSize: 12.5, opacity: 0.6, padding: "8px 0" }}>
-              아직 보유 없음 — 첫 매수 제안을 ✅ 승인하면 여기 나타납니다.</div>
+              {t("아직 보유 없음 — 첫 매수 제안을 ✅ 승인하면 여기 나타납니다.", "No holdings yet — ✅ approve the first buy proposal and it appears here.")}</div>
           : <table style={{ width: "100%", fontSize: 12.5, marginTop: 6, borderCollapse: "collapse" }}>
               <thead><tr style={{ opacity: 0.6, textAlign: "left" }}>
-                <th>종목</th><th>수량</th><th>매수가</th><th>현재가</th><th>평가</th><th>승인 시각</th></tr></thead>
+                <th>{t("종목", "Stock")}</th><th>{t("수량", "Qty")}</th><th>{t("매수가", "Entry")}</th><th>{t("현재가", "Now")}</th><th>{t("평가", "P&L")}</th><th>{t("승인 시각", "Approved at")}</th></tr></thead>
               <tbody>{feed!.held.map((h, i) => {
                 const room = feed!.rooms.find((r) => r.code === h.code);
                 const pnl = room?.pnl;
                 return (<tr key={i} style={{ borderTop: "1px solid rgba(128,128,128,0.2)" }}>
                   <td style={{ padding: "4px 0" }}><b>{h.name}</b></td>
-                  <td>{h.qty.toLocaleString()}주</td><td>{W(h.price)}</td>
+                  <td>{h.qty.toLocaleString()}{t("주", "")}</td><td>{W(h.price)}</td>
                   <td>{W(room?.price)}</td>
                   <td style={{ color: (pnl ?? 0) >= 0 ? "#e53935" : "#1e88e5", fontWeight: 700 }}>
                     {pnl != null ? `${pnl >= 0 ? "+" : ""}${pnl}%` : "-"}</td>
@@ -364,22 +362,22 @@ export default function ApprovePage() {
 
       {/* ─ 📜 TRADING HISTORY — always visible ─ */}
       <div style={{ marginTop: 12, border: "1px solid rgba(128,128,128,0.35)", borderRadius: 10, padding: 12 }}>
-        <b style={{ fontSize: 13.5 }}>📜 매매 기록 <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6 }}>
-          모든 제안과 결정 (승인·취소)</span></b>
+        <b style={{ fontSize: 13.5 }}>{t("📜 매매 기록", "📜 Trading history")} <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6 }}>
+          {t("모든 제안과 결정 (승인·취소)", "every proposal and decision (approve / cancel)")}</span></b>
         {(feed?.log?.length || 0) === 0
           ? <div style={{ fontSize: 12.5, opacity: 0.6, padding: "8px 0" }}>
-              아직 기록 없음 — 장중에 제안이 오고 결정을 내리면 전부 여기 쌓입니다.</div>
+              {t("아직 기록 없음 — 장중에 제안이 오고 결정을 내리면 전부 여기 쌓입니다.", "No records yet — proposals arrive in market hours; every decision builds here.")}</div>
           : <table style={{ width: "100%", fontSize: 12.5, marginTop: 6, borderCollapse: "collapse" }}>
               <thead><tr style={{ opacity: 0.6, textAlign: "left" }}>
-                <th>시각</th><th>구분</th><th>종목</th><th>수량</th><th>제안가</th><th>결정</th><th>체결가</th></tr></thead>
+                <th>{t("시각", "Time")}</th><th>{t("구분", "Side")}</th><th>{t("종목", "Stock")}</th><th>{t("수량", "Qty")}</th><th>{t("제안가", "Proposed")}</th><th>{t("결정", "Decision")}</th><th>{t("체결가", "Fill")}</th></tr></thead>
               <tbody>{feed!.log.slice(0, 25).map((l, i) => (
                 <tr key={i} style={{ borderTop: "1px solid rgba(128,128,128,0.2)" }}>
                   <td style={{ padding: "4px 0", opacity: 0.7 }}>{l.at}</td>
                   <td style={{ color: l.side === "BUY" ? "#e53935" : "#1e88e5", fontWeight: 700 }}>
-                    {l.side === "BUY" ? "매수" : "매도"}</td>
-                  <td><b>{l.name}</b></td><td>{l.qty.toLocaleString()}주</td>
+                    {l.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")}</td>
+                  <td><b>{l.name}</b></td><td>{l.qty.toLocaleString()}{t("주", "")}</td>
                   <td>{W(l.price)}</td>
-                  <td style={{ fontWeight: 700 }}>{l.decision}</td>
+                  <td style={{ fontWeight: 700 }}>{t(l.decision, l.decision === "승인" ? "approved" : "cancelled")}</td>
                   <td>{l.fill ? W(l.fill) : "-"}</td></tr>))}</tbody>
             </table>}
       </div>
@@ -393,24 +391,24 @@ export default function ApprovePage() {
                                    boxShadow: "0 6px 24px rgba(0,0,0,0.45)" }}>
             <div style={{ fontWeight: 800, fontSize: 14,
                           color: p.side === "BUY" ? "#e53935" : "#1e88e5" }}>
-              {p.side === "BUY" ? "🔴 매수 제안" : "🔵 매도 제안"} — {p.name}
+              {p.side === "BUY" ? t("🔴 매수 제안", "🔴 BUY proposal") : t("🔵 매도 제안", "🔵 SELL proposal")} — {p.name}
               <span style={{ float: "right", fontSize: 11, opacity: 0.6 }}>{p.hhmm}</span>
             </div>
             <ul style={{ margin: "6px 0 8px 16px", padding: 0 }}>
-              {p.reasons.map((x, i) => <li key={i} style={{ fontSize: 12.3, margin: "2px 0" }}>{x}</li>)}
+              {(t("k", "e") === "k" ? p.reasons : (p.reasons_en || p.reasons)).map((x, i) => <li key={i} style={{ fontSize: 12.3, margin: "2px 0" }}>{x}</li>)}
             </ul>
             <div style={{ fontSize: 12.5, marginBottom: 8 }}>
-              제안: <b>{W(p.price)}</b> × <b>{p.qty.toLocaleString()}주</b>
-              {p.score != null && <span style={{ marginLeft: 8, color: "#e6a817" }}>체크리스트 {p.score}점</span>}
+              {t("제안: ", "Proposal: ")}<b>{W(p.price)}</b> × <b>{p.qty.toLocaleString()}{t("주", " sh")}</b>
+              {p.score != null && <span style={{ marginLeft: 8, color: "#e6a817" }}>{t("체크리스트 ", "checklist ")}{p.score}{t("점", " pts")}</span>}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button disabled={busy === p.id} onClick={() => decide(p.id, true)}
                 style={{ flex: 1, padding: "8px 0", borderRadius: 8, border: "none", fontWeight: 800,
-                         background: "#2e7d32", color: "#fff", cursor: "pointer" }}>✅ 승인</button>
+                         background: "#2e7d32", color: "#fff", cursor: "pointer" }}>{t("✅ 승인", "✅ Approve")}</button>
               <button disabled={busy === p.id} onClick={() => decide(p.id, false)}
                 style={{ flex: 1, padding: "8px 0", borderRadius: 8, fontWeight: 700,
                          border: "1px solid rgba(128,128,128,0.5)", background: "transparent",
-                         color: "inherit", cursor: "pointer" }}>취소</button>
+                         color: "inherit", cursor: "pointer" }}>{t("취소", "Cancel")}</button>
             </div>
           </div>
         ))}

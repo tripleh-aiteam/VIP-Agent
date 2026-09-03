@@ -99,23 +99,34 @@ def held(st: Optional[dict] = None) -> list[dict]:
 
 
 def process_steps(db, code: str, name: str) -> list[dict]:
-    """The room's 'what the agent is doing' — REAL numbers, easy words."""
+    """The room's 'what the agent is doing' — REAL numbers, easy words.
+    Bilingual (boss 2026-09-03: 'in English mode it should be English')."""
     steps = []
+
+    def _add(icon, t_ko, d_ko, t_en, d_en):
+        steps.append({"icon": icon, "t": t_ko, "d": d_ko, "t_en": t_en, "d_en": d_en})
     try:
         from services.checklist_reco import _ranking, _year_zone
         rows = (_ranking() or {}).get("rows") or []
         me = next((r for r in rows if str(r.get("code")) == code), None)
         if me:
             rank = rows.index(me) + 1
-            steps.append({"icon": "📋", "t": "100 체크리스트 채점",
-                          "d": f"오늘 점수 {me.get('score')}점 · 전체 {len(rows)}종목 중 {rank}등"})
+            _add("📋", "100 체크리스트 채점",
+                 f"오늘 점수 {me.get('score')}점 · 전체 {len(rows)}종목 중 {rank}등",
+                 "Scoring the 100-item checklist",
+                 f"today {me.get('score')} pts · rank {rank} of {len(rows)} stocks")
         else:
-            steps.append({"icon": "📋", "t": "100 체크리스트 채점", "d": "오늘 점수 집계 중"})
+            _add("📋", "100 체크리스트 채점", "오늘 점수 집계 중",
+                 "Scoring the 100-item checklist", "today's score still computing")
         z = _year_zone(code)
         if z:
             zk = {"buy": "매수구간 (바닥권)", "sell": "매도구간 (고점권)", "mid": "중간 구간"}[z["zone"]]
-            steps.append({"icon": "📈", "t": "1년 역사 데이터 확인",
-                          "d": f"현재가는 1년 최저~최고의 {z['pos']}% 지점 → {zk}"})
+            zke = {"buy": "BUYING zone (near the bottom)", "sell": "SELLING zone (near the top)",
+                   "mid": "mid-range"}[z["zone"]]
+            _add("📈", "1년 역사 데이터 확인",
+                 f"현재가는 1년 최저~최고의 {z['pos']}% 지점 → {zk}",
+                 "Checking 1-year historical data",
+                 f"price sits at {z['pos']}% of the 1-year low~high → {zke}")
     except Exception:
         pass
     try:
@@ -124,40 +135,51 @@ def process_steps(db, code: str, name: str) -> list[dict]:
         px, _c, _t, _s = fast_price(code)
         ob = _book_offer(code, "BUY")
         if ob and ob.get("wall_price"):
-            steps.append({"icon": "🧱", "t": "키움 호가창 읽기",
-                          "d": f"가장 큰 매수벽 ₩{ob['wall_price']:,.0f} ({ob.get('wall_qty', 0):,}주) — "
-                               f"그 앞줄 제안가 ₩{ob['limit']:,.0f}"})
+            _add("🧱", "키움 호가창 읽기",
+                 f"가장 큰 매수벽 ₩{ob['wall_price']:,.0f} ({ob.get('wall_qty', 0):,}주) — "
+                 f"그 앞줄 제안가 ₩{ob['limit']:,.0f}",
+                 "Reading the Kiwoom order book",
+                 f"biggest bid wall ₩{ob['wall_price']:,.0f} ({ob.get('wall_qty', 0):,} sh) — "
+                 f"front-of-wall offer ₩{ob['limit']:,.0f}")
         elif ob:
-            steps.append({"icon": "🧱", "t": "키움 호가창 읽기", "d": f"호가 제안가 ₩{ob['limit']:,.0f}"})
+            _add("🧱", "키움 호가창 읽기", f"호가 제안가 ₩{ob['limit']:,.0f}",
+                 "Reading the Kiwoom order book", f"book offer ₩{ob['limit']:,.0f}")
         if px:
             sp = smart_price(code, float(px))
-            steps.append({"icon": "💡", "t": "효율 가격 계산",
-                          "d": f"현재가 ₩{float(px):,.0f} · 오늘 흐름 기준 추천 진입가 ₩{sp:,.0f}"})
+            _add("💡", "효율 가격 계산",
+                 f"현재가 ₩{float(px):,.0f} · 오늘 흐름 기준 추천 진입가 ₩{sp:,.0f}",
+                 "Computing the efficient price",
+                 f"live ₩{float(px):,.0f} · suggested entry from today's flow ₩{sp:,.0f}")
     except Exception:
         pass
     r, tv = _vol_ratio(code)
     if r is not None:
-        steps.append({"icon": "📊", "t": "거래량 비교",
-                      "d": f"오늘 {int(tv):,}주 = 최근 20일 평균의 {r:.1f}배"
-                           + (" — 활발" if r >= 1.2 else " — 평소 수준" if r >= 0.8 else " — 한산")})
+        _tag = ("활발" if r >= 1.2 else "평소 수준" if r >= 0.8 else "한산")
+        _tag_e = ("busy" if r >= 1.2 else "normal" if r >= 0.8 else "quiet")
+        _add("📊", "거래량 비교",
+             f"오늘 {int(tv):,}주 = 최근 20일 평균의 {r:.1f}배 — {_tag}",
+             "Comparing volume",
+             f"today {int(tv):,} sh = {r:.1f}× the 20-day average — {_tag_e}")
     try:
         from services.checklist_advice import _fresh_stamps
         stmps = _fresh_stamps(code, limit=2)
         if stmps:
             s0 = stmps[-1]
-            steps.append({"icon": "📰", "t": "뉴스 스탬프",
-                          "d": f"[{s0.get('stamp')}] {str(s0.get('title'))[:46]}"})
+            _add("📰", "뉴스 스탬프", f"[{s0.get('stamp')}] {str(s0.get('title'))[:46]}",
+                 "News stamps", f"[{s0.get('stamp')}] {str(s0.get('title'))[:46]}")
         else:
-            steps.append({"icon": "📰", "t": "뉴스 스탬프", "d": "최근 특이 뉴스 없음"})
+            _add("📰", "뉴스 스탬프", "최근 특이 뉴스 없음",
+                 "News stamps", "no notable recent news")
     except Exception:
         pass
     return steps
 
 
-def _mk_sug(st, code, name, side, reasons, price, qty, score):
+def _mk_sug(st, code, name, side, reasons, price, qty, score, reasons_en=None):
     st["seq"] = int(st.get("seq") or 0) + 1
     sug = {"id": st["seq"], "ts": time.time(), "hhmm": _hhmm(), "code": code,
            "name": name, "side": side, "reasons": reasons,
+           "reasons_en": reasons_en or reasons,
            "price": price, "qty": int(qty), "score": score}
     st.setdefault("pending", []).append(sug)
     st.setdefault("cool", {})[f"{side}:{code}"] = time.time()
@@ -262,8 +284,9 @@ def scan(db) -> dict:
                 for r in rws:
                     if last is None or str(r.get("sell_t") or "") > str(last.get("sell_t") or ""):
                         last = r
-                _mk_sug(st, code, name, "SELL",
-                        _why_sell(code, lot, last, px), px, lot["qty"], score)
+                _rs9, _rse9 = _why_sell(code, lot, last, px)
+                _mk_sug(st, code, name, "SELL", _rs9, px, lot["qty"], score,
+                        reasons_en=_rse9)
                 continue
 
             # ---- BUY: 알고3 holds it, we do not ----
@@ -280,7 +303,7 @@ def scan(db) -> dict:
                     continue            # danger news still vetoes, as before
             except Exception:
                 pass
-            reasons = _why_buy(code, name, a_hold)
+            reasons, reasons_en = _why_buy(code, name, a_hold)
             _bq = a_hold.get("qty") or 0
             try:
                 _bp = float(a_hold.get("base") or a_hold.get("entry") or px)
@@ -291,7 +314,10 @@ def scan(db) -> dict:
                 _bq = advise_qty(px)
             reasons.append(f"제안: ₩{_bp:,.0f} · {int(_bq):,}주 "
                            f"(알고3의 진입가와 수량 그대로)")
-            _mk_sug(st, code, name, "BUY", reasons, _bp, int(_bq), score)
+            reasons_en.append(f"Proposal: ₩{_bp:,.0f} · {int(_bq):,} shares "
+                              f"(Algo 3's own entry price and size)")
+            _mk_sug(st, code, name, "BUY", reasons, _bp, int(_bq), score,
+                    reasons_en=reasons_en)
         except Exception as e:
             log.warning(f"approval scan {code}: {str(e)[:80]}")
 
@@ -328,10 +354,11 @@ def _algo3_view(code: str, name: str) -> dict:
     return out
 
 
-def _why_buy(code: str, name: str, hold: dict) -> list:
-    """The reasons in the boss's own language: the checklist first, then the
+def _why_buy(code: str, name: str, hold: dict):
+    """The reasons in the boss's own language (KO + EN pair, boss 2026-09-03:
+    'in English mode it should be English'): the checklist first, then the
     exact 알고3 law that opened the door, then the two average gates."""
-    R = []
+    R, E = [], []
     try:
         from services.checklist_reco import _ranking
         rows = (_ranking() or {}).get("rows") or []
@@ -339,10 +366,13 @@ def _why_buy(code: str, name: str, hold: dict) -> list:
         if me:
             rank = sorted(rows, key=lambda r: -(r.get("score") or 0)).index(me) + 1
             R.append(f"100 체크리스트 {me.get('score')}점 · 전체 {len(rows)}종목 중 {rank}등")
+            E.append(f"100-item checklist {me.get('score')} pts · rank {rank} of {len(rows)}")
             if me.get("mid") is not None:
                 R.append(f"1개월 평균선 대비 {me.get('mid'):+.2f}% — 평균 아래 (매수 게이트 1 통과)")
+                E.append(f"{me.get('mid'):+.2f}% vs the 1-month average — below it (buy gate 1 passed)")
             if me.get("midy") is not None:
                 R.append(f"1년 평균선 대비 {me.get('midy'):+.2f}% — 평균 아래 (매수 게이트 2 통과)")
+                E.append(f"{me.get('midy'):+.2f}% vs the 1-year average — below it (buy gate 2 passed)")
     except Exception:
         pass
     try:
@@ -351,38 +381,56 @@ def _why_buy(code: str, name: str, hold: dict) -> list:
         if z:
             zk = ("매수구간 (1년 중 바닥 20%)" if z["zone"] == "buy"
                   else f"1년 범위의 {z['pos']}% 지점 — 매도구간(85%↑) 아님")
+            zke = ("BUYING zone (bottom 20% of the year)" if z["zone"] == "buy"
+                   else f"at {z['pos']}% of the 1-year range — not the selling zone (85%+)")
             R.append(f"과거 1년 데이터 확인: {zk}")
+            E.append(f"1-year historical data checked: {zke}")
     except Exception:
         pass
     bt = str((hold or {}).get("buy_t") or "")[:5]
     R.append(f"알고3 진입 법칙 충족 ({bt}) — 급락 후 하락이 멈추고 3번째 양봉, "
              f"제1조(바닥 3봉 이상·바닥 1.5% 이내·최근 3봉 중 2회 상승·0.3% 성장) 통과")
+    E.append(f"Algo-3 entry law met ({bt}) — after the dip the fall stopped, 3rd red candle, "
+             f"Article 1 passed (3+ bars at the bottom · within 1.5% of it · 2 of last 3 rising · 0.3% growth)")
     R.append("차단 규칙 전부 통과: 갭상승 금지 · 30봉 고가 0.3% 이내 금지 · "
              "매도존 금지 · 20봉 변동 0.7% 미만 금지 · 매도 후 추격 금지 · "
              "1개월/1년 평균 위 금지")
-    return R
+    E.append("Every block rule passed: no gap-up buy · not within 0.3% of the 30-bar high · "
+             "not the selling zone · not a flat 0.7% chop · no chasing after a sell · "
+             "not above the 1-month/1-year averages")
+    return R, E
 
 
-def _why_sell(code: str, lot: dict, row: dict, px: float) -> list:
-    """Name the law that closed it - the engine's own words, then the money."""
-    R = []
+def _why_sell(code: str, lot: dict, row: dict, px: float):
+    """Name the law that closed it (KO + EN pair) - the engine's own words."""
+    R, E = [], []
     why = str((row or {}).get("exit_why") or "")
     law = ("고점 대비 1.5% 하락 (종가 확인) — 큰 파도 청산" if "고점" in why else
            "고점 후 횡보 지지선(12봉 최저) 이탈 — 이익 중 청산" if "지지선" in why else
            "-1% 손절 (종가 확인)" if "-1%" in why else
            "15:19 장 마감 전량 정리" if "마감" in why else
            "상승 후 연속 음봉 — 파도 종료" if "음봉" in why else why or "알고3 청산 신호")
+    law_e = ("1.5% down from the peak (close-confirmed) — big-wave exit" if "고점" in why else
+             "post-peak shelf (12-bar low) broke — exit in profit" if "지지선" in why else
+             "-1% stop (close-confirmed)" if "-1%" in why else
+             "15:19 closing-bell full clear" if "마감" in why else
+             "straight blue candles after the rise — wave over" if "음봉" in why
+             else (why or "Algo-3 exit signal"))
     R.append(f"알고3 청산 법칙: {law}")
+    E.append(f"Algo-3 exit law: {law_e}")
     try:
         entry = float(lot["price"])
         pnl = (px / entry - 1) * 100
         R.append(f"매수가 ₩{entry:,.0f} → 현재 ₩{px:,.0f} ({pnl:+.2f}%)")
+        E.append(f"entry ₩{entry:,.0f} → now ₩{px:,.0f} ({pnl:+.2f}%)")
         if 0 < pnl <= 0.23:
             R.append("주의: 수수료 구간(0~0.23%) — 알고3는 이 구간에서 팔지 않습니다")
+            E.append("note: inside the fee band (0~0.23%) — Algo 3 does not sell here")
     except Exception:
         pass
     R.append("보류 법칙 확인: 매수구간(1년 바닥권 또는 5일 최저) 인내 규칙에 해당하지 않음")
-    return R
+    E.append("patience law checked: not in the buying-zone hold rule (1-year bottom or 5-day low)")
+    return R, E
 
 
 def decide(db, sid: int, ok: bool) -> dict:
