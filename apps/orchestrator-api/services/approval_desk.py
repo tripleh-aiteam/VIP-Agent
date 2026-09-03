@@ -708,13 +708,18 @@ def time_overrides() -> dict:
         return {}
 
 
-def set_time_override(code: str, sug_at: str = "", at: str = "") -> dict:
+def set_time_override(code: str, sug_at: str = "", at: str = "", frm: str = "") -> dict:
+    """frm scopes the stamp to rows whose CURRENT clock matches it — the
+    한화시스템 lesson (2026-09-03): a code-wide stamp rewrote every row of the
+    stock and printed impossible stories; with frm only the named row moves."""
     o = time_overrides()
     cur = o.get(code) or {}
     if sug_at:
         cur["sug_at"] = sug_at
     if at:
         cur["at"] = at
+    if frm:
+        cur["frm"] = frm[:5]
     o[code] = cur
     _TOVR.parent.mkdir(parents=True, exist_ok=True)
     _TOVR.write_text(json.dumps(o, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -764,14 +769,20 @@ def apply_time_overrides(held: list, log: list) -> None:
         # clock — it may touch held lots and BUY rows only, never a sell.
         if row.get("side") == "SELL":
             continue
+        # frm scopes the stamp: only the row whose current clock matches moves
+        # (the second 한화시스템 lesson — never a code-wide rewrite again)
+        if ov.get("frm") and str(row.get("at") or "")[:5] not in (ov["frm"], str(ov.get("at") or "")[:5]):
+            continue
         if ov.get("at"):
             row["at"] = ov["at"]
             if "hhmm" in row:
                 row["hhmm"] = ov["at"]
-            if "decision" not in row and row.get("price"):
+            if row.get("price"):
                 px9 = _px_at_cached(str(row.get("code")), str(ov["at"])[:5])
                 if px9:
                     row["price"] = float(px9)
+                    if "decision" in row and row.get("fill"):
+                        row["fill"] = float(px9)
                     row["price_follows_time"] = True
         if ov.get("sug_at"):
             row["sug_at"] = ov["sug_at"]
