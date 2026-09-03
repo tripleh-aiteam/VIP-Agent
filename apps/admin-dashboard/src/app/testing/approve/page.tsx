@@ -16,7 +16,9 @@ type Sug = { id: number; hhmm: string; code: string; name: string; side: "BUY" |
              reasons: string[]; reasons_en?: string[]; price: number; qty: number; score?: number | null };
 type LogRow = Sug & { decision: string; fill?: number | null; at: string; dealt?: boolean;
                       gave_up?: boolean; giveup_note?: string;
-                      converted?: boolean; conv_note?: string };
+                      converted?: boolean; conv_note?: string;
+                      buy_at?: string; buy_price?: number;
+                      pnl_pct?: number; pnl_won?: number };
 type Stats = { trips: number; wins: number; losses: number; win_pct: number;
                net_won: number; invested: number; open_n: number; open_unreal: number;
                best?: { name: string; pct: number } | null;
@@ -661,6 +663,21 @@ export default function ApprovePage() {
                               {t("🏳 포기 (가격이 멀어짐)", "🏳 GAVE UP (price ran away)")} {guOpen === i ? "▲" : "▼"}</span>
                           : <span style={{ color: "#b26a00" }}>{t("🕐 미체결 (대기 중)", "🕐 NOT DEAL (waiting)")}</span>}</td>
                   <td>{l.fill ? W(l.fill) : "-"}</td></tr>
+                {/* THE ROUND TRIP UNDER THE SELL (boss 2026-09-03 12:5x: "put
+                    buying time, buying price, selling time, selling price and
+                    how much we gain with % and money") */}
+                {l.side === "SELL" && l.buy_price != null && l.fill != null && (
+                  <tr><td colSpan={8} style={{ padding: "4px 10px 7px", fontSize: 12,
+                        lineHeight: 1.5, borderLeft: `3px solid ${(l.pnl_won ?? 0) >= 0 ? "#e53935" : "#1e88e5"}`,
+                        background: (l.pnl_won ?? 0) >= 0 ? "rgba(229,57,53,0.06)" : "rgba(30,136,229,0.06)" }}>
+                    🔗 {t(`${l.buy_at} 매수 `, `bought ${l.buy_at} @ `)}<b>{W(l.buy_price)}</b>
+                    {" → "}{t(`${l.at} 매도 `, `sold ${l.at} @ `)}<b>{W(l.fill)}</b>
+                    <b style={{ marginLeft: 10, color: (l.pnl_won ?? 0) >= 0 ? "#e53935" : "#1e88e5" }}>
+                      {(l.pnl_pct ?? 0) >= 0 ? "+" : ""}{l.pnl_pct}% · {(l.pnl_won ?? 0) >= 0 ? "+" : ""}₩{Math.abs(l.pnl_won ?? 0) === 0 ? "0" : (l.pnl_won ?? 0).toLocaleString()}
+                    </b>
+                    <span style={{ opacity: 0.55, marginLeft: 8 }}>
+                      ({l.qty.toLocaleString()}{t("주", " sh")})</span>
+                  </td></tr>)}
                 {/* the clicked give-up row unfolds its own law */}
                 {l.gave_up && guOpen === i && (
                   <tr><td colSpan={8} style={{ padding: "8px 10px", fontSize: 12.5,

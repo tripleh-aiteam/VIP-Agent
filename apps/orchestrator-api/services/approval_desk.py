@@ -722,6 +722,7 @@ def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
     # list; a queued one logs 미체결 and the scanner reconciles when it fills.
     fill = res.get("fill_price")
     queued = (str(res.get("status") or "").upper() == "OPEN") or not fill
+    _trip = {}
     if not queued:
         fill = float(fill)
         if p["side"] == "BUY":
@@ -729,8 +730,18 @@ def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
                                               "qty": int(p["qty"]), "price": fill,
                                               "sug_at": p.get("hhmm"), "at": _hhmm()})
         else:
+            # THE ROUND TRIP ON THE SELL ROW (boss 2026-09-03 12:5x: "put buying
+            # time, buying price, selling time, selling price and how much we
+            # gain with % and money"): capture the closed lot before it leaves
+            _lot = next((h for h in st.get("held") or []
+                         if h["code"] == p["code"]), None)
+            if _lot and _lot.get("price"):
+                _bp = float(_lot["price"])
+                _trip = {"buy_at": _lot.get("at"), "buy_price": _bp,
+                         "pnl_pct": round((fill / _bp - 1) * 100, 2),
+                         "pnl_won": round((fill - _bp) * int(p["qty"]))}
             st["held"] = [h for h in st.get("held") or [] if h["code"] != p["code"]]
-    st.setdefault("log", []).append({**p, "decision": "승인", "at": _hhmm(),
+    st.setdefault("log", []).append({**p, **_trip, "decision": "승인", "at": _hhmm(),
                                      "dealt": (not queued),
                                      "fill": (fill if not queued else None),
                                      "oid": res.get("id") or res.get("order_id")})
@@ -767,6 +778,14 @@ def _reconcile_fills(db, st) -> None:
                         {"code": l["code"], "name": l["name"], "qty": int(l["qty"]),
                          "price": float(row[1]), "sug_at": l.get("hhmm"), "at": _hhmm()})
                 else:
+                    _lot = next((h for h in st.get("held") or []
+                                 if h["code"] == l["code"]), None)
+                    if _lot and _lot.get("price"):
+                        _bp = float(_lot["price"])
+                        l["buy_at"] = _lot.get("at")
+                        l["buy_price"] = _bp
+                        l["pnl_pct"] = round(float(row[1]) / _bp * 100 - 100, 2)
+                        l["pnl_won"] = round((float(row[1]) - _bp) * int(l["qty"]))
                     st["held"] = [h for h in st.get("held") or []
                                   if h["code"] != l["code"]]
             elif row and str(row[0]) == "CANCELLED":
