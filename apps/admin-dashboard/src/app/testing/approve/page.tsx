@@ -12,8 +12,10 @@ type Zone = { pos: number; zone: "buy" | "sell" | "mid" } | null;
 type Room = { code: string; name: string; score?: number | null; price?: number | null;
               chg?: number | null; zone?: Zone; held?: { qty: number; price: number; at: string } | null;
               pnl?: number | null };
+type ChkItem = { k: string; v: string; s?: number | null; g?: string; bad?: boolean };
 type Sug = { id: number; hhmm: string; code: string; name: string; side: "BUY" | "SELL";
-             reasons: string[]; reasons_en?: string[]; price: number; qty: number; score?: number | null };
+             reasons: string[]; reasons_en?: string[]; price: number; qty: number; score?: number | null;
+             check_items?: ChkItem[] };
 type LogRow = Sug & { decision: string; fill?: number | null; at: string; dealt?: boolean;
                       gave_up?: boolean; giveup_note?: string;
                       converted?: boolean; conv_note?: string;
@@ -98,6 +100,7 @@ export default function ApprovePage() {
   const [guOpen, setGuOpen] = useState<number | null>(null);   // opened give-up detail row
   const [histOpen, setHistOpen] = useState(true);              // 📜 history fold (boss: closeable)
   const [rzOpen, setRzOpen] = useState<string | null>(null);   // opened why-we-traded rows
+  const [ckOpen, setCkOpen] = useState<string | null>(null);   // opened 100-checklist detail
   const [money3, setMoney3] = useState(false);                 // 💰 money law: hidden by default (2026-08-19)
   const [open, setOpen] = useState<string | null>(null);          // opened room code
   const [steps, setSteps] = useState<Step[]>([]);
@@ -184,6 +187,29 @@ export default function ApprovePage() {
       .finally(() => setBusy(null));
   }, [base, pull]);
 
+  // 📋 THE FULL CHECKLIST, ONE CLICK UNDER THE ⑤ LINE (boss 2026-09-03 17:0x:
+  // "Checklist 60.6 pts should be clickable — if I click it should show all
+  // checking cases of the 100 checklist"): every proposal saves its measured
+  // items; this expander lists them wherever reasons are shown.
+  const chkList = (key: string, items?: ChkItem[]) => !items?.length ? null : (
+    <div style={{ marginTop: 4 }}>
+      <span onClick={(e) => { e.stopPropagation(); setCkOpen(ckOpen === key ? null : key); }}
+        style={{ cursor: "pointer", fontSize: 11.5, fontWeight: 800, color: "#6a1b9a",
+                 textDecoration: "underline dotted", textUnderlineOffset: 3 }}>
+        📋 {t(`100 체크리스트 검사 내역 보기 (측정 ${items.length}항목)`,
+              `see the 100-checklist inspection (${items.length} measured items)`)} {ckOpen === key ? "▲" : "▼"}
+      </span>
+      {ckOpen === key && (
+        <div style={{ marginTop: 4, padding: "5px 8px", borderRadius: 6,
+                      background: "rgba(106,27,154,0.07)", fontSize: 11.5, lineHeight: 1.55 }}>
+          {items.map((it, i9) => (
+            <div key={i9} style={{ color: it.bad ? "#c62828" : "inherit",
+                                   fontWeight: it.bad ? 700 : 400 }}>
+              {it.bad ? "✗" : "✓"} {it.k} — {it.v}{it.s != null ? ` · ${it.s}${t("점", " pts")}` : ""}
+            </div>))}
+        </div>)}
+    </div>);
+
   const zoneChip = (z?: Zone) => !z ? null : (
     <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8,
                    background: z.zone === "buy" ? "#0d47a1" : z.zone === "sell" ? "#b71c1c" : "#555",
@@ -264,6 +290,9 @@ export default function ApprovePage() {
           { ko: "연속 상승 여부", en: "already-rising run" },
           { ko: "1년 매수/매도 구간", en: "1-year zone" },
           { ko: "위험 뉴스", en: "danger news" },
+          // ⑦ boss 2026-09-03, the 한국전력 popup: at its 1-year floor but at
+          // 94% of TODAY's range - no daily gate could see it
+          { ko: "오늘 위치", en: "place in today's range" },
         ];
         const shown = all.filter((u) => picked.length === 0 || picked.includes(u.code));
         // one shared clock: every card reveals its steps together
@@ -289,6 +318,7 @@ export default function ApprovePage() {
                   { i: "🔍", k: "검사 중 — 종목마다 관문 하나씩 통과 확인", e: "checking — walking every stock through the gates" },
                   { i: "📊", k: "거래량과 호가창 읽는 중", e: "reading volume and the order book" },
                   { i: "📰", k: "위험 뉴스 스캔 중", e: "scanning for danger news" },
+                  { i: "📍", k: "오늘 고가권인지 확인 중", e: "checking it is not at today's high" },
                   { i: "⚖️", k: "판단 중 — 살 자리인가, 기다릴 자리인가", e: "deciding — a place to buy, or a place to wait" },
                   { i: "✅", k: "결정 — 조건이 맞으면 바로 팝업으로 제안", e: "decided — when conditions align, a popup proposes" },
                 ];
@@ -694,39 +724,60 @@ export default function ApprovePage() {
                       {money3 && <td style={{ width: 110, textAlign: "right", opacity: 0.5 }}>—</td>}
                     </tr>
                     {rzOpen === `h${i}` && (() => {
-                      // 🟢 THE HOLDING REASON, live (boss 2026-09-03 16:4x: "in
-                      // the holding case make also explanation — including
-                      // buying, and a holding reason. Make a list"): the desk's
-                      // own law, judged against right-now numbers.
+                      // 🟢 THE HOLDING REASON, live — the boss's own 4-point
+                      // list (2026-09-03 17:0x): ① the rise with prices and
+                      // the yearly AND monthly position, ② the zone verdict,
+                      // ③ patience when the rise pauses but -1% is not hit,
+                      // ④ the server's AI news check (qwen news intern).
                       const live = room?.price ?? null;
                       const trig = h.price * 0.99;
+                      const chg9 = room?.chg ?? null;
+                      const bEnt = [...(brain?.six || []), ...(brain?.universe || [])]
+                        .find((e) => e.code === h.code);
+                      const gate9 = (k: string) => bEnt?.gates?.find((g) => g.k === k);
+                      const g1m = gate9("1개월 평균")?.v;
+                      const g1y = gate9("1년 평균")?.v;
+                      const newsG = gate9("위험 뉴스");
+                      const z9 = room?.zone;
+                      const posTxt = z9 ? `${z9.pos}%` : "?";
                       const holdKo: string[] = [];
                       const holdEn: string[] = [];
                       if (live != null) {
-                        holdKo.push(`① 현재 ${W(live)} (${(pnl ?? 0) >= 0 ? "+" : ""}${pnl ?? "?"}%) — 매수가 ${W(h.price)} 기준입니다.`);
-                        holdEn.push(`① Now ${W(live)} (${(pnl ?? 0) >= 0 ? "+" : ""}${pnl ?? "?"}%) vs our buy ${W(h.price)}.`);
-                        if ((pnl ?? 0) > -1) {
-                          holdKo.push(`② 매도선은 -1% = ${W(trig)} — 아직 ${W(Math.max(0, live - trig))} 위에 있습니다 → 계속 보유합니다.`);
-                          holdEn.push(`② The sell line is -1% = ${W(trig)} — price sits ${W(Math.max(0, live - trig))} above it → we KEEP HOLDING.`);
+                        const rising = (chg9 ?? 0) > 0 && (pnl ?? 0) > 0;
+                        if (rising) {
+                          holdKo.push(`① 계속 오르는 중입니다 — 현재 ${W(live)} · 매수가 ${W(h.price)} (${(pnl ?? 0) >= 0 ? "+" : ""}${pnl}%) · 연중 ${posTxt} 지점${g1m ? ` · 1개월 평균 대비 ${g1m}` : ""}${g1y ? ` · 1년 평균 대비 ${g1y}` : ""}`);
+                          holdEn.push(`① Still rising — now ${W(live)} · bought ${W(h.price)} (${(pnl ?? 0) >= 0 ? "+" : ""}${pnl}%) · at ${posTxt} of its year${g1m ? ` · ${g1m} vs the 1-month avg` : ""}${g1y ? ` · ${g1y} vs the 1-year avg` : ""}`);
                         } else {
-                          holdKo.push(`② -1% 선(${W(trig)}) 아래입니다 — 매도 제안이 곧 팝업으로 옵니다.`);
-                          holdEn.push(`② Below the -1% line (${W(trig)}) — a SELL proposal is coming as a popup.`);
+                          holdKo.push(`① 현재 ${W(live)} (${(pnl ?? 0) >= 0 ? "+" : ""}${pnl}%) · 매수가 ${W(h.price)} · 연중 ${posTxt} 지점${g1m ? ` · 1개월 평균 대비 ${g1m}` : ""}${g1y ? ` · 1년 평균 대비 ${g1y}` : ""}`);
+                          holdEn.push(`① Now ${W(live)} (${(pnl ?? 0) >= 0 ? "+" : ""}${pnl}%) · bought ${W(h.price)} · at ${posTxt} of its year${g1m ? ` · ${g1m} vs the 1-month avg` : ""}${g1y ? ` · ${g1y} vs the 1-year avg` : ""}`);
+                        }
+                        if (z9?.zone === "buy") {
+                          holdKo.push(`② 매수구간(바닥권, 연중 ${posTxt})입니다 — 바닥권에서는 팔지 않습니다.`);
+                          holdEn.push(`② It sits in the BUYING zone (${posTxt} of the year, near the bottom) — we do not sell the bottom.`);
+                        } else if (z9?.zone === "sell") {
+                          holdKo.push(`② 연중 ${posTxt} — 고점권입니다. 매도는 규칙(-1%)이 결정합니다.`);
+                          holdEn.push(`② At ${posTxt} of the year — near the top. The -1% rule still decides the sell.`);
+                        } else if (z9) {
+                          holdKo.push(`② 연중 ${posTxt} — 중간 구간입니다. 파도가 살아 있는 동안 태웁니다.`);
+                          holdEn.push(`② At ${posTxt} of the year — mid-range. We ride while the wave is alive.`);
+                        }
+                        if ((pnl ?? 0) > -1 && (chg9 ?? 0) <= 0) {
+                          holdKo.push(`③ 상승이 잠시 멈췄지만 -1% 선(${W(trig)})에 닿지 않았습니다 — 서두르지 않고 기다립니다.`);
+                          holdEn.push(`③ The rise has paused but price has NOT reached the -1% line (${W(trig)}) — we stay patient, no hurry to sell.`);
+                        } else if ((pnl ?? 0) > -1) {
+                          holdKo.push(`③ -1% 매도선은 ${W(trig)} — 아직 ${W(Math.max(0, live - trig))} 위에 있습니다 → 보유합니다.`);
+                          holdEn.push(`③ The -1% sell line is ${W(trig)} — price sits ${W(Math.max(0, live - trig))} above it → we hold.`);
+                        } else {
+                          holdKo.push(`③ -1% 선(${W(trig)}) 아래입니다 — 매도 제안이 곧 팝업으로 옵니다.`);
+                          holdEn.push(`③ Below the -1% line (${W(trig)}) — a SELL proposal is coming as a popup.`);
                         }
                       }
-                      holdKo.push("③ 사장님의 매도법 — 이 데스크는 -1% 하락일 때만 팝니다. 오르는 중·버티는 중에는 무조건 보유합니다.");
-                      holdEn.push("③ The boss's selling law — this desk sells ONLY on a -1% fall. Rising or steady means HOLD, always.");
-                      const z9 = room?.zone;
-                      if (z9) {
-                        if (z9.zone === "buy") {
-                          holdKo.push(`④ 연중 ${z9.pos}% — 매수구간(바닥권)입니다. 인내 규칙: 바닥에서는 서두르지 않습니다.`);
-                          holdEn.push(`④ ${z9.pos}% of the year — the BUYING zone (near the bottom). Patience rule: never hurry at the bottom.`);
-                        } else if (z9.zone === "sell") {
-                          holdKo.push(`④ 연중 ${z9.pos}% — 고점권입니다. 그래도 매도는 -1% 법이 결정합니다.`);
-                          holdEn.push(`④ ${z9.pos}% of the year — near the top. Even so, only the -1% law decides the sell.`);
-                        } else {
-                          holdKo.push(`④ 연중 ${z9.pos}% — 중간 구간입니다. 파도가 살아 있는 동안 태웁니다.`);
-                          holdEn.push(`④ ${z9.pos}% of the year — mid-range. We ride while the wave is alive.`);
-                        }
+                      if (newsG && /있음|yes/i.test(String(newsG.v || ""))) {
+                        holdKo.push("④ ⚠️ 서버 뉴스 검사(AI 뉴스 인턴) — 위험 뉴스가 감지되었습니다. 주의해서 지켜보고 있습니다.");
+                        holdEn.push("④ ⚠️ The server's AI news intern flagged danger news — we are watching it closely.");
+                      } else {
+                        holdKo.push("④ 서버 뉴스 검사(AI 뉴스 인턴, qwen) — 이 종목을 떨어뜨릴 나쁜 뉴스가 없습니다.");
+                        holdEn.push("④ Checked the news on our server (the qwen AI news intern) — no bad news that would push this stock down.");
                       }
                       const holdL = ko9 ? holdKo : holdEn;
                       return (
@@ -739,6 +790,7 @@ export default function ApprovePage() {
                             <div key={k2}>· {x}</div>))}
                           {!buyRow && <div style={{ opacity: 0.6 }}>
                             {t("저장된 이유가 없습니다 (이 매수는 팝업 없이 기록되었습니다).", "No saved reasons (this buy was recorded without a popup).")}</div>}
+                          {chkList(`hb${i}`, buyRow?.check_items)}
                         </div>
                         <div style={{ borderLeft: "3px solid #2e7d32", borderRadius: 6,
                                       background: "rgba(46,125,50,0.06)", padding: "6px 9px",
@@ -817,6 +869,7 @@ export default function ApprovePage() {
                           {rz(buyRows[0]).map((x, k2) => <div key={k2}>· {x}</div>)}
                           {!buyRows.length && <div style={{ opacity: 0.6 }}>
                             {t("저장된 매수 이유가 없습니다.", "No saved buy reasons.")}</div>}
+                          {chkList(`cb${i}`, buyRows[0]?.check_items)}
                         </div>
                         {/* row 2: WHY WE SOLD (blue) — one block per sell */}
                         {sellRows.map((s9, k3) => (
@@ -828,6 +881,7 @@ export default function ApprovePage() {
                               🔵 {t(`매도 이유 (${s9.at})`, `Why we sold (${s9.at})`)}</b>
                             {rz(s9).map((x, k2) => <div key={k2}>· {x}</div>)}
                             {s9.conv_note && <div style={{ opacity: 0.7 }}>· {s9.conv_note}</div>}
+                            {chkList(`cs${i}_${k3}`, s9.check_items)}
                           </div>))}
                       </td></tr>)}
                     </Fragment>);
@@ -999,6 +1053,8 @@ export default function ApprovePage() {
                   </li>);
               })}
             </ul>
+            {/* the ⑤ line's full inspection, clickable (boss 2026-09-03 17:0x) */}
+            <div style={{ margin: "-4px 0 6px 2px" }}>{chkList(`p${p.id}`, p.check_items)}</div>
             {/* editable numbers */}
             <div style={{ display: "flex", gap: 8, marginBottom: 9 }}>
               <div style={{ flex: 1 }}>

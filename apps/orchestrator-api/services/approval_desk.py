@@ -286,12 +286,34 @@ def _fold_lots(st) -> bool:
     return changed
 
 
+def _check_items(code: str) -> list[dict]:
+    """The machine-measured 100-checklist items for one stock, saved WITH every
+    proposal (boss 2026-09-03 17:0x: 'the ⑤ checklist line should be clickable
+    — if I click it should show all checking cases of the 100 checklist')."""
+    try:
+        from services.checklist_reco import _ranking
+        rows = (_ranking() or {}).get("rows") or []
+        me = next((r for r in rows if str(r.get("code")) == code), None)
+        out = []
+        for gk, lst in ((me or {}).get("detail") or {}).items():
+            for it in (lst or []):
+                out.append({"k": it.get("k"), "v": str(it.get("v")),
+                            "s": it.get("s"), "g": gk,
+                            "bad": (it.get("s") or 0) < 40})
+        return out
+    except Exception:
+        return []
+
+
 def _mk_sug(st, code, name, side, reasons, price, qty, score, reasons_en=None):
     st["seq"] = int(st.get("seq") or 0) + 1
     sug = {"id": st["seq"], "ts": time.time(), "hhmm": _hhmm(), "code": code,
            "name": name, "side": side, "reasons": reasons,
            "reasons_en": reasons_en or reasons,
-           "price": price, "qty": int(qty), "score": score}
+           "price": price, "qty": int(qty), "score": score,
+           # every proposal carries its full checklist inspection — it rides
+           # into the log on decide(), so history clicks can unfold it forever
+           "check_items": _check_items(code)}
     st.setdefault("pending", []).append(sug)
     st.setdefault("cool", {})[f"{side}:{code}"] = time.time()
     return sug
@@ -452,12 +474,17 @@ def scan(db) -> dict:
                     continue
                 if time.time() - st["cool"].get(f"SELL:{code}", 0) <= _SELL_COOLDOWN:
                     continue
-                _rs9 = [f"🔵 팔 때입니다 — 매수가 대비 -1% 아래로 떨어졌습니다 ({pnl9:+.2f}%)",
-                        f"① 매수가 ₩{float(lot['price']):,.0f} → 지금 ₩{px:,.0f} ({pnl9:+.2f}%)",
-                        "② 사장님의 매도법 — 이 데스크는 -1% 하락일 때만 팝니다. 그 외에는 무조건 보유합니다."]
-                _rse9 = [f"🔵 TIME TO SELL — it fell -1% below our buy price ({pnl9:+.2f}%)",
-                         f"① Bought ₩{float(lot['price']):,.0f} → now ₩{px:,.0f} ({pnl9:+.2f}%)",
-                         "② The boss's selling law — this desk sells ONLY on a -1% fall. Anything else, we HOLD."]
+                # THE SELL STORY IN THE BOSS'S OWN WORDS (2026-09-03 17:0x:
+                # "continuously increasing stopped and started to decrease,
+                # and total decrease -1%, then sold out — this is our rule")
+                _rs9 = [f"🔵 팔 때입니다 — 상승이 멈추고 하락으로 돌아서 매수가 대비 -1%에 닿았습니다 ({pnl9:+.2f}%)",
+                        "① 계속 오르던 흐름이 멈추고 내려가기 시작했습니다.",
+                        f"② 매수가 ₩{float(lot['price']):,.0f} → 지금 ₩{px:,.0f} — 총 하락이 -1%에 도달했습니다.",
+                        "③ 우리의 규칙 — 상승이 끝나고 총 -1% 하락이면 전량 매도합니다. 규칙대로 팝니다."]
+                _rse9 = [f"🔵 TIME TO SELL — the rise stopped, turned down, and reached -1% below our buy ({pnl9:+.2f}%)",
+                         "① The continuous rise has stopped and price started to decrease.",
+                         f"② Bought ₩{float(lot['price']):,.0f} → now ₩{px:,.0f} — the total decrease reached -1%.",
+                         "③ Our rule — when the rise ends and the total fall hits -1%, we sell it all. Sold by the rule."]
                 _sp9, _sko9, _sen9 = _book_price(code, "SELL", px)
                 _rs9.append("💰 왜 이 가격인가 — " + _sko9)
                 _rse9.append("💰 WHY THIS PRICE — " + _sen9)
