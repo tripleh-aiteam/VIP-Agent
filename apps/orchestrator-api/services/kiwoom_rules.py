@@ -268,6 +268,26 @@ def _us_mode_today() -> str:
 _D20_CACHE: dict = {}
 
 
+def _gap_ref(code: str, day: str) -> float:
+    """The price an overnight gap is measured FROM (boss 2026-09-03 evening:
+    "we have to compare with the 9am price and one day before 20:00 price").
+
+    Yesterday's 15:30 close is not the last price the market paid - KRX trades
+    on to 18:00 in the 시간외 sessions. When we recorded that evening print it
+    is the reference; otherwise the official close stands, which is exactly the
+    old behaviour, so a missing print can never change a decision."""
+    try:
+        from services.after_hours import price as _ahp
+        prev = [d for d in (stored_days() or []) if d < day]
+        if prev:
+            ah = _ahp(prev[-1], code)
+            if ah:
+                return float(ah)
+    except Exception:
+        pass
+    return _daily20(code, day)[0]
+
+
 def _daily20(code: str, before_day: str) -> tuple:
     """(yesterday's close, 20-day low) as of before_day - the rebound door's
     daily context. Daily closes come from the 250-day 1-minute history plus the
@@ -796,7 +816,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                          # file; stored days replay calm (honest default)
                          "us_mode": (_us_mode_today() if (d or _kd0()) == _kd0()
                                      else "calm"),
-                         "prev_close": _daily20(code, d or _kd0())[0],
+                         "prev_close": _gap_ref(code, d or _kd0()),
                          "low20": _daily20(code, d or _kd0())[1],
                          "low5": _daily20(code, d or _kd0())[2],
                          "ma20": _daily20(code, d or _kd0())[3],
@@ -1023,7 +1043,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          # 08-13 pre-open replay: every pre-10:00 buy vanished)
                          "us_mode": (_us_mode_today()
                                      if (d or _kd0()) == _kd0() else "calm"),
-                         "prev_close": _daily20(c_code, d or _kd0())[0],
+                         "prev_close": _gap_ref(c_code, d or _kd0()),
                          "low20": _daily20(c_code, d or _kd0())[1],
                          "low5": _daily20(c_code, d or _kd0())[2],
                          "ma20": _daily20(c_code, d or _kd0())[3],

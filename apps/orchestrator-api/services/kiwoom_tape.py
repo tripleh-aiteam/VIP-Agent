@@ -109,12 +109,25 @@ def refresh_watch(force: bool = False) -> list[tuple[str, str]]:
     if mode in ("both", "score"):
         try:
             from services.daily_pick import save_picks, score_five
-            sf = score_five(14)
+            # TWENTY UNIQUE NAMES (boss 2026-09-03 evening: "please make sure
+            # total 20 should be unique stocks"). Asking the picker for exactly
+            # 14 was wrong: 한화오션 and 두산에너빌리티 are BOTH his six and
+            # high scorers, so they came back inside the fourteen, were removed
+            # as duplicates, and the desk quietly ran 18 names instead of 20.
+            # Ask deep enough that fourteen survive the dedup.
+            sf = score_five(34)
             if not sf:
                 save_picks(today)
-                sf = score_five(14)
-            extras = [(c, n) for c, n in (sf or [])
-                      if c not in {x[0] for x in SIX}][:14]
+                sf = score_five(34)
+            _six9 = {x[0] for x in SIX}
+            _seen9, extras = set(), []
+            for c, n in (sf or []):
+                if c in _six9 or c in _seen9:
+                    continue
+                _seen9.add(c)
+                extras.append((c, n))
+                if len(extras) >= 14:
+                    break
             if mode == "score":
                 if sf:
                     WATCH[:] = (sf or [])[:20]

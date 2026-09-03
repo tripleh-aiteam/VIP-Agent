@@ -2745,6 +2745,32 @@ def init_scheduler():
         except Exception as e:
             log.warning(f"pre-open desk refresh failed: {str(e)[:120]}",
                         extra={"action": "desk.preopen.fail"})
+    # AFTER-MARKET CLOSE CAPTURE (boss 2026-09-03 evening: "we have to compare
+    # with the 9am price and one day before 20:00 price - how can we get this
+    # data?"). Kiwoom serves nothing after the bell - tested live during an
+    # open 시간외 session, every tape stopped at 15:30:2x - so the print is
+    # taken from Naver's overMarketPriceInfo. KRX's after-hours single-price
+    # session ends at 18:00, so 18:05 records a settled number.
+    def _after_hours_capture():
+        try:
+            from services.after_hours import record
+            from services.daily_pick import score_five, _today
+            from services.kiwoom_tape import WATCH
+            codes = list(WATCH) or []
+            if not codes:
+                codes = [(c, n) for c, n in (score_five(20) or [])]
+            got = record(_today(), codes)
+            log.info(f"after-hours capture: {len(got)}/{len(codes)} prints",
+                     extra={"action": "tape.afterhours"})
+        except Exception as e:
+            log.warning(f"after-hours capture failed: {str(e)[:120]}",
+                        extra={"action": "tape.afterhours.fail"})
+    _scheduler.add_job(
+        _after_hours_capture,
+        CronTrigger(day_of_week="mon-fri", hour=18, minute=5, timezone=_KST_TZ),
+        id="after-hours-capture",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
     _scheduler.add_job(
         _pre_open_desk,
         CronTrigger(day_of_week="mon-fri", hour=8, minute=30, timezone=_KST_TZ),

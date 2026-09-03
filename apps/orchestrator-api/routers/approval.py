@@ -295,6 +295,11 @@ def feed(db: Session = Depends(get_db)):
         _log9 = merge_extra_trips(_log9, _d8)
     except Exception:
         pass
+    # each row wears its calendar day (KST) so the history can offer a
+    # day dropdown for comparing previous days (boss 2026-09-03 19:3x)
+    import time as _tm9
+    _log9 = [{**l, "day": (_tm9.strftime("%Y-%m-%d", _tm9.gmtime(float(l.get("ts") or 0) + 9 * 3600))
+                           if l.get("ts") else "")} for l in _log9]
     # the stats card judges the SAME rows the boards render (post-filter)
     try:
         _st9 = _display_stats(_held9, _log9, rooms)
@@ -385,6 +390,16 @@ def brain():
     import threading
     import time as _t
     c = _BRAIN_CACHE
+    # AFTER THE BELL THE AGENT RESTS (boss 2026-09-03 19:3x: "after 15:20 the
+    # agent should not work — it should say market is closed and not check"):
+    # serve the last picture with a closed flag, never spawn a recompute.
+    try:
+        from services.kiwoom_tape import market_open
+        if not market_open():
+            return {**(c["data"] or {"universe": [], "six": [], "five": []}),
+                    "ok": True, "closed": True}
+    except Exception:
+        pass
     if not c["busy"] and _t.time() - c["ts"] > 6:
         c["busy"] = True
 
@@ -485,25 +500,10 @@ def _brain_compute():
         including Approve). _bars_for reads the same tape directly."""
         try:
             from services.kiwoom_rules import _daily20, _bars_for
-            pc = _daily20(code, _kd())[0]
-            # THE OVERNIGHT REFERENCE IS THE LAST PRICE THE MARKET PAID (boss
-            # 2026-09-03 evening: "after market price we have to consider the
-            # 20:00 price and the 9am price we have to compare for 갭상승").
-            # KRX keeps trading to 18:00 after the bell, so yesterday's 15:30
-            # close can be hours stale by the time we measure a gap against it.
-            # When the previous session was recorded past the bell we use its
-            # LAST traded price; until an evening tape exists this falls back
-            # to the official close and behaves exactly as before.
-            try:
-                from services.kiwoom_tape import prev_ref
-                from services.kiwoom_rules import stored_days
-                _sd9 = [d for d in (stored_days() or []) if d < _kd()]
-                if _sd9:
-                    _ev9 = prev_ref(code, _sd9[-1])
-                    if _ev9:
-                        pc = _ev9
-            except Exception:
-                pass
+            # the SAME reference the engines use: yesterday's evening print
+            # when we recorded one, else the official close (boss 2026-09-03)
+            from services.kiwoom_rules import _gap_ref
+            pc = _gap_ref(code, _kd())
             cs = _bars_for(code, 5, 60)
             if not (pc and cs and cs[0].get("open")):
                 return None, None
