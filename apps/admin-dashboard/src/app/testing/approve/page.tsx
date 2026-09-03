@@ -26,7 +26,9 @@ type Stats = { trips: number; wins: number; losses: number; win_pct: number;
 type Feed = { ok: boolean; market_open: boolean; rooms: Room[]; pending: Sug[];
               held: { code: string; name: string; qty: number; price: number; at: string;
                       sug_at?: string }[];
-              log: LogRow[]; stats?: Stats | null };
+              log: LogRow[]; stats?: Stats | null;
+              note?: { id: number; hhmm: string; kind: string; n: number;
+                       lines: string[]; lines_en: string[] } | null };
 type Step = { icon: string; t: string; d: string; t_en?: string; d_en?: string };
 
 const W = (n?: number | null) => (n == null ? "-" : "₩" + Math.round(n).toLocaleString());
@@ -102,6 +104,7 @@ export default function ApprovePage() {
   const [shown, setShown] = useState(0);                          // animated step count
   const [busy, setBusy] = useState<number | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [noteHid, setNoteHid] = useState<number[]>([]);   // watch-notes the boss dismissed
   const stepTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const [cMode, setCMode] = useState<"min" | "month" | "year">("min");
   const [cBars, setCBars] = useState<CBar[]>([]);
@@ -1032,6 +1035,34 @@ export default function ApprovePage() {
             </div>
           </div>);
         })}
+        {/* THE AGENT SPEAKS EVEN WITH NOTHING TO PROPOSE (boss 2026-09-03:
+            "from 13:00 there is no popup so I am worrying — if the condition
+            is not matching it should give another popup every 3 minutes, like
+            the agent is analysing 20 stocks and there is no buying or selling
+            time"). Silence and a dead screen look the same; this one carries
+            the REASON for the silence and asks for nothing. A real BUY/SELL
+            proposal replaces it — the server withholds the note while any
+            popup is pending. */}
+        {feed?.note && (feed.pending || []).length === 0 && !noteHid.includes(feed.note.id) && (
+          <div style={{ border: "2px solid #37474f", borderRadius: 12, padding: 13,
+                        background: "#ffffff", color: "#12161b",
+                        boxShadow: "0 10px 32px rgba(0,0,0,0.28)" }}>
+            <div style={{ fontWeight: 900, fontSize: 14.5, color: "#263238" }}>
+              {t("🤖 에이전트 감시 중", "🤖 AGENT ON WATCH")}
+              <span style={{ float: "right", fontSize: 11.5, fontWeight: 700, color: "#5b6570" }}>
+                {feed.note.hhmm}</span>
+            </div>
+            <div style={{ marginTop: 7, display: "flex", flexDirection: "column", gap: 4 }}>
+              {feed.note.lines.map((ln, i) => (
+                <div key={i} style={{ fontSize: 12.5, lineHeight: 1.45 }}>
+                  {t(ln, (feed.note!.lines_en || [])[i] || ln)}</div>))}
+            </div>
+            <button onClick={() => setNoteHid((v) => [...v, feed.note!.id])}
+              style={{ marginTop: 10, width: "100%", padding: "8px 0", borderRadius: 8,
+                       fontWeight: 800, fontSize: 13, border: "2px solid #6b7684",
+                       background: "#e9edf1", color: "#22282f", cursor: "pointer" }}>
+              {t("확인 — 3분 뒤 다시 알려주세요", "OK — tell me again in 3 minutes")}</button>
+          </div>)}
         {toast && <div style={{ borderRadius: 10, padding: "10px 12px", fontSize: 13,
                                 background: "#333", color: "#fff" }}>{toast}</div>}
       </div>

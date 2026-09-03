@@ -13,7 +13,7 @@ router = APIRouter(prefix="/approval", tags=["approval-desk"])
 _NOTE9 = {"t": 0.0, "v": None}
 
 
-def _watch_note(pending: list) -> dict | None:
+def _watch_note(pending: list, n_held: int = 0) -> dict | None:
     """THE AGENT SAYS SOMETHING EVERY 3 MINUTES, EVEN WHEN IT HAS NOTHING TO
     PROPOSE (boss 2026-09-03: "from 13:00 there is no popup message so I am
     worrying. If it is because the condition is not matching it should give
@@ -37,19 +37,25 @@ def _watch_note(pending: list) -> dict | None:
         return _NOTE9["v"]
     lanes = b.get("lanes") or {}
     import collections as _c
-    gates = _c.Counter()
+    gates, gates_en = _c.Counter(), {}
     for r in rows:
         if r.get("lane") != "NOBUY":
             continue
         for g in (r.get("gates") or []):
             if g.get("bad"):
-                gates[str(g.get("k"))] += 1
+                _k9 = str(g.get("k"))
+                gates[_k9] += 1
+                # the gate carries its own English name - the note must not
+                # print Korean gate names inside an English sentence
+                gates_en.setdefault(_k9, str(g.get("en") or _k9))
     top = gates.most_common(3)
     n_no = len(lanes.get("NOBUY") or [])
     n_done = len(lanes.get("DONE") or [])
-    n_hold = len(lanes.get("HOLD") or [])
+    n_hold = int(n_held)          # what we ACTUALLY hold, not a lane count -
+                                  # a held stock also sits in DONE, so the lane
+                                  # read 0 while the desk held nine positions
     why_ko = ", ".join(f"{k} {v}종목" for k, v in top) or "조건 미충족"
-    why_en = ", ".join(f"{k} {v}" for k, v in top) or "no condition met"
+    why_en = ", ".join(f"{gates_en.get(k, k)} {v}" for k, v in top) or "no condition met"
     lines_ko = [
         f"🔍 {len(rows)}개 종목을 동시에 검사했습니다 — 지금은 매수·매도 자리가 없습니다.",
         f"🚫 매수 금지 {n_no}종목 — 막은 관문: {why_ko}.",
@@ -175,7 +181,7 @@ def feed(db: Session = Depends(get_db)):
     return {"ok": True, "market_open": mkt, "rooms": rooms,
             "pending": _pend9,
             # the agent speaks every 3 minutes even with nothing to propose
-            "note": _watch_note(_pend9),
+            "note": _watch_note(_pend9, len(_held9)),
             "held": _held9,
             # rows the boss struck stay in the record but leave the board
             # (2026-09-03 12:2x, the 현대모비스 09:50 entry: "remove this, it is
