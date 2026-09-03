@@ -42,12 +42,20 @@ def feed(db: Session = Depends(get_db)):
         mkt = market_open()
     except Exception:
         mkt = False
+    try:
+        from services.approval_desk import semi_stats
+        _st9 = semi_stats(db)
+    except Exception:
+        _st9 = None
     return {"ok": True, "market_open": mkt, "rooms": rooms,
             "pending": st.get("pending") or [],
             "held": st.get("held") or [],
-            "log": list(reversed((st.get("log") or [])[-40:]))}
-
-
+            # rows the boss struck stay in the record but leave the board
+            # (2026-09-03 12:2x, the 현대모비스 09:50 entry: "remove this, it is
+            # not a good condition to buy") - never a deletion, only a display
+            # filter, the same law every other board here follows
+            "log": [l for l in reversed((st.get("log") or [])[-40:])
+                    if not l.get("hidden")], "stats": _st9}
 @router.get("/process/{code}")
 def process(code: str, db: Session = Depends(get_db)):
     from services import approval_desk as ad

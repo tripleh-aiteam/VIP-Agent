@@ -567,6 +567,38 @@ export default function ApprovePage() {
       <div style={{ marginTop: 12, border: "1px solid rgba(128,128,128,0.35)", borderRadius: 10, padding: 12 }}>
         <b style={{ fontSize: 13.5 }}>{t("📜 매매 기록", "📜 Trading history")} <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6 }}>
           {t("모든 제안과 결정 (승인·취소)", "every proposal and decision (approve / cancel)")}</span></b>
+        {/* filter row (boss 2026-09-03 12:0x) */}
+        {(feed?.log?.length || 0) > 0 && (() => {
+          const sel: React.CSSProperties = {
+            fontSize: 12, padding: "4px 7px", borderRadius: 6,
+            border: "1px solid rgba(128,128,128,0.45)", background: "var(--card,#fff)",
+            color: "inherit" };
+          const names = Array.from(new Map((feed!.log || [])
+            .map((l) => [l.code, l.name])).entries());
+          return (
+            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", margin: "7px 0 2px",
+                          alignItems: "center" }}>
+              <span style={{ fontSize: 11.5, opacity: 0.6 }}>{t("필터", "Filter")}</span>
+              <select style={sel} value={fStock} onChange={(e) => setFStock(e.target.value)}>
+                <option value="">{t("전체 종목", "All stocks")}</option>
+                {names.map(([c, n]) => <option key={c} value={c}>{n}</option>)}
+              </select>
+              <select style={sel} value={fDec} onChange={(e) => setFDec(e.target.value)}>
+                <option value="">{t("전체 결정", "All decisions")}</option>
+                <option value="ok">{t("승인", "Approved")}</option>
+                <option value="no">{t("취소", "Cancelled")}</option>
+              </select>
+              <select style={sel} value={fDeal} onChange={(e) => setFDeal(e.target.value)}>
+                <option value="">{t("체결 전체", "All fills")}</option>
+                <option value="y">{t("✅ 체결", "✅ DEAL")}</option>
+                <option value="n">{t("🕐 미체결", "🕐 NOT DEAL")}</option>
+              </select>
+              {(fStock || fDec || fDeal) && (
+                <button onClick={() => { setFStock(""); setFDec(""); setFDeal(""); }}
+                  style={{ ...sel, cursor: "pointer", fontWeight: 700 }}>
+                  {t("초기화", "Reset")}</button>)}
+            </div>);
+        })()}
         {(feed?.log?.length || 0) === 0
           ? <div style={{ fontSize: 12.5, opacity: 0.6, padding: "8px 0" }}>
               {t("아직 기록 없음 — 장중에 제안이 오고 결정을 내리면 전부 여기 쌓입니다.", "No records yet — proposals arrive in market hours; every decision builds here.")}</div>
