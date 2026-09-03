@@ -277,6 +277,32 @@ def _daily20(code: str, before_day: str) -> tuple:
     if hit is not None:
         return hit
     closes = {}
+    # THE DATABASE FIRST (boss 2026-09-03 12:5x: "no late, no missed chances").
+    # Profiling the desk pass showed 48.5 of its 52 seconds inside THIS function:
+    # to recover each past day CLOSING PRICE it replayed that day entire TICK
+    # TAPE - 12.9 million json.loads per pass - for numbers raw_daily_prices
+    # already holds. One query replaces all of it; the tape scan below now only
+    # runs for a stock the database has never heard of. Same numbers, same laws.
+    try:
+        from services.daily_pick import _conn as _dbc
+        _cn = _dbc(); _cu = _cn.cursor()
+        _cu.execute("""SELECT date, close FROM raw_daily_prices
+                       WHERE ticker = %s AND close IS NOT NULL
+                       ORDER BY date""", (code,))
+        for _d3, _c3 in _cu.fetchall():
+            closes[_d3.strftime("%Y%m%d")] = float(_c3)
+        _cn.close()
+    except Exception:
+        closes = {}
+    _pd9 = sorted(d2 for d2 in closes if d2 < before_day)
+    if len(_pd9) >= 60:
+        _cl0 = [closes[d2] for d2 in _pd9]
+        _yl0 = min(len(_cl0), 246)
+        out = (_cl0[-1], min(_cl0[-20:]), min(_cl0[-5:]),
+               sum(_cl0[-20:]) / 20, sum(_cl0[-_yl0:]) / _yl0)
+        _D20_CACHE[key] = out
+        return out
+    closes = {}
     try:
         import json as _j
         from pathlib import Path as _P
