@@ -103,8 +103,66 @@ def reject(sid: int, db: Session = Depends(get_db)):
     return ad.decide(db, sid, False)
 
 
+_BRAIN9 = {"t": 0.0, "v": None, "busy": False}
+
+
+_BRAIN_CACHE = {"ts": 0.0, "data": None, "busy": False}
+
+
 @router.get("/brain")
 def brain():
+    """Stale-serve wrapper (2026-09-03: the 7s browser poll piled heavy
+    self-calls onto a cold server and KILLED the process — twice): answer
+    instantly from the last computed payload; recompute in a background
+    thread at most every 6s."""
+    import threading
+    import time as _t
+    c = _BRAIN_CACHE
+    if not c["busy"] and _t.time() - c["ts"] > 6:
+        c["busy"] = True
+
+        def _run():
+            try:
+                d = _brain_compute()
+                if d.get("ok"):
+                    c["data"] = d
+                    c["ts"] = _t.time()
+            except Exception:
+                pass
+            finally:
+                c["busy"] = False
+        threading.Thread(target=_run, daemon=True).start()
+    return c["data"] or {"ok": False, "computing": True}
+
+
+def _brain_compute():
+    """NEVER BLOCKS THE SERVER (boss 2026-09-03 10:1x: the brain took 170s and
+    then killed the process twice - it walked 38 stocks, each touching the tape
+    and the database, INLINE on the request thread, so Approve and the feed
+    queued behind it). It now serves the last computed answer instantly and
+    refreshes in a background thread, the same pattern the room meta already
+    uses. The very first call returns an empty shell; the panel fills a moment
+    later and animates client-side regardless."""
+    import threading as _th, time as _tm
+    if _BRAIN9["v"] is not None and _tm.time() - _BRAIN9["t"] < 20:
+        return _BRAIN9["v"]
+    if not _BRAIN9["busy"]:
+        _BRAIN9["busy"] = True
+
+        def _bg():
+            try:
+                v = _brain_compute()
+                _BRAIN9["t"], _BRAIN9["v"] = _tm.time(), v
+            except Exception:
+                pass
+            finally:
+                _BRAIN9["busy"] = False
+        _th.Thread(target=_bg, daemon=True).start()
+    return _BRAIN9["v"] or {"ok": True, "universe": [], "six": [], "five": [],
+                            "computing": True}
+
+
+def _brain_compute():
     """THE AGENT, THINKING OUT LOUD (boss 2026-09-03 06:54 #9: the agent must
     sit ABOVE the rooms, visibly checking every stock in the universe gate by
     gate - 갭상승? zone? averages? falling? news? - and continuously choosing
@@ -125,16 +183,17 @@ def brain():
     watch_codes = {c for c, _n in WATCH}
     # live gap check: today's open vs yesterday's close, once bars exist
     def _gap(code):
+        """Today's open vs yesterday's close, read IN-PROCESS (boss 2026-09-03
+        10:1x: the brain took 170s because it made one HTTP call to our own
+        server per stock - 38 of them - which starved every other request,
+        including Approve). _bars_for reads the same tape directly."""
         try:
-            from services.kiwoom_rules import _daily20
+            from services.kiwoom_rules import _daily20, _bars_for
             pc = _daily20(code, _kd())[0]
-            t = _j.load(_ur.urlopen(
-                f"http://127.0.0.1:8000/paper-desk/live/tape?code={code}"
-                f"&period=60&bars=1", timeout=8))
-            b = (t.get("bars") or [None])[0]
-            if not (pc and b and b.get("open")):
+            cs = _bars_for(code, 5, 60)
+            if not (pc and cs and cs[0].get("open")):
                 return None, None
-            g = 100.0 * (float(b["open"]) / float(pc) - 1)
+            g = 100.0 * (float(cs[0]["open"]) / float(pc) - 1)
             return g, g >= 1.5
         except Exception:
             return None, None
@@ -159,10 +218,12 @@ def brain():
         # sentence that appears beside a NO BUY.
         gates = []
         gv, gbad = (_gap(code) if code in watch_codes else (None, None))
+        # (stocks outside the collector are scored but never tape-read here)
         gates.append({
             "k": "갭상승", "en": "gap-up open",
             "v": (f"{gv:+.1f}%" if gv is not None else "대기/wait"),
             "bad": bool(gbad),
+            "short": "갭상승 출발 → 대기", "short_en": "Gap-up open → WAIT",
             "why": (f"⚡ 갭상승입니다! 오늘 시가가 어제 종가보다 {gv:+.1f}% 높게 "
                     f"출발했습니다. 지금은 비싼 자리입니다 → 가격이 오늘 시가 "
                     f"아래로 내려올 때까지 기다립니다." if gbad else ""),
@@ -174,6 +235,7 @@ def brain():
             "k": "1개월 평균", "en": "vs 1-month avg",
             "v": f"{_m:+.2f}%" if _m is not None else "-",
             "bad": (_m or 0) > 0,
+            "short": "1개월 평균 위 → 대기", "short_en": "Above 1-month avg → WAIT",
             "why": ((f"📈 이 종목은 지금 오르고 있습니다. 최근 1개월 평균"
                      + (f"(₩{_ma1:,.0f})" if _ma1 else "")
                      + f"보다 {_m:+.2f}% 비쌉니다. 평균 위에서 산 거래가 우리 손실의 "
@@ -190,6 +252,7 @@ def brain():
             "k": "1년 평균", "en": "vs 1-year avg",
             "v": f"{_my:+.2f}%" if _my is not None else "-",
             "bad": (_my or 0) > 0,
+            "short": "1년 평균 위 → 대기", "short_en": "Above 1-year avg → WAIT",
             "why": ((f"📈 1년 데이터로 봐도 이미 오른 상태입니다. 1년 평균"
                      + (f"(₩{_mayr:,.0f})" if _mayr else "")
                      + f"보다 {_my:+.2f}% 높습니다. 1개월·1년 두 평균 아래일 때만 "
@@ -206,6 +269,7 @@ def brain():
         gates.append({
             "k": "연속 상승", "en": "already rising",
             "v": f"{_u3}일↑/{_um}월↑", "bad": _ris9,
+            "short": "이미 오른 상태 → 대기", "short_en": "Already risen → WAIT",
             "why": (("🔺 이미 3일 연속 올랐습니다" if _u3 >= 3
                      else "🔺 최근 2개월 모두 올랐습니다")
                     + " - 이미 오른 종목이 다시 오를 확률은 45%로 평균(50%)보다 "
@@ -220,6 +284,7 @@ def brain():
         gates.append({
             "k": "1년 구간", "en": "year zone",
             "v": f"{z} {r.get('zone_pos')}%", "bad": z == "sell",
+            "short": "고점권(매도구간) → 금지", "short_en": "SELLING zone → never buy",
             "why": (f"🎯 1년 범위의 {r.get('zone_pos')}% 지점 - 고점권"
                     f"(매도구간)입니다. 여기서는 절대 사지 않습니다 → 급락해서 "
                     f"바닥권으로 내려올 때까지 기다립니다." if z == "sell" else ""),
@@ -236,6 +301,7 @@ def brain():
         gates.append({
             "k": "위험 뉴스", "en": "danger news",
             "v": "있음/yes" if news_bad else "없음/no", "bad": news_bad,
+            "short": "위험 뉴스 발생 → 대기", "short_en": "Danger news just landed → WAIT",
             "why": ("📰 최근 1시간 안에 위험·악재 뉴스가 떴습니다. "
                     "뉴스가 아직 가격을 흔드는 중입니다 → 뉴스가 정리될 때까지 "
                     "기다립니다." if news_bad else ""),
@@ -252,6 +318,8 @@ def brain():
                  "no_buy_en": (blocked[0].get("why_en") or
                                (blocked[0]["en"] + " — " + blocked[0]["v"]))
                               if blocked else None,
+                 "no_buy_short": blocked[0].get("short") if blocked else None,
+                 "no_buy_short_en": blocked[0].get("short_en") if blocked else None,
                  "blocked_n": len(blocked)}
         if code in SIX:
             out["six"].append(entry)

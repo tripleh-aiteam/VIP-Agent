@@ -64,6 +64,7 @@ export default function ApprovePage() {
                 why?: string; why_en?: string };
   type BrainRow = { code: string; name: string; score?: number; gates: Gate[];
                     pass: boolean; no_buy?: string | null; no_buy_en?: string | null;
+                    no_buy_short?: string | null; no_buy_short_en?: string | null;
                     blocked_n?: number; chosen?: boolean };
   type Brain = { ok: boolean; universe: BrainRow[]; six: BrainRow[]; five: string[] };
   const [brain, setBrain] = useState<Brain | null>(null);
@@ -238,8 +239,13 @@ export default function ApprovePage() {
                 </b>
                 {(brain.six || []).filter((x) => !x.pass).map((x) => (
                   <div key={x.code} style={{ fontSize: 13, marginTop: 6, lineHeight: 1.5 }}>
+                    {/* the VERDICT first, short and bold (boss 2026-09-03: "first
+                        sentence should be very short"); the lesson underneath */}
                     <b style={{ color: "#c62828", fontSize: 14.5 }}>NO BUY! {x.name}</b>
-                    <span style={{ marginLeft: 8 }}>— {t(x.no_buy || "", x.no_buy_en || x.no_buy || "")}</span>
+                    <b style={{ marginLeft: 8, fontSize: 13.5 }}>
+                      — {t(x.no_buy_short || "", x.no_buy_short_en || x.no_buy_short || "")}</b>
+                    <div style={{ fontSize: 12, opacity: 0.8, marginLeft: 2, marginTop: 1 }}>
+                      {t(x.no_buy || "", x.no_buy_en || x.no_buy || "")}</div>
                   </div>
                 ))}
               </div>
