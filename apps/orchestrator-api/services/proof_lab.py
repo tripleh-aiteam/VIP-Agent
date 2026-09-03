@@ -2437,7 +2437,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             elif (v.get("gap_guard") and s.get("prev_close") and closes[0]
                   and ((s.get("open_px") or closes[0]) / s["prev_close"] - 1)
                       * 100 >= float(v["gap_guard"])
-                  and not gap_news_ok[si]
+                  and not (gap_news_ok[si] and v.get("gap_wait") != "prev3")
                   and (
                       # "turn3" (boss 2026-08-27 night: "we should not fix the
                       # time as 10 - after 3 minutes the decrease can also be
@@ -2456,7 +2456,21 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                             and float(s["daily_pos"]) <= 0.55)
                         else (c >= (s.get("open_px") or closes[0]))))
                       if v.get("gap_wait") == "median_dip3"
-                      else (not gap_prev_ok[si])
+                      # GOOD NEWS CHANGES WHAT WE WAIT FOR, IT DOES NOT
+                      # REMOVE THE WAIT (boss 2026-09-03 evening, the 한화오션
+                      # case: "hana ocean is different because there is a good
+                      # news - so if there is a good news then if there is a
+                      # 갭상승 then wait, it should stop, then start to
+                      # increase, then need to buy"). A stock the market is
+                      # re-rating on real news may never hand back yesterday's
+                      # close - 한화오션 gapped +2.80% and never once traded
+                      # there all day - so demanding it would ban the name for
+                      # the session. With news the requirement drops to the
+                      # turn itself: the fall must have happened and ENDED
+                      # (below the open, then three rises). Without news the
+                      # full price give-back still stands.
+                      else (not (gap_prev_ok[si]
+                                 or (gap_news_ok[si] and gap_ok[si])))
                       if v.get("gap_wait") == "prev3"
                       else (not gap_ok[si])
                       if v.get("gap_wait") == "turn3"
