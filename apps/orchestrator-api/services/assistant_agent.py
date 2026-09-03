@@ -1994,6 +1994,14 @@ def _period_stats_window(q: Optional[str]):
     # the CURRENT price because the window parse missed, 2026-08-25)
     # cap raised 18 → 132 months (2026-08-25): history now serves from OUR OWN DB
     # (raw_daily_prices, 2015→) instead of Naver's ~18-month window
+    # word-form months FIRST — "최근 한달 최고가" fell through to the price
+    # card because only digit forms parsed (boss 2026-09-04 08:4x readiness run)
+    m = _re.search(r"(한|두|세|네)\s*(?:개\s*월|달)", t)
+    if m:
+        n = {"한": 1, "두": 2, "세": 3, "네": 4}[m.group(1)]
+        return _back(n), n, f"최근 {n}개월", f"last {n} month(s)"
+    if _re.search(r"\b(?:a|one)\s+month\b", t):
+        return _back(1), 1, "최근 1개월", "last 1 month"
     m = _re.search(r"(\d+)\s*(?:개\s*월|달)", t) or _re.search(r"(\d+)\s*mo(?:n(?:th?e?s?)?)?\b", t)
     if m:
         n = max(1, min(int(m.group(1)), 132))

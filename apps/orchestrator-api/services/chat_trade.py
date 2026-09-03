@@ -1299,6 +1299,16 @@ def finish(db, word: str) -> Optional[str]:
                     ok_n += 1
                     if res.get("status") == "FILLED":
                         fill_n += 1
+                        # a ladder slice that fills INSTANTLY reaches the Menu 3
+                        # board too (later fills already mirror via the fill
+                        # engine) — boss 2026-09-04: ladder buys must appear in
+                        # Menu 2 AND Menu 3
+                        try:
+                            from services.approval_desk import chat_mirror
+                            chat_mirror(p["code"], p["name"], "BUY", int(q),
+                                        float(res.get("fill_price") or pr))
+                        except Exception:
+                            pass
                 else:
                     fail_n += 1
             except Exception:
