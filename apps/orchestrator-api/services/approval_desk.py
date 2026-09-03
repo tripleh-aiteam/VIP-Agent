@@ -223,6 +223,11 @@ def scan(db) -> dict:
     st.setdefault("cool", {})
     # expire unanswered popups
     st["pending"] = [p for p in st["pending"] if time.time() - p["ts"] < _EXPIRE]
+    # planted TEST rows never survive (boss 2026-09-03: 'remove this, it is old
+    # and makes confusion' — a file cleanup raced a scan thread's stale copy
+    # and the row resurrected; filtering here makes the removal stick)
+    st["log"] = [l for l in st.get("log") or []
+                 if not any("테스트" in str(x) for x in l.get("reasons") or [])]
     # room meta snapshot (score + zone) computed HERE in the background so the
     # instant feed never blocks on cold caches; the top-4 rotate automatically
     # as the checklist re-scores (ranking cache ~10 min)
