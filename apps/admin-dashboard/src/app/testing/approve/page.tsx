@@ -102,6 +102,7 @@ export default function ApprovePage() {
   const [rzOpen, setRzOpen] = useState<string | null>(null);   // opened why-we-traded rows
   const [ckOpen, setCkOpen] = useState<string | null>(null);   // opened 100-checklist detail
   const [popTop, setPopTop] = useState<number | null>(null);   // which popup is up front
+  const [popBig, setPopBig] = useState(false);                 // ⤢ expanded reading mode
   const [money3, setMoney3] = useState(false);                 // 💰 money law: hidden by default (2026-08-19)
   const [open, setOpen] = useState<string | null>(null);          // opened room code
   const [steps, setSteps] = useState<Step[]>([]);
@@ -1071,9 +1072,11 @@ export default function ApprovePage() {
           reasons made the cards tall, so extra proposals fold into slim
           clickable bars above the active card; the stack itself scrolls if
           even one card outgrows the screen. ─ */}
-      <div style={{ position: "fixed", right: 14, bottom: 14, width: 290, zIndex: 60,
+      <div style={{ position: "fixed", right: 14, bottom: 14,
+                    width: popBig ? 480 : 290, zIndex: 60,
                     display: "flex", flexDirection: "column", gap: 7,
-                    maxHeight: "calc(100vh - 28px)", overflowY: "auto" }}>
+                    maxHeight: "calc(100vh - 28px)", overflowY: "auto",
+                    transition: "width .15s ease" }}>
         {(feed?.pending || []).map((p, _pi, _arr) => {
           const actId = _arr.some((x) => x.id === popTop) ? popTop : _arr[_arr.length - 1]?.id;
           if (p.id !== actId) {
@@ -1118,21 +1121,31 @@ export default function ApprovePage() {
                                    borderRadius: 12, padding: 10, background: "#ffffff",
                                    color: "#12161b",
                                    boxShadow: "0 10px 32px rgba(0,0,0,0.35)" }}>
-            <div style={{ fontWeight: 900, fontSize: 13.5,
-                          color: p.side === "BUY" ? "#c62828" : "#1565c0" }}>
-              {p.side === "BUY" ? t("🔴 매수 제안", "🔴 BUY proposal") : t("🔵 매도 제안", "🔵 SELL proposal")} — {p.name}
-              <span style={{ float: "right", fontSize: 11.5, fontWeight: 700, color: "#5b6570" }}>{p.hhmm}</span>
+            <div style={{ fontWeight: 900, fontSize: popBig ? 15 : 13.5,
+                          color: p.side === "BUY" ? "#c62828" : "#1565c0",
+                          display: "flex", alignItems: "center", gap: 6 }}>
+              <span>{p.side === "BUY" ? t("🔴 매수 제안", "🔴 BUY proposal") : t("🔵 매도 제안", "🔵 SELL proposal")} — {p.name}</span>
+              {/* ⤢ expanded reading mode (boss 2026-09-03 18:0x: "we can
+                  extend it and can read easily") */}
+              <button onClick={() => setPopBig(!popBig)}
+                style={{ marginLeft: "auto", fontSize: 11, fontWeight: 800, padding: "2px 8px",
+                         borderRadius: 7, cursor: "pointer", border: "1.5px solid #9aa5b1",
+                         background: popBig ? "#37474f" : "#f0f3f6",
+                         color: popBig ? "#fff" : "#37474f" }}>
+                {popBig ? t("⤡ 작게", "⤡ shrink") : t("⤢ 크게 보기", "⤢ expand")}</button>
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: "#5b6570" }}>{p.hhmm}</span>
             </div>
             {/* the reasons scroll INSIDE the card (boss 2026-09-03 17:4x:
                 "make it a little smaller — I cannot see other text") */}
             <ul style={{ margin: "6px 0 7px 13px", padding: 0, color: "#22282f",
-                         maxHeight: 170, overflowY: "auto" }}>
+                         maxHeight: popBig ? "56vh" : 170, overflowY: "auto" }}>
               {(t("k", "e") === "k" ? p.reasons : (p.reasons_en || p.reasons)).map((x, i2) => {
                 const cut = x.indexOf("—") >= 0 ? x.indexOf("—") : x.indexOf(" - ");
                 const head = cut > 0 ? x.slice(0, cut) : "";
                 const tail = cut > 0 ? x.slice(cut) : x;
                 return (
-                  <li key={i2} style={{ fontSize: 11.6, margin: "3px 0", lineHeight: 1.42 }}>
+                  <li key={i2} style={{ fontSize: popBig ? 13.2 : 11.6, margin: popBig ? "5px 0" : "3px 0",
+                                        lineHeight: popBig ? 1.55 : 1.42 }}>
                     {head && <b style={{ color: "#12161b" }}>{head}</b>}{tail}
                   </li>);
               })}
