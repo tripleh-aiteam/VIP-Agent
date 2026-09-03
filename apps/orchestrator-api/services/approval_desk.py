@@ -1608,29 +1608,45 @@ def _why_buy(code: str, name: str, hold: dict):
     # the gap is a MORNING story (boss 2026-09-03 20:0x: "13:16 — we should
     # not tell about 갭상승 because it is already passed time; around 9-10 we
     # can say it"): after 10:30 the verdict skips the gap talk entirely.
-    _gap_talk = (not bt) or bt < "10:30"
-    if _gap_talk:
-        gk = [f"갭상승(+{_gapv:.1f}%) 후 눌림 진입" if _gapped else "갭상승 아님"]
-        ge = [f"gap-up (+{_gapv:.1f}%) then the dip entry" if _gapped else "no gap-up"]
-    else:
-        gk, ge = [], []
+    # THE GAP IS A REASON NOT TO BUY, NOT A REASON TO BUY (boss 2026-09-04:
+    # "갭상승 case also coming every time even 13:00 - I think we should remove
+    # it; it can come in the NOT buying case... for buying you can say there is
+    # no 갭상승 IF this day did not start with 갭상승").
+    # The old time gate only silenced it once a buy existed, so a stock still
+    # being weighed carried gap talk all afternoon. Now: if the day opened
+    # clean we say so once, because that is genuinely a green light; if it
+    # gapped and we are buying anyway, the gap is spent history and the pullback
+    # lines below carry the story instead.
+    _gap_talk = (not _gapped) and ((not bt) or bt < "10:30")
+    gk = ["갭상승 아님"] if _gap_talk else []
+    ge = ["no gap-up"] if _gap_talk else []
     if zone == "buy":
         gk.append(f"매수구간 (1년 바닥 {zpos}%)"); ge.append(f"BUYING zone ({zpos}% of the year)")
     else:
         gk.append(f"매도구간 아님 (1년 {zpos}%)"); ge.append(f"not the selling zone ({zpos}%)")
     gk.append("1개월·1년 평균 아래"); ge.append("below BOTH averages")
     gk.append("하락 멈추고 반등 시작"); ge.append("the fall stopped, it is turning up")
+    # THE NUMBERS HE ASKED FOR (boss 2026-09-04: "volume number at this time is
+    # this number and it increased x%"): the fuel behind the move, measured now,
+    # not a label. Real-time - it reads differently at 09:10 and at 14:10.
+    _vr9, _tv9 = _vol_ratio(code)
+    if _tv9 and can_propose():
+        # only while the session is live: before the bell today's volume is a
+        # few pre-open ticks and the ratio reads a meaningless 0.0x
+        _vk9 = (f"현재 거래량 {_tv9:,.0f}주"
+                + (f" (20일 평균의 {_vr9:.1f}배)" if _vr9 and _vr9 >= 0.05 else ""))
+        _ve9 = (f"volume so far {_tv9:,.0f} shares"
+                + (f" ({_vr9:.1f}x its 20-day average)" if _vr9 and _vr9 >= 0.05 else ""))
+        gk.append(_vk9)
+        ge.append(_ve9)
     R.append("✅ 살 수 있는 자리입니다 — " + " · ".join(gk))
     E.append("✅ THIS IS A PLACE TO BUY — " + " · ".join(ge))
 
-    if _gap_talk and _gapped:
-        R.append(f"① 갭상승 출발(+{_gapv:.1f}%)이었지만 — 가격이 내려와 최저점이 멈추고 "
-                 f"3번째 캔들에서 사는 규칙(중앙값-딥3)을 통과했고, 뉴스도 확인하고 샀습니다.")
-        E.append(f"① It DID open gap-up (+{_gapv:.1f}%) — but the price came down, the bottom "
-                 f"held, the 3rd-candle rule (median-dip3) cleared, and we checked the news before buying.")
-    elif _gap_talk:
-        R.append("① 갭상승 아님 — 오늘 시가가 어제 종가보다 크게 뛰지 않았습니다.")
-        E.append("① No gap-up — it did not open far above yesterday's close.")
+    if _gap_talk:
+        R.append("① 갭상승 아님 — 오늘 시가가 어제 종가(시간외 포함)보다 크게 뛰지 "
+                 "않았습니다. 비싼 출발이 아니라는 뜻입니다.")
+        E.append("① No gap-up — it did not open far above yesterday's close "
+                 "(after-hours included). It did not start expensive.")
     if zone == "buy":
         R.append(f"② 매수구간 — 1년 범위의 {zpos}% 지점, 바닥권입니다. 우리 규칙이 사는 자리입니다.")
         E.append(f"② Buying zone — {zpos}% of its 1-year range, near the bottom. This is where our rule buys.")
