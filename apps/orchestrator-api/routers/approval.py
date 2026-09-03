@@ -477,6 +477,53 @@ def _brain_compute():
             "why_en": ("📰 A danger / bad-news stamp landed within the last "
                        "hour - it is still moving the price → WAIT until it "
                        "settles." if news_bad else "")})
+        # ⑦ WHERE IT SITS IN *TODAY'S* OWN RANGE (boss 2026-09-03, the
+        # 한국전력 popup: "it is recommending to me, but it is on the selling
+        # zone and continuously increasing - in the selling zone it should not
+        # recommend; if it is sharply decreasing then it is ok").
+        #
+        # He was right and so was the data, which is why this slipped through:
+        # 한국전력 sat at 5% of its ONE-YEAR range - genuinely near the bottom,
+        # 6.4% under its 1-month average - while sitting at 94% of TODAY'S
+        # range, +3.6% off the open. Every one of the six gates looks at daily
+        # or yearly history; not one asked where the price stands inside the
+        # day it is actually being bought in, so a stock could be at its
+        # yearly floor and at today's ceiling and pass everything.
+        #
+        # 알고3 already refuses to chase (no_high_chase) - the BOARD did not,
+        # so it recommended what the engine itself would not take. This closes
+        # that gap. His exception needs no special case: a sharp FALL puts the
+        # price near today's low, which is a low position and passes freely.
+        # A day with almost no range cannot block - on a flat tape the
+        # percentage is noise, so a real spread is required first.
+        _pos9 = _rng9 = None
+        try:
+            from services.kiwoom_tape import load as _ld9, bars_time as _bt9, _day as _dy9
+            _bb9 = _bt9(_ld9(code, _dy9()), 60)
+            if _bb9:
+                _hi9 = max(x["high"] for x in _bb9)
+                _lo9 = min(x["low"] for x in _bb9)
+                _px9 = _bb9[-1]["close"]
+                if _hi9 > _lo9 and _lo9:
+                    _rng9 = (_hi9 - _lo9) / _lo9 * 100
+                    _pos9 = (_px9 - _lo9) / (_hi9 - _lo9) * 100
+        except Exception:
+            pass
+        _hb9 = bool(_pos9 is not None and _rng9 is not None
+                    and _rng9 >= 0.8 and _pos9 >= 85.0)
+        gates.append({
+            "k": "오늘 위치", "en": "place in today's range",
+            "v": (f"{_pos9:.0f}%" if _pos9 is not None else "대기/wait"),
+            "bad": _hb9,
+            "short": "오늘 고가권 → 대기", "short_en": "At today's high → WAIT",
+            "why": (f"📍 오늘 하루 움직임의 {_pos9:.0f}% 지점, 즉 오늘 고가권입니다 "
+                    f"(오늘 저가 대비 폭 {_rng9:.1f}%). 이미 오른 자리를 따라가는 "
+                    f"매수입니다 → 눌림(하락)이 나올 때까지 기다립니다."
+                    if _hb9 else ""),
+            "why_en": (f"📍 It stands at {_pos9:.0f}% of today's own range - the "
+                       f"top of the day (range {_rng9:.1f}% off today's low). "
+                       f"Buying here is chasing a move that already happened → "
+                       f"WAIT for a pullback." if _hb9 else "")})
         blocked = [g for g in gates if g["bad"]]
         # ALL THE MACHINE-CHECKABLE CHECKLIST ITEMS (boss 2026-09-03 13:4x:
         # "inside each stock our agent is checking, but you did not include all
@@ -649,7 +696,7 @@ def _brain_compute():
     out["lanes"] = {k: [e["name"] for e in out["six"] + out["universe"]
                         if e.get("lane") == k]
                     for k in ("BUY", "DONE", "NOBUY", "HOLD", "SELL")}
-    out["conditions"] = len(out["six"] + out["universe"]) * 6 + len(sell_rows) * 6
+    out["conditions"] = len(out["six"] + out["universe"]) * 7 + len(sell_rows) * 6
     return out
 
 
