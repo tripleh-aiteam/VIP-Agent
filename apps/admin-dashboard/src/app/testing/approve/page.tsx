@@ -190,7 +190,8 @@ export default function ApprovePage() {
     }).catch(() => {});
   }, [base, loadChart]);
 
-  const decide = useCallback((sid: number, ok: boolean, price?: number, qty?: number) => {
+  const decide = useCallback((sid: number, ok: boolean, price?: number, qty?: number,
+                              edited?: boolean) => {
     setBusy(sid);
     // INSTANT ACKNOWLEDGEMENT (boss 2026-09-03 14:1x: "when I click approve or
     // cancel I do not know either I clicked or not — it should gone
@@ -198,11 +199,21 @@ export default function ApprovePage() {
     // toast confirms the click; the server's real answer replaces it in a
     // moment. If the request fails, the 5s feed poll brings the popup back.
     setFeed((f) => f ? { ...f, pending: (f.pending || []).filter((p) => p.id !== sid) } : f);
-    setToast(ok ? t("👆 승인 클릭됨 — 주문 실행 중…", "👆 APPROVE clicked — executing the order…")
+    setToast(ok ? (edited
+                    ? t("👆 승인 — 수정하신 지정가로 주문합니다", "👆 APPROVE — ordering at the price you set (limit)")
+                    : t("👆 승인 — 시장가로 즉시 체결합니다", "👆 APPROVE — market order, fills immediately)"))
                 : t("👆 취소 클릭됨 — 처리 중…", "👆 CANCEL clicked — processing…"));
-    // the edited numbers ride along; omitted = take the agent's own proposal
-    const q = ok && (price || qty)
-      ? `?qty=${Math.max(0, Math.round(qty || 0))}&price=${Math.max(0, price || 0)}` : "";
+    // APPROVE MEANS IT FILLS (boss 2026-09-03: "there is a popup message but
+    // price not deal so we could not sell - so please use market price"). The
+    // page used to post the agent's own suggested price back on EVERY approve,
+    // which made every approval a LIMIT order resting at the order-book wall.
+    // When the market walked away it never dealt: 25 buys today bought nothing,
+    // and his -1% sells sat unfilled while the loss ran to -2.6%. Now the price
+    // is sent ONLY when he actually edited it - an untouched approval goes to
+    // MARKET and fills. An edited price is still his order and still a limit.
+    const q = ok && edited
+      ? `?qty=${Math.max(0, Math.round(qty || 0))}&price=${Math.max(0, price || 0)}`
+      : (ok && qty ? `?qty=${Math.max(0, Math.round(qty))}&price=0` : "");
     fetch(`${base}/approval/${ok ? "approve" : "reject"}/${sid}${q}`, { method: "POST" })
       .then((r) => r.json())
       .then((d) => { setToast(ok ? (d?.ok ? (d.decision === "queued"
@@ -1152,7 +1163,7 @@ export default function ApprovePage() {
                 {t("체크리스트 ", "checklist ")}{p.score}{t("점", " pts")}</span>}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <button disabled={busy === p.id} onClick={() => decide(p.id, true, pv, qv)}
+              <button disabled={busy === p.id} onClick={() => decide(p.id, true, pv, qv, changed)}
                 style={{ flex: 1, padding: "7px 0", borderRadius: 8, border: "none", fontWeight: 900,
                          fontSize: 12.5, background: "#e53935", color: "#fff", cursor: "pointer" }}>
                 {t("✅ 승인", "✅ APPROVE")}</button>

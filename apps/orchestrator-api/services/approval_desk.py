@@ -933,6 +933,27 @@ def set_time_override(code: str, sug_at: str = "", at: str = "", frm: str = "") 
 _PXAT_CACHE: dict = {}
 
 
+def set_sell_override(code: str, at: str, px: float, frm: str = "") -> dict:
+    """Correct a SELL row's clock and fill (boss 2026-09-03: "change their
+    selling time respectively around -1%, because we have a rule -1% then sell,
+    but there is a popup message and the price not deal so we could not sell").
+
+    An entry override may never touch a sell - that lesson stands - so sells
+    carry their own key. The price is stored with the clock because it is
+    computed ONCE, from the real tape, at the minute the -1% line was actually
+    touched; nothing is re-derived later from a moving market."""
+    o = time_overrides()
+    cur = o.get(code) or {}
+    cur["sell_at"] = at[:5]
+    cur["sell_px"] = float(px)
+    if frm:
+        cur["sell_frm"] = frm[:5]
+    o[code] = cur
+    _TOVR.parent.mkdir(parents=True, exist_ok=True)
+    _TOVR.write_text(json.dumps(o, ensure_ascii=False, indent=1), encoding="utf-8")
+    return cur
+
+
 def _px_at_cached(code: str, hhmm: str):
     """Market price of code at hhmm today, cached — the feed polls every 5s
     and the tape files must not be re-scanned each time."""
@@ -972,6 +993,49 @@ def apply_time_overrides(held: list, log: list) -> None:
         # sell at 09:27 under a buy at 10:48. An "at" override is an ENTRY
         # clock — it may touch held lots and BUY rows only, never a sell.
         if row.get("side") == "SELL":
+            # an ENTRY clock still may not touch a sell - but an explicit SELL
+            # correction may, and only the row it names
+            _sa = str(ov.get("sell_at") or "")[:5]
+            if not _sa:
+                continue
+            if ov.get("sell_frm") and str(row.get("at") or "")[:5] not in (
+                    ov["sell_frm"], _sa):
+                continue
+            row["at"] = _sa
+            if "hhmm" in row:
+                row["hhmm"] = _sa
+            _sp = ov.get("sell_px")
+            if _sp:
+                row["price"] = float(_sp)
+                if row.get("fill"):
+                    row["fill"] = float(_sp)
+                # the percentage and the money follow the price, never lag it
+                _bp = row.get("buy_price")
+                if _bp:
+                    row["pnl_pct"] = round((float(_sp) / float(_bp) - 1) * 100, 2)
+                    if row.get("qty"):
+                        row["pnl_won"] = round((float(_sp) - float(_bp)) * int(row["qty"]))
+                # THE STORY MUST MATCH THE CORRECTED ROW (boss: "please change
+                # the reason explanation also"). A row moved onto the -1% line
+                # says so, and says why it did not go out there by itself.
+                _pc = row.get("pnl_pct")
+                row["reasons"] = [
+                    f"🛑 -1% 규칙 — 매수가 ₩{float(_bp):,.0f} 대비 -1% 선("
+                    f"₩{float(_sp):,.0f})에 닿은 {_sa}에 전량 매도합니다."
+                    if _bp else f"🛑 -1% 규칙 — {_sa} 전량 매도.",
+                    "⚠️ 원래 이 자리에서 팔았어야 했습니다. 팝업은 떴지만 지정가 주문이 "
+                    "체결되지 않아 매도가 늦어졌습니다 — 이제 승인은 시장가로 나갑니다.",
+                    f"📉 결과 {_pc:+.2f}%." if _pc is not None else ""]
+                row["reasons_en"] = [
+                    f"🛑 THE -1% RULE — sold in full at {_sa}, the minute price "
+                    f"touched the -1% line (₩{float(_sp):,.0f}) below our buy at "
+                    f"₩{float(_bp):,.0f}." if _bp else f"🛑 The -1% rule — sold in full at {_sa}.",
+                    "⚠️ This is where it should have gone out. The popup did fire, "
+                    "but the LIMIT order never dealt, so the sale ran late — "
+                    "approvals now go out at MARKET.",
+                    f"📉 Result {_pc:+.2f}%." if _pc is not None else ""]
+                row["reasons"] = [x for x in row["reasons"] if x]
+                row["reasons_en"] = [x for x in row["reasons_en"] if x]
             continue
         # frm scopes the stamp: only the row whose current clock matches moves
         # (the second 한화시스템 lesson — never a code-wide rewrite again)
