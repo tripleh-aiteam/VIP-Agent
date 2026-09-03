@@ -438,7 +438,7 @@ def _why_sell(code: str, lot: dict, row: dict, px: float):
     return R, E
 
 
-def decide(db, sid: int, ok: bool) -> dict:
+def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
     st = _load()
     p = next((x for x in (st.get("pending") or []) if x["id"] == sid), None)
     if not p:
@@ -449,9 +449,19 @@ def decide(db, sid: int, ok: bool) -> dict:
         st["log"] = st["log"][-200:]
         _save(st)
         return {"ok": True, "decision": "cancelled"}
+    # the boss may edit the agent's numbers before approving (2026-09-03 09:4x)
+    _q = int(qty) if qty else int(p["qty"])
+    _px = float(price) if price else None
+    p = dict(p, qty=_q, price=(_px if _px else p.get("price")),
+             edited=bool((qty and int(qty) != int(p["qty"]))
+                         or (price and float(price) != float(p.get("price") or 0))))
     from services.paper_desk import place_order
-    res = place_order(db, p["code"], p["side"], int(p["qty"]), order_type="market",
-                      source="semi", direct=True)
+    if _px:
+        res = place_order(db, p["code"], p["side"], _q, order_type="limit",
+                          limit_price=_px, source="semi", direct=True)
+    else:
+        res = place_order(db, p["code"], p["side"], _q, order_type="market",
+                          source="semi", direct=True)
     if not res.get("ok"):
         st.setdefault("pending", []).append(p)      # keep the popup, report the error
         _save(st)

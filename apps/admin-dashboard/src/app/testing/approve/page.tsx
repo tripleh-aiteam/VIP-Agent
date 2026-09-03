@@ -68,6 +68,7 @@ export default function ApprovePage() {
   type Brain = { ok: boolean; universe: BrainRow[]; six: BrainRow[]; five: string[] };
   const [brain, setBrain] = useState<Brain | null>(null);
   const [thinkIdx, setThinkIdx] = useState(0);
+  const [edits, setEdits] = useState<Record<number, { qty?: number; price?: number }>>({});
   const [open, setOpen] = useState<string | null>(null);          // opened room code
   const [steps, setSteps] = useState<Step[]>([]);
   const [shown, setShown] = useState(0);                          // animated step count
@@ -116,9 +117,12 @@ export default function ApprovePage() {
     }).catch(() => {});
   }, [base, loadChart]);
 
-  const decide = useCallback((sid: number, ok: boolean) => {
+  const decide = useCallback((sid: number, ok: boolean, price?: number, qty?: number) => {
     setBusy(sid);
-    fetch(`${base}/approval/${ok ? "approve" : "reject"}/${sid}`, { method: "POST" })
+    // the edited numbers ride along; omitted = take the agent's own proposal
+    const q = ok && (price || qty)
+      ? `?qty=${Math.max(0, Math.round(qty || 0))}&price=${Math.max(0, price || 0)}` : "";
+    fetch(`${base}/approval/${ok ? "approve" : "reject"}/${sid}${q}`, { method: "POST" })
       .then((r) => r.json())
       .then((d) => { setToast(ok ? (d?.ok ? t(`✅ 승인 완료 — 체결 ${W(d.fill)}`, `✅ Approved — filled ${W(d.fill)}`) : `⚠️ ${d?.error || t("실패", "failed")}`)
                                  : t("🚫 취소했습니다 — 감시는 계속됩니다", "🚫 Cancelled — the watch continues"));
@@ -385,33 +389,73 @@ export default function ApprovePage() {
       {/* ─ suggestion POPUPS ─ */}
       <div style={{ position: "fixed", right: 16, bottom: 16, width: 340, zIndex: 60,
                     display: "flex", flexDirection: "column", gap: 10 }}>
-        {(feed?.pending || []).slice(-3).map((p) => (
+        {(feed?.pending || []).slice(-3).map((p) => {
+          // EDITABLE SUGGESTION, READABLE POPUP (boss 2026-09-03 09:4x: "font is
+          // black so it should be white, cancel is not visible, and the number of
+          // stock and price must be editable - it is a suggestion, if we do not
+          // like it we can edit"). The card is now dark with white text, Cancel is
+          // a solid grey button, and both numbers are inputs pre-filled with the
+          // agent's own proposal; approving sends whatever stands in them.
+          const ed = edits[p.id] || {};
+          const qv = ed.qty ?? p.qty;
+          const pv = ed.price ?? p.price;
+          const changed = qv !== p.qty || pv !== p.price;
+          const set = (k: "qty" | "price", v: number) =>
+            setEdits((m) => ({ ...m, [p.id]: { ...(m[p.id] || {}), [k]: v } }));
+          const inp: React.CSSProperties = {
+            width: "100%", padding: "7px 9px", borderRadius: 7, fontSize: 14,
+            fontWeight: 800, textAlign: "right", background: "#12161d",
+            color: "#fff", border: "1.5px solid #55606e" };
+          return (
           <div key={p.id} style={{ border: `2px solid ${p.side === "BUY" ? "#e53935" : "#1e88e5"}`,
-                                   borderRadius: 12, padding: 12, background: "var(--background,#111)",
-                                   boxShadow: "0 6px 24px rgba(0,0,0,0.45)" }}>
-            <div style={{ fontWeight: 800, fontSize: 14,
-                          color: p.side === "BUY" ? "#e53935" : "#1e88e5" }}>
+                                   borderRadius: 12, padding: 13, background: "#1b2027",
+                                   color: "#fff",
+                                   boxShadow: "0 8px 28px rgba(0,0,0,0.55)" }}>
+            <div style={{ fontWeight: 900, fontSize: 15,
+                          color: p.side === "BUY" ? "#ff6b66" : "#5aa9f0" }}>
               {p.side === "BUY" ? t("🔴 매수 제안", "🔴 BUY proposal") : t("🔵 매도 제안", "🔵 SELL proposal")} — {p.name}
-              <span style={{ float: "right", fontSize: 11, opacity: 0.6 }}>{p.hhmm}</span>
+              <span style={{ float: "right", fontSize: 11, opacity: 0.7, color: "#fff" }}>{p.hhmm}</span>
             </div>
-            <ul style={{ margin: "6px 0 8px 16px", padding: 0 }}>
-              {(t("k", "e") === "k" ? p.reasons : (p.reasons_en || p.reasons)).map((x, i) => <li key={i} style={{ fontSize: 12.3, margin: "2px 0" }}>{x}</li>)}
+            <ul style={{ margin: "7px 0 9px 16px", padding: 0, color: "#e8ecf1" }}>
+              {(t("k", "e") === "k" ? p.reasons : (p.reasons_en || p.reasons)).map((x, i2) => (
+                <li key={i2} style={{ fontSize: 12.3, margin: "3px 0", lineHeight: 1.45 }}>{x}</li>))}
             </ul>
-            <div style={{ fontSize: 12.5, marginBottom: 8 }}>
-              {t("제안: ", "Proposal: ")}<b>{W(p.price)}</b> × <b>{p.qty.toLocaleString()}{t("주", " sh")}</b>
-              {p.score != null && <span style={{ marginLeft: 8, color: "#e6a817" }}>{t("체크리스트 ", "checklist ")}{p.score}{t("점", " pts")}</span>}
+            {/* editable numbers */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 9 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 3 }}>
+                  {t("가격 (수정 가능)", "Price (editable)")}</div>
+                <input type="number" style={inp} value={pv}
+                  onChange={(e) => set("price", Number(e.target.value))} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 3 }}>
+                  {t("수량 (수정 가능)", "Quantity (editable)")}</div>
+                <input type="number" style={inp} value={qv}
+                  onChange={(e) => set("qty", Number(e.target.value))} />
+              </div>
+            </div>
+            <div style={{ fontSize: 12.5, marginBottom: 9, color: "#cfd6de" }}>
+              {t("합계 ", "Total ")}<b style={{ color: "#fff" }}>{W(Math.round(pv * qv))}</b>
+              {changed && <b style={{ marginLeft: 8, color: "#ffc046" }}>
+                {t("· 수정됨 (에이전트 제안: ", "· edited (agent proposed ")}
+                {W(p.price)} × {p.qty.toLocaleString()}{t("주)", ")")}</b>}
+              {p.score != null && <span style={{ marginLeft: 8, color: "#e6a817" }}>
+                {t("체크리스트 ", "checklist ")}{p.score}{t("점", " pts")}</span>}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <button disabled={busy === p.id} onClick={() => decide(p.id, true)}
-                style={{ flex: 1, padding: "8px 0", borderRadius: 8, border: "none", fontWeight: 800,
-                         background: "#2e7d32", color: "#fff", cursor: "pointer" }}>{t("✅ 승인", "✅ Approve")}</button>
+              <button disabled={busy === p.id} onClick={() => decide(p.id, true, pv, qv)}
+                style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: "none", fontWeight: 900,
+                         fontSize: 14, background: "#e53935", color: "#fff", cursor: "pointer" }}>
+                {t("✅ 승인", "✅ APPROVE")}</button>
               <button disabled={busy === p.id} onClick={() => decide(p.id, false)}
-                style={{ flex: 1, padding: "8px 0", borderRadius: 8, fontWeight: 700,
-                         border: "1px solid rgba(128,128,128,0.5)", background: "transparent",
-                         color: "inherit", cursor: "pointer" }}>{t("취소", "Cancel")}</button>
+                style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontWeight: 800, fontSize: 14,
+                         border: "2px solid #8a94a3", background: "#4a515b",
+                         color: "#fff", cursor: "pointer" }}>
+                {t("✖ 취소", "✖ CANCEL")}</button>
             </div>
-          </div>
-        ))}
+          </div>);
+        })}
         {toast && <div style={{ borderRadius: 10, padding: "10px 12px", fontSize: 13,
                                 background: "#333", color: "#fff" }}>{toast}</div>}
       </div>

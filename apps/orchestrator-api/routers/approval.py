@@ -2,7 +2,7 @@
 """/approval — the semi-auto approval desk API (boss 2026-09-02). See
 services/approval_desk.py for the philosophy: the agent proposes, the human
 clicks 승인 or 취소, nothing trades on its own."""
-from fastapi import APIRouter, Depends
+from fastapi import Query, APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from db.base import get_db
@@ -87,9 +87,14 @@ def chart(code: str, mode: str = "min"):
 
 
 @router.post("/approve/{sid}")
-def approve(sid: int, db: Session = Depends(get_db)):
+def approve(sid: int, qty: int = Query(0), price: float = Query(0.0),
+            db: Session = Depends(get_db)):
+    """THE SUGGESTION IS EDITABLE (boss 2026-09-03 09:4x: "it is a suggestion -
+    if we do not like it we can edit"). qty/price default to 0 = accept the
+    agent's own numbers; anything else is the boss overriding them, and the
+    decision log records which."""
     from services import approval_desk as ad
-    return ad.decide(db, sid, True)
+    return ad.decide(db, sid, True, qty=qty or None, price=price or None)
 
 
 @router.post("/reject/{sid}")
