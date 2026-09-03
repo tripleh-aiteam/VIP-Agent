@@ -327,10 +327,28 @@ export default function ApprovePage() {
               <b style={{ fontSize: 15.5 }}>
                 {t(`에이전트 ${shown.length}개 동시 분석`, `${shown.length} agents working at once`)}
               </b>
-              <span style={{ fontSize: 12, opacity: 0.72 }}>
-                {t("모든 종목이 같은 순간에 같은 관문을 통과합니다 — 순서를 기다리지 않습니다",
-                   "every stock walks the same gates at the same moment — none waits its turn")}
-              </span>
+              {/* THE ASSISTANT NARRATES ITSELF, live (boss 2026-09-03 14:2x:
+                  "add some interactive part like chatbot or Claude — first
+                  analyzing 100 checklist, thinking, checking, deciding"):
+                  a looping thought-stream with a typing cursor, one phase per
+                  beat, exactly how a chat assistant shows its work. */}
+              {(() => {
+                const TH = [
+                  { i: "📋", k: "100 체크리스트 읽는 중", e: "analyzing the 100-item checklist" },
+                  { i: "🤔", k: "생각 중 — 갭상승·평균선·1년 구간 비교", e: "thinking — gap-ups, averages, the 1-year zones" },
+                  { i: "🔍", k: "검사 중 — 종목마다 관문 하나씩 통과 확인", e: "checking — walking every stock through the gates" },
+                  { i: "📊", k: "거래량과 호가창 읽는 중", e: "reading volume and the order book" },
+                  { i: "📰", k: "위험 뉴스 스캔 중", e: "scanning for danger news" },
+                  { i: "⚖️", k: "판단 중 — 살 자리인가, 기다릴 자리인가", e: "deciding — a place to buy, or a place to wait" },
+                  { i: "✅", k: "결정 — 조건이 맞으면 바로 팝업으로 제안", e: "decided — when conditions align, a popup proposes" },
+                ];
+                const ph9 = TH[thinkIdx % TH.length];
+                return (
+                  <span style={{ fontSize: 12.5, color: "#6a1b9a", fontWeight: 700 }}>
+                    {ph9.i} {t(ph9.k, ph9.e)}{".".repeat((thinkIdx % 3) + 1)}
+                    <span style={{ animation: "railPulse 1s infinite" }}>▌</span>
+                  </span>);
+              })()}
               <select
                 onChange={(e) => {
                   const v = e.target.value;
