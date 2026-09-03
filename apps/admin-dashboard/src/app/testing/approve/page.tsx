@@ -75,7 +75,8 @@ export default function ApprovePage() {
                     pass: boolean; no_buy?: string | null; no_buy_en?: string | null;
                     no_buy_short?: string | null; no_buy_short_en?: string | null;
                     blocked_n?: number; chosen?: boolean; verdict?: string; lane?: string;
-                    lane_why?: string | null; lane_why_en?: string | null; pnl?: number | null; tradeable?: boolean };
+                    lane_why?: string | null; lane_why_en?: string | null; pnl?: number | null;
+                    items?: { k: string; v: string; s?: number; g?: string; bad?: boolean }[]; tradeable?: boolean };
   type SellChk = { k: string; en: string; v: string; hit?: boolean; hold?: boolean };
   type SellRow = { code: string; name: string; buy_t: string; base: number; px: number;
                    pnl: number; peak: number; from_peak: number; qty?: number;
@@ -94,6 +95,7 @@ export default function ApprovePage() {
   const [fDeal, setFDeal] = useState("");
   const [guOpen, setGuOpen] = useState<number | null>(null);   // opened give-up detail row
   const [histOpen, setHistOpen] = useState(true);              // 📜 history fold (boss: closeable)
+  const [money3, setMoney3] = useState(false);                 // 💰 money law: hidden by default (2026-08-19)
   const [open, setOpen] = useState<string | null>(null);          // opened room code
   const [steps, setSteps] = useState<Step[]>([]);
   const [shown, setShown] = useState(0);                          // animated step count
@@ -223,10 +225,11 @@ export default function ApprovePage() {
                     background: "rgba(106,27,154,0.06)", fontSize: 12.5 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
           <span style={{ fontSize: 18 }}>🤖</span>
-          <b style={{ color: "#6a1b9a", fontSize: 13.5 }}>{t("에이전트 작업 중", "Agent working")}</b>
+          {/* the heading moved to the page title (boss 2026-09-03 13:4x:
+              "remove Agent working from the left side and put the LIVE icon in
+              Real Time Monitoring") - the rail keeps only its pulse */}
           <span style={{ width: 8, height: 8, borderRadius: 99, background: "#e53935",
                          animation: "railPulse 1s infinite" }} />
-          <span style={{ fontSize: 10, fontWeight: 800, color: "#e53935" }}>LIVE</span>
         </div>
         {!rail && (
           <div style={{ marginTop: 10, opacity: 0.75, lineHeight: 1.6 }}>
@@ -289,9 +292,17 @@ export default function ApprovePage() {
         <b style={{ color: "#2e7d32" }}>{t("🖥 메뉴3 실시간 모니터링", "🖥 Menu 3 Real Time Monitoring")}</b>
       </div>
       <h1 style={{ fontSize: 22, fontWeight: 800 }}>{t("🖥 실시간 모니터링", "🖥 Real Time Monitoring")}
+        <span style={{ marginLeft: 10, display: "inline-flex", alignItems: "center", gap: 5,
+                       padding: "3px 10px", borderRadius: 999, background: "#e53935",
+                       verticalAlign: "middle" }}>
+          <span style={{ width: 8, height: 8, borderRadius: 99, background: "#fff",
+                         animation: "railPulse 1s infinite" }} />
+          <b style={{ fontSize: 12, color: "#fff", letterSpacing: ".08em" }}>LIVE</b>
+        </span>
         <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 10, opacity: 0.7 }}>
           {t("Real Time Monitoring — 에이전트가 제안하고, 사람이 승인합니다", "the agent proposes — the human approves")}</span></h1>
-      <div style={{ fontSize: 12.5, opacity: 0.8, margin: "6px 0 14px" }}>
+      <div style={{ fontSize: 14.5, lineHeight: 1.55, opacity: 0.92, margin: "8px 0 15px",
+                    maxWidth: 980 }}>
         {t("에이전트가 100 체크리스트·1년 역사 데이터·호가창·거래량·뉴스를 실시간으로 검사하다가 기회가 오면 매수/매도 팝업으로 이유·가격·수량까지 제안합니다. 승인을 눌러야만 실행됩니다 — 절대 혼자 사고팔지 않습니다.", "The agent live-checks the 100-item checklist, 1-year history, the order book, volume and news; when a chance appears it proposes BUY/SELL popups with reasons, price and share count. Nothing executes until you press Approve — it never trades alone.")}
         {feed && <span style={{ marginLeft: 8 }}>{feed.market_open ? t("🟢 장중", "🟢 market open") : t("🌙 장 마감 — 제안은 장중에만 나옵니다", "🌙 market closed — proposals come only in market hours")}</span>}
       </div>
@@ -431,10 +442,30 @@ export default function ApprovePage() {
                     {lane === "SELL" && (
                       <div style={{ fontSize: 10.5, marginTop: 4, color: "#e65100", fontWeight: 700 }}>
                         {t("🟠 매도 신호 — 팝업으로 승인 요청", "🟠 SELL — asking approval by popup")}</div>)}
+                    {/* every remaining checklist item, one by one, after the
+                        six gates (boss 2026-09-03 13:4x) */}
+                    {reach >= STEP.length && (u.items || []).length > 0 && (
+                      <div style={{ marginTop: 4, paddingTop: 4,
+                                    borderTop: "1px dashed rgba(128,128,128,0.35)" }}>
+                        <div style={{ fontSize: 9.5, opacity: 0.6, marginBottom: 2 }}>
+                          {t(`100 체크리스트 · 측정 가능한 ${(u.items || []).length}개`,
+                             `100-item checklist · ${(u.items || []).length} measurable`)}</div>
+                        {(u.items || []).map((it, n) => (
+                          <div key={n} style={{ fontSize: 10, padding: "1px 0",
+                                                color: it.bad ? "#c62828" : "inherit" }}>
+                            {it.bad ? "✗" : "✓"} {it.k} <b>{it.v}</b>
+                          </div>))}
+                      </div>)}
                     {done && lane === "BUY" && (
-                      <div style={{ fontSize: 10.5, marginTop: 4, color: "#2e7d32", fontWeight: 800 }}>
-                        {t("✅ 모든 관문 통과 — 진입 신호가 나오면 팝업으로 제안합니다",
-                           "✅ ALL GATES PASSED — a popup follows when the entry signal fires")}</div>)}
+                      <div style={{ marginTop: 6, padding: "7px 8px", borderRadius: 8,
+                                    background: "#c62828", textAlign: "center" }}>
+                        <div style={{ fontSize: 20, fontWeight: 900, color: "#fff",
+                                      letterSpacing: ".06em" }}>
+                          {t("매수 BUY", "BUY")}</div>
+                        <div style={{ fontSize: 9.5, color: "#ffe3e3", fontWeight: 700 }}>
+                          {t("모든 관문 통과 — 즉시 팝업 제안",
+                             "all gates passed — popup sent immediately")}</div>
+                      </div>)}
                     {!done && failAt < 0 && (
                       <div style={{ fontSize: 10.5, marginTop: 4, opacity: 0.6 }}>
                         {t("⏳ 검사 중…", "⏳ checking…")}</div>)}
@@ -626,8 +657,15 @@ export default function ApprovePage() {
           g.won += l.pnl_won ?? 0;
           if ((l.at || "") > g.last) g.last = l.at || "";
         }
-        for (const g of groups) g.legs.sort((a, b) => a.tt.localeCompare(b.tt) || (a.kind === "B" ? -1 : 1));
+        // MENU 2's exact shape (boss 2026-09-03 14:3x: "just copy format from
+        // menu 2"): ALL ▲ buys first, then every ▼ sell — never interleaved,
+        // so a time-edited trip can no longer print its sell above its buy.
+        for (const g of groups) g.legs.sort((a, b) =>
+          a.kind !== b.kind ? (a.kind === "B" ? -1 : 1) : a.tt.localeCompare(b.tt));
         groups.sort((a, b) => b.last.localeCompare(a.last));
+        const inv3 = done.reduce((a, l) => a + (l.buy_price ?? 0) * l.qty, 0);
+        const wonFmt = (v: number) => v >= 0 ? `+₩${v.toLocaleString()}`
+                                             : `₩-${Math.abs(v).toLocaleString()}`;
         return (
           <div style={{ marginTop: 12, border: "1px solid rgba(46,125,50,0.45)", borderRadius: 10, padding: 12 }}>
             {/* the fold toggle (boss: "add icon - if we do not wanna see we can
@@ -637,16 +675,29 @@ export default function ApprovePage() {
               <b style={{ fontSize: 13.5 }}>{t("📜 매매 기록", "📜 Trading history")}
                 <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6, marginLeft: 6 }}>
                   {t("깨끗한 매수→매도 기록 — 메뉴2 스타일", "clean buy→sell record — Menu 2 style")}</span></b>
-              <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, color: "#2e7d32" }}>
+              {/* 💰 the money law, same as Menu 2 (boss 2026-08-19: "by default
+                  it should be hide money") */}
+              <button onClick={(e) => { e.stopPropagation(); setMoney3(!money3); }}
+                style={{ marginLeft: "auto", fontSize: 11.5, padding: "3px 9px",
+                         borderRadius: 8, cursor: "pointer", fontWeight: 700,
+                         border: "1px solid rgba(128,128,128,0.45)",
+                         background: money3 ? "#e6a817" : "transparent",
+                         color: money3 ? "#000" : "inherit" }}>
+                💰 {money3 ? t("돈 숨기기", "hide money") : t("돈 보기", "show money")}</button>
+              <span style={{ marginLeft: 10, fontSize: 12, fontWeight: 800, color: "#2e7d32" }}>
                 {histOpen ? t("접기 ▲", "close ▲") : t("펼치기 ▼", "open ▼")}</span>
             </div>
             {(done.length > 0 || holds.length > 0) && (
               <div style={{ fontSize: 12, margin: "6px 0 2px", fontWeight: 700 }}>
                 {done.length}{t("판", " trips")} · <span style={{ color: "#c62828" }}>{wins2}{t("승", "W")}</span>{" "}
                 <span style={{ color: "#1565c0" }}>{loss2}{t("패", "L")}</span>
-                {" · "}{t("실현 손익 ", "realized P&L ")}
-                <b style={{ color: tot >= 0 ? "#e53935" : "#1e88e5" }}>
-                  {tot >= 0 ? "+" : ""}₩{tot.toLocaleString()}</b>
+                {" · "}
+                {money3
+                  ? <>{t("실현 손익 ", "realized P&L ")}
+                      <b style={{ color: tot >= 0 ? "#e53935" : "#1e88e5" }}>{wonFmt(tot)}</b></>
+                  : <>{t("수익률 ", "return ")}
+                      <b style={{ color: tot >= 0 ? "#e53935" : "#1e88e5" }}>
+                        {inv3 > 0 ? `${tot >= 0 ? "+" : ""}${(tot / inv3 * 100).toFixed(2)}%` : "-"}</b></>}
                 {" · "}{t("보유 ", "holding ")}{holds.length}
               </div>)}
             {histOpen && (<>
@@ -670,7 +721,7 @@ export default function ApprovePage() {
                           {pnl != null && <b style={{ marginLeft: 6, color: pnl >= 0 ? "#e53935" : "#1e88e5" }}>
                             {pnl >= 0 ? "+" : ""}{pnl}%</b>}
                         </div></td>
-                      <td style={{ width: 110, textAlign: "right", opacity: 0.5 }}>—</td>
+                      {money3 && <td style={{ width: 110, textAlign: "right", opacity: 0.5 }}>—</td>}
                     </tr>);
                 })}</tbody>
               </table></>)}
@@ -700,9 +751,10 @@ export default function ApprovePage() {
                                 title={x.note || ""}>⚡{t("시장가 전환", "switched to market")}</span>}
                             </div>);
                         })}</td>
-                      <td style={{ width: 110, textAlign: "right", verticalAlign: "top", paddingTop: 5,
-                                   fontWeight: 800, color: g.won >= 0 ? "#e53935" : "#1e88e5" }}>
-                        {g.won >= 0 ? "+" : "-"}₩{Math.abs(g.won).toLocaleString()}</td>
+                      {money3 && <td style={{ width: 110, textAlign: "right", verticalAlign: "top",
+                                   paddingTop: 5, fontWeight: 800,
+                                   color: g.won >= 0 ? "#e53935" : "#1e88e5" }}>
+                        {wonFmt(g.won)}</td>}
                     </tr>);
                 })}</tbody>
               </table></>)}
