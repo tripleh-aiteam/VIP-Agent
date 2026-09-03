@@ -20,7 +20,7 @@ type LogRow = Sug & { decision: string; fill?: number | null; at: string; dealt?
                       gave_up?: boolean; giveup_note?: string;
                       converted?: boolean; conv_note?: string;
                       buy_at?: string; buy_price?: number;
-                      pnl_pct?: number; pnl_won?: number };
+                      pnl_pct?: number; pnl_won?: number; day?: string };
 type Stats = { trips: number; wins: number; losses: number; win_pct: number;
                net_won: number; invested: number; open_n: number; open_unreal: number;
                best?: { name: string; pct: number } | null;
@@ -99,6 +99,7 @@ export default function ApprovePage() {
   const [fDeal, setFDeal] = useState("");
   const [guOpen, setGuOpen] = useState<number | null>(null);   // opened give-up detail row
   const [histOpen, setHistOpen] = useState(true);              // 📜 history fold (boss: closeable)
+  const [histDay, setHistDay] = useState("");                  // 📅 which day's record (compare days)
   const [rzOpen, setRzOpen] = useState<string | null>(null);   // opened why-we-traded rows
   const [ckOpen, setCkOpen] = useState<string | null>(null);   // opened 100-checklist detail
   const [popTop, setPopTop] = useState<number | null>(null);   // which popup is up front
@@ -323,8 +324,22 @@ export default function ApprovePage() {
         {feed && <span style={{ marginLeft: 8 }}>{feed.market_open ? t("🟢 장중", "🟢 market open") : t("🌙 장 마감 — 제안은 장중에만 나옵니다", "🌙 market closed — proposals come only in market hours")}</span>}
       </div>
 
-      {/* ─ 20 AGENT BLOCKS, ALL STEPPING AT ONCE ─ */}
-      {brain?.ok && !brain.computing && (() => {
+      {/* ─ AFTER THE BELL THE AGENT RESTS (boss 2026-09-03 19:3x: "after
+          15:20 the agent should not work — it should say market is closed and
+          not check; just the trading history should appear") ─ */}
+      {feed?.market_open === false && (
+        <div style={{ margin: "12px 0 16px", padding: "16px 18px", borderRadius: 12,
+                      border: "2px solid #b71c1c", background: "rgba(183,28,28,0.06)" }}>
+          <b style={{ fontSize: 16, color: "#b71c1c" }}>
+            ⛔ {t("장 마감 — 에이전트가 쉬고 있습니다", "MARKET CLOSED — the agent is resting")}</b>
+          <div style={{ fontSize: 12.5, marginTop: 5, opacity: 0.8, lineHeight: 1.55 }}>
+            {t("15:20 이후에는 검사도 제안도 하지 않습니다. 아래 매매 기록에서 오늘과 지난 날들의 결과를 비교해 보세요 — 다음 장이 열리면 자동으로 다시 일합니다.",
+               "After 15:20 the agent neither checks nor proposes. Review today's and previous days' results in the trading history below — it goes back to work automatically at the next open.")}
+          </div>
+        </div>)}
+
+      {/* ─ 20 AGENT BLOCKS, ALL STEPPING AT ONCE (market hours only) ─ */}
+      {feed?.market_open !== false && brain?.ok && !brain.computing && (() => {
         const all = [...(brain.six || []), ...(brain.universe || [])];
         const sixSet = new Set((brain.six || []).map((x) => x.code));
         // TWENTY OF THE SAME BLOCK, RUNNING TOGETHER (boss 2026-09-03 13:2x:
@@ -668,9 +683,16 @@ export default function ApprovePage() {
           clear like our Menu 2 Algo 3") — grouped per stock: ▲ buys, ▼ sells,
           % and money, holding-now on top, completed underneath ─ */}
       {(() => {
+        // 📅 the day picker (boss 2026-09-03 19:3x: "adding dropdown menu to
+        // trading history to see before days' results to compare")
+        const allDays = Array.from(new Set((feed?.log || [])
+          .map((l) => l.day || "").filter(Boolean))).sort().reverse();
+        const dayPick = allDays.includes(histDay) ? histDay : (allDays[0] || "");
+        const isLatestDay = !allDays.length || dayPick === allDays[0];
         const done = (feed?.log || [])
-          .filter((l) => l.side === "SELL" && (l.dealt === true || l.fill) && l.buy_price != null);
-        const holds = feed?.held || [];
+          .filter((l) => l.side === "SELL" && (l.dealt === true || l.fill) && l.buy_price != null
+                  && (!dayPick || (l.day || "") === dayPick));
+        const holds = isLatestDay ? (feed?.held || []) : [];
         const wins2 = done.filter((l) => (l.pnl_won ?? 0) > 0).length;
         const loss2 = done.filter((l) => (l.pnl_won ?? 0) < 0).length;
         const tot = done.reduce((a, l) => a + (l.pnl_won ?? 0), 0);
@@ -713,10 +735,23 @@ export default function ApprovePage() {
               <b style={{ fontSize: 13.5 }}>{t("📜 매매 기록", "📜 Trading history")}
                 <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6, marginLeft: 6 }}>
                   {t("깨끗한 매수→매도 기록 — 메뉴2 스타일", "clean buy→sell record — Menu 2 style")}</span></b>
+              {/* 📅 pick a day — compare today with previous days */}
+              {allDays.length > 0 && (
+                <select value={dayPick}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => { e.stopPropagation(); setHistDay(e.target.value); }}
+                  style={{ marginLeft: "auto", fontSize: 11.5, padding: "3px 7px",
+                           borderRadius: 8, cursor: "pointer", fontWeight: 700,
+                           border: "1px solid rgba(128,128,128,0.45)",
+                           background: "var(--card,#fff)", color: "inherit" }}>
+                  {allDays.map((d) => (
+                    <option key={d} value={d}>
+                      {d === allDays[0] ? t(`오늘 (${d})`, `today (${d})`) : d}</option>))}
+                </select>)}
               {/* 💰 the money law, same as Menu 2 (boss 2026-08-19: "by default
                   it should be hide money") */}
               <button onClick={(e) => { e.stopPropagation(); setMoney3(!money3); }}
-                style={{ marginLeft: "auto", fontSize: 11.5, padding: "3px 9px",
+                style={{ marginLeft: 8, fontSize: 11.5, padding: "3px 9px",
                          borderRadius: 8, cursor: "pointer", fontWeight: 700,
                          border: "1px solid rgba(128,128,128,0.45)",
                          background: money3 ? "#e6a817" : "transparent",
@@ -897,7 +932,8 @@ export default function ApprovePage() {
                   // ANY dealt buy of the stock still tells why we bought
                   // (boss 2026-09-03 19:2x: "No saved buy reasons" on 한화오션)
                   const buyAll = (feed!.log || []).filter((l) => l.code === g.code
-                      && l.side === "BUY" && (l.fill || l.dealt) && (l.reasons?.length || 0) > 0);
+                      && l.side === "BUY" && (l.fill || l.dealt) && (l.reasons?.length || 0) > 0
+                      && (!dayPick || (l.day || "") === dayPick));
                   const buyExact = buyAll.filter((l) => buyTs.has(l.at || ""));
                   const buySrc = buyExact.length ? buyExact : buyAll;
                   const buySeen = new Set<string>();
