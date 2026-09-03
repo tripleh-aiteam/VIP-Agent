@@ -7185,6 +7185,33 @@ def _run_agent_impl(
         Set when the user clicked Confirm on a previously-proposed write
         action. We bypass the LLM and execute the tool directly.
     """
+    # === 🧭 DESK NAV, FIRST OF ALL LANES (boss 2026-09-04 08:5x readiness
+    # run: 'open menu 3 real time monitoring' in ENGLISH sailed past the
+    # later shortcut into the LLM, which opened Control Room) — the three
+    # trading desks are the boss's home pages; nothing may steal their nav.
+    _tn0 = (transcript or "").lower()
+    if (not confirmed_tool and transcript and len(_tn0) <= 60
+            and any(v in _tn0 for v in ("열어", "열기", "이동", "가자", "open", "go to",
+                                        "take me", "띄워"))):
+        _nav0 = None
+        if any(k in _tn0 for k in ("메뉴3", "메뉴 3", "menu 3", "menu3",
+                                   "실시간 모니터링", "real time monitoring",
+                                   "realtime monitoring", "approval desk", "세미오토")):
+            _nav0 = ("/testing/approve", "실시간 모니터링", "Real Time Monitoring")
+        elif any(k in _tn0 for k in ("메뉴2", "메뉴 2", "menu 2", "menu2", "reco desk",
+                                     "추천 데스크", "체크리스트 데스크", "checklist desk")):
+            _nav0 = ("/testing/reco", "체크리스트 추천 데스크", "Checklist Reco Desk")
+        elif any(k in _tn0 for k in ("메뉴1", "메뉴 1", "menu 1", "menu1", "live desk",
+                                     "라이브 키움", "live kiwoom", "키움 데스크")):
+            _nav0 = ("/testing/live", "라이브 키움 데스크", "Live Kiwoom Desk")
+        if _nav0:
+            _ko0 = bool(_re.search(r"[가-힣]", transcript.replace("메뉴", "")))
+            return {"intent": "navigate", "language": "ko" if _ko0 else "en",
+                    "reply": (f"📡 {_nav0[1]} 페이지를 엽니다." if _ko0
+                              else f"📡 Opening the {_nav0[2]}."),
+                    "action": {"type": "navigate", "to": _nav0[0]}, "speak": True,
+                    "transcript": transcript, "tool_used": "navigate"}
+
     # === Direct execute path (after user confirmed a proposed write) ===
     if confirmed_tool and confirmed_tool in TOOL_REGISTRY:
         tool = TOOL_REGISTRY[confirmed_tool]
