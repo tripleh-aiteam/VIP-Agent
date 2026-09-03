@@ -90,6 +90,7 @@ export default function ApprovePage() {
   const [fDec, setFDec] = useState("");
   const [fDeal, setFDeal] = useState("");
   const [guOpen, setGuOpen] = useState<number | null>(null);   // opened give-up detail row
+  const [histOpen, setHistOpen] = useState(true);              // 📜 history fold (boss: closeable)
   const [open, setOpen] = useState<string | null>(null);          // opened room code
   const [steps, setSteps] = useState<Step[]>([]);
   const [shown, setShown] = useState(0);                          // animated step count
@@ -573,19 +574,46 @@ export default function ApprovePage() {
           % and money, holding-now on top, completed underneath ─ */}
       {(() => {
         const done = (feed?.log || [])
-          .filter((l) => l.side === "SELL" && (l.dealt === true || l.fill) && l.buy_price != null)
-          .sort((a, b) => (b.at || "").localeCompare(a.at || ""));
+          .filter((l) => l.side === "SELL" && (l.dealt === true || l.fill) && l.buy_price != null);
         const holds = feed?.held || [];
         const wins2 = done.filter((l) => (l.pnl_won ?? 0) > 0).length;
         const loss2 = done.filter((l) => (l.pnl_won ?? 0) < 0).length;
         const tot = done.reduce((a, l) => a + (l.pnl_won ?? 0), 0);
         const lineB: React.CSSProperties = { color: "#e53935", fontSize: 12.3, padding: "1px 0" };
         const lineS: React.CSSProperties = { color: "#1e88e5", fontSize: 12.3, padding: "1px 0" };
+        // ONE BLOCK PER STOCK, exactly the Menu-2 shape (boss 2026-09-03 13:1x
+        // sample): all ▲ buys stacked, then every ▼ sell with its running
+        // "(left N)" count, one money total per stock.
+        type Leg = { tt: string; kind: "B" | "S"; px: number; qty: number;
+                     pct?: number | null; conv?: boolean; note?: string };
+        const groups: { code: string; name: string; legs: Leg[]; won: number; last: string }[] = [];
+        for (const l of done) {
+          let g = groups.find((x) => x.code === l.code);
+          if (!g) { g = { code: l.code, name: l.name, legs: [], won: 0, last: "" }; groups.push(g); }
+          // the buy leg joins once per distinct (time, price) — a second real
+          // buy of the same stock at another time gets its own ▲ line
+          if (!g.legs.some((x) => x.kind === "B" && x.tt === (l.buy_at || "")
+                                  && x.px === (l.buy_price as number)))
+            g.legs.push({ tt: l.buy_at || "", kind: "B", px: l.buy_price as number, qty: l.qty });
+          g.legs.push({ tt: l.at || "", kind: "S", px: (l.fill as number), qty: l.qty,
+                        pct: l.pnl_pct, conv: l.converted, note: l.conv_note });
+          g.won += l.pnl_won ?? 0;
+          if ((l.at || "") > g.last) g.last = l.at || "";
+        }
+        for (const g of groups) g.legs.sort((a, b) => a.tt.localeCompare(b.tt) || (a.kind === "B" ? -1 : 1));
+        groups.sort((a, b) => b.last.localeCompare(a.last));
         return (
           <div style={{ marginTop: 12, border: "1px solid rgba(46,125,50,0.45)", borderRadius: 10, padding: 12 }}>
-            <b style={{ fontSize: 13.5 }}>{t("📜 매매 기록", "📜 Trading history")}
-              <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6, marginLeft: 6 }}>
-                {t("깨끗한 매수→매도 기록 — 메뉴2 스타일", "clean buy→sell record — Menu 2 style")}</span></b>
+            {/* the fold toggle (boss: "add icon - if we do not wanna see we can
+                close, if we want we can open") */}
+            <div style={{ display: "flex", alignItems: "center", cursor: "pointer" }}
+                 onClick={() => setHistOpen(!histOpen)}>
+              <b style={{ fontSize: 13.5 }}>{t("📜 매매 기록", "📜 Trading history")}
+                <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6, marginLeft: 6 }}>
+                  {t("깨끗한 매수→매도 기록 — 메뉴2 스타일", "clean buy→sell record — Menu 2 style")}</span></b>
+              <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, color: "#2e7d32" }}>
+                {histOpen ? t("접기 ▲", "close ▲") : t("펼치기 ▼", "open ▼")}</span>
+            </div>
             {(done.length > 0 || holds.length > 0) && (
               <div style={{ fontSize: 12, margin: "6px 0 2px", fontWeight: 700 }}>
                 {done.length}{t("판", " trips")} · <span style={{ color: "#c62828" }}>{wins2}{t("승", "W")}</span>{" "}
@@ -595,6 +623,7 @@ export default function ApprovePage() {
                   {tot >= 0 ? "+" : ""}₩{tot.toLocaleString()}</b>
                 {" · "}{t("보유 ", "holding ")}{holds.length}
               </div>)}
+            {histOpen && (<>
             {done.length === 0 && holds.length === 0 && (
               <div style={{ fontSize: 12.5, opacity: 0.6, padding: "8px 0" }}>
                 {t("아직 기록 없음 — 매수를 승인하면 여기부터 쌓입니다.", "Nothing yet — approve a buy and it builds here.")}</div>)}
@@ -619,25 +648,39 @@ export default function ApprovePage() {
                     </tr>);
                 })}</tbody>
               </table></>)}
-            {done.length > 0 && (<>
+            {groups.length > 0 && (<>
               <div style={{ fontSize: 11.5, marginTop: 10, opacity: 0.75, fontWeight: 700 }}>
                 ✓ {t("완료 — 매도까지 끝난 거래", "completed — already sold")}</div>
               <table style={{ width: "100%", fontSize: 12.5, borderCollapse: "collapse" }}>
-                <tbody>{done.map((l, i) => (
-                  <tr key={i} style={{ borderTop: "1px solid rgba(128,128,128,0.15)" }}>
-                    <td style={{ width: 130, padding: "5px 0", verticalAlign: "top" }}><b>🎞 {l.name}</b></td>
-                    <td style={{ padding: "5px 0" }}>
-                      <div style={lineB}>▲ {l.buy_at} {W(l.buy_price)} × {l.qty.toLocaleString()}{t("주", "sh")}</div>
-                      <div style={lineS}>▼ {l.at} {W(l.fill)} × {l.qty.toLocaleString()}{t("주", "sh")}
-                        <b style={{ marginLeft: 6 }}>{(l.pnl_pct ?? 0) >= 0 ? "+" : ""}{l.pnl_pct}%</b>
-                        {l.converted && <span style={{ marginLeft: 6, fontSize: 10.5, opacity: 0.7 }}
-                          title={l.conv_note || ""}>⚡{t("시장가 전환", "switched to market")}</span>}
-                      </div></td>
-                    <td style={{ width: 110, textAlign: "right", verticalAlign: "top", paddingTop: 5,
-                                 fontWeight: 800, color: (l.pnl_won ?? 0) >= 0 ? "#e53935" : "#1e88e5" }}>
-                      {(l.pnl_won ?? 0) >= 0 ? "+" : "-"}₩{Math.abs(l.pnl_won ?? 0).toLocaleString()}</td>
-                  </tr>))}</tbody>
+                <tbody>{groups.map((g, i) => {
+                  const bought = g.legs.filter((x) => x.kind === "B")
+                    .reduce((a, x) => a + x.qty, 0);
+                  let left = bought;
+                  return (
+                    <tr key={i} style={{ borderTop: "1px solid rgba(128,128,128,0.15)" }}>
+                      <td style={{ width: 130, padding: "5px 0", verticalAlign: "top" }}><b>🎞 {g.name}</b></td>
+                      <td style={{ padding: "5px 0" }}>
+                        {g.legs.map((x, j) => {
+                          if (x.kind === "B") return (
+                            <div key={j} style={lineB}>
+                              ▲ {x.tt} {W(x.px)} × {x.qty.toLocaleString()}{t("주", "sh")}</div>);
+                          left -= x.qty;
+                          return (
+                            <div key={j} style={lineS}>
+                              ▼ {x.tt} {W(x.px)} × {x.qty.toLocaleString()}{t("주", "sh")}
+                              <span style={{ opacity: 0.65 }}> ({t("잔여", "left")} {Math.max(0, left).toLocaleString()})</span>
+                              <b style={{ marginLeft: 6 }}>{(x.pct ?? 0) >= 0 ? "+" : ""}{x.pct}%</b>
+                              {x.conv && <span style={{ marginLeft: 6, fontSize: 10.5, opacity: 0.7 }}
+                                title={x.note || ""}>⚡{t("시장가 전환", "switched to market")}</span>}
+                            </div>);
+                        })}</td>
+                      <td style={{ width: 110, textAlign: "right", verticalAlign: "top", paddingTop: 5,
+                                   fontWeight: 800, color: g.won >= 0 ? "#e53935" : "#1e88e5" }}>
+                        {g.won >= 0 ? "+" : "-"}₩{Math.abs(g.won).toLocaleString()}</td>
+                    </tr>);
+                })}</tbody>
               </table></>)}
+            </>)}
           </div>);
       })()}
 
