@@ -256,7 +256,9 @@ def scan(db) -> dict:
     from services.paper_desk import fast_price
     held_codes = {h["code"] for h in st["held"]}
     pending_codes = {(p["side"], p["code"]) for p in st["pending"]}
-    for code, name, score in desk_codes():
+    _rooms9 = desk_codes()
+    _board9 = _algo3_board([c for c, _n, _s in _rooms9])
+    for code, name, score in _rooms9:
         try:
             px, chg, _t, _s = fast_price(code)
             if not px:
@@ -271,7 +273,7 @@ def scan(db) -> dict:
             # disagree on the same stock in the same minute. Now 알고3 replays
             # today's tape for this stock and whatever IT holds is what Menu 3
             # offers - zero re-coded law, so the two menus cannot drift apart.
-            view = _algo3_view(code, name)
+            view = _algo3_view(code, name, _board9)
             if view.get("err"):
                 log.warning(f"approval algo3 {code}: {view['err']}")
                 continue
@@ -340,101 +342,142 @@ def scan(db) -> dict:
 # Now the popup asks the ENGINE. run_desk replays today's tape under the real D3
 # book; whatever position it holds is what Menu 3 offers. Zero duplicated law,
 # so the two menus can never drift apart.
-def _algo3_view(code: str, name: str) -> dict:
-    """What 알고3 is doing in this stock right now, and why."""
-    out = {"hold": None, "rows": [], "err": None}
+_BOARD9 = {"t": 0.0, "hold": {}, "rows": {}, "err": None}
+
+
+def _algo3_board(codes: list) -> dict:
+    """ONE REPLAY FOR THE WHOLE DESK, CACHED (boss 2026-09-03 10:0x: "if I click
+    approve it is not working on time" - and the server had just died).
+
+    The first version asked the engine per stock, so a single page poll fired TEN
+    full-day replays; ten rooms x every 5s poll is what exhausted the process -
+    the same parallel-replay memory crash the overnight guard was built for.
+    Now the desk is replayed ONCE for all codes and held for 15s, which every
+    room then reads. The rooms still show exactly what the engine holds; they
+    just stop asking it ten times over."""
+    import time as _t
+    if _t.time() - _BOARD9["t"] < 15 and (_BOARD9["hold"] or _BOARD9["rows"]):
+        return _BOARD9
     try:
         from services.kiwoom_rules import trades as _tr
-        d = _tr("D3", tick=5, period=60, bars=10, limit=500, codes=code,
-                use_gate=True, allow_fallback=True, rank_gate=True)
-        if not d.get("ok"):
-            out["err"] = "engine returned no board"
-            return out
-        out["hold"] = next((h for h in (d.get("holding") or [])
-                            if str(h.get("code")) == code), None)
-        out["rows"] = [r for r in (d.get("rows") or [])
-                       if str(r.get("code")) == code]
+        d = _tr("D3", tick=5, period=60, bars=10, limit=500,
+                codes=",".join(codes), use_gate=True, allow_fallback=True,
+                rank_gate=True)
+        if d.get("ok"):
+            hold, rows = {}, {}
+            for h in (d.get("holding") or []):
+                hold[str(h.get("code"))] = h
+            for r in (d.get("rows") or []):
+                rows.setdefault(str(r.get("code")), []).append(r)
+            _BOARD9.update({"t": _t.time(), "hold": hold, "rows": rows, "err": None})
+        else:
+            _BOARD9["err"] = "engine returned no board"
     except Exception as e:
-        out["err"] = str(e)[:120]
-    return out
+        _BOARD9["err"] = str(e)[:120]
+    return _BOARD9
+
+
+def _algo3_view(code: str, name: str, board: dict | None = None) -> dict:
+    """What 알고3 is doing in this stock right now, read from the shared replay."""
+    b = board if board is not None else _algo3_board([code])
+    return {"hold": (b.get("hold") or {}).get(code),
+            "rows": (b.get("rows") or {}).get(code) or [],
+            "err": b.get("err")}
 
 
 def _why_buy(code: str, name: str, hold: dict):
-    """The reasons in the boss's own language (KO + EN pair, boss 2026-09-03:
-    'in English mode it should be English'): the checklist first, then the
-    exact 알고3 law that opened the door, then the two average gates."""
+    """WHY WE BUY, GATE BY GATE, IN PLAIN WORDS (boss 2026-09-03 09:5x: "the
+    explanation should START WITH CLEAR GATES - for not-buy: 갭상승, selling
+    zone, increasing; for buying: in the buying zone, decreased and start to
+    increase"). Line 1 is the verdict in his own vocabulary; the numbered lines
+    carry the measured evidence for each gate. Returns (ko, en)."""
     R, E = [], []
+    score = mid = midy = rank = tot = zone = zpos = None
     try:
         from services.checklist_reco import _ranking
         rows = (_ranking() or {}).get("rows") or []
         me = next((r for r in rows if str(r.get("code")) == code), None)
         if me:
+            score, mid, midy = me.get("score"), me.get("mid"), me.get("midy")
             rank = sorted(rows, key=lambda r: -(r.get("score") or 0)).index(me) + 1
-            R.append(f"100 체크리스트 {me.get('score')}점 · 전체 {len(rows)}종목 중 {rank}등")
-            E.append(f"100-item checklist {me.get('score')} pts · rank {rank} of {len(rows)}")
-            if me.get("mid") is not None:
-                R.append(f"1개월 평균선 대비 {me.get('mid'):+.2f}% — 평균 아래 (매수 게이트 1 통과)")
-                E.append(f"{me.get('mid'):+.2f}% vs the 1-month average — below it (buy gate 1 passed)")
-            if me.get("midy") is not None:
-                R.append(f"1년 평균선 대비 {me.get('midy'):+.2f}% — 평균 아래 (매수 게이트 2 통과)")
-                E.append(f"{me.get('midy'):+.2f}% vs the 1-year average — below it (buy gate 2 passed)")
+            tot = len(rows)
     except Exception:
         pass
     try:
         from services.checklist_reco import _year_zone
         z = _year_zone(code)
         if z:
-            zk = ("매수구간 (1년 중 바닥 20%)" if z["zone"] == "buy"
-                  else f"1년 범위의 {z['pos']}% 지점 — 매도구간(85%↑) 아님")
-            zke = ("BUYING zone (bottom 20% of the year)" if z["zone"] == "buy"
-                   else f"at {z['pos']}% of the 1-year range — not the selling zone (85%+)")
-            R.append(f"과거 1년 데이터 확인: {zk}")
-            E.append(f"1-year historical data checked: {zke}")
+            zone, zpos = z.get("zone"), z.get("pos")
     except Exception:
         pass
     bt = str((hold or {}).get("buy_t") or "")[:5]
-    R.append(f"알고3 진입 법칙 충족 ({bt}) — 급락 후 하락이 멈추고 3번째 양봉, "
-             f"제1조(바닥 3봉 이상·바닥 1.5% 이내·최근 3봉 중 2회 상승·0.3% 성장) 통과")
-    E.append(f"Algo-3 entry law met ({bt}) — after the dip the fall stopped, 3rd red candle, "
-             f"Article 1 passed (3+ bars at the bottom · within 1.5% of it · 2 of last 3 rising · 0.3% growth)")
-    R.append("차단 규칙 전부 통과: 갭상승 금지 · 30봉 고가 0.3% 이내 금지 · "
-             "매도존 금지 · 20봉 변동 0.7% 미만 금지 · 매도 후 추격 금지 · "
-             "1개월/1년 평균 위 금지")
-    E.append("Every block rule passed: no gap-up buy · not within 0.3% of the 30-bar high · "
-             "not the selling zone · not a flat 0.7% chop · no chasing after a sell · "
-             "not above the 1-month/1-year averages")
+
+    gk = ["갭상승 아님"]
+    ge = ["no gap-up"]
+    if zone == "buy":
+        gk.append(f"매수구간 (1년 바닥 {zpos}%)"); ge.append(f"BUYING zone ({zpos}% of the year)")
+    else:
+        gk.append(f"매도구간 아님 (1년 {zpos}%)"); ge.append(f"not the selling zone ({zpos}%)")
+    gk.append("1개월·1년 평균 아래"); ge.append("below BOTH averages")
+    gk.append("하락 멈추고 반등 시작"); ge.append("the fall stopped, it is turning up")
+    R.append("✅ 살 수 있는 자리입니다 — " + " · ".join(gk))
+    E.append("✅ THIS IS A PLACE TO BUY — " + " · ".join(ge))
+
+    R.append("① 갭상승 아님 — 오늘 시가가 어제 종가보다 크게 뛰지 않았습니다.")
+    E.append("① No gap-up — it did not open far above yesterday's close.")
+    if zone == "buy":
+        R.append(f"② 매수구간 — 1년 범위의 {zpos}% 지점, 바닥권입니다. 우리 규칙이 사는 자리입니다.")
+        E.append(f"② Buying zone — {zpos}% of its 1-year range, near the bottom. This is where our rule buys.")
+    else:
+        R.append(f"② 매도구간 아님 — 1년 범위의 {zpos}% 지점으로 고점권(85%↑)이 아닙니다.")
+        E.append(f"② Not the selling zone — {zpos}% of its 1-year range, far from the 85% top.")
+    if mid is not None and midy is not None:
+        R.append(f"③ 아직 싼 자리 — 1개월 평균보다 {mid:+.2f}%, 1년 평균보다 {midy:+.2f}%. "
+                 f"두 평균 아래일 때만 수익이 났습니다.")
+        E.append(f"③ Still cheap — {mid:+.2f}% vs the 1-month average and {midy:+.2f}% vs the "
+                 f"1-year average. Only stocks below BOTH made money.")
+    R.append(f"④ 떨어졌다가 다시 오르기 시작 ({bt}) — 하락이 멈추고 3번째 양봉입니다. "
+             f"바닥이 3봉 이상 버텼고, 바닥에서 1.5% 안이며, 최근 3봉 중 2번 올랐습니다.")
+    E.append(f"④ It fell, stopped, and started rising ({bt}) — the 3rd rising candle. The bottom "
+             f"held 3+ bars, price is within 1.5% of it, 2 of the last 3 bars rose.")
+    if score is not None:
+        R.append(f"⑤ 100 체크리스트 {score}점 · {tot}종목 중 {rank}등 (점수가 높을수록 좋은 종목).")
+        E.append(f"⑤ Checklist {score} pts · rank {rank} of {tot} (a higher score now means a better stock).")
     return R, E
 
 
 def _why_sell(code: str, lot: dict, row: dict, px: float):
-    """Name the law that closed it (KO + EN pair) - the engine's own words."""
+    """WHY WE SELL, same plain shape - the gate first, the money after."""
     R, E = [], []
     why = str((row or {}).get("exit_why") or "")
-    law = ("고점 대비 1.5% 하락 (종가 확인) — 큰 파도 청산" if "고점" in why else
-           "고점 후 횡보 지지선(12봉 최저) 이탈 — 이익 중 청산" if "지지선" in why else
-           "-1% 손절 (종가 확인)" if "-1%" in why else
-           "15:19 장 마감 전량 정리" if "마감" in why else
-           "상승 후 연속 음봉 — 파도 종료" if "음봉" in why else why or "알고3 청산 신호")
-    law_e = ("1.5% down from the peak (close-confirmed) — big-wave exit" if "고점" in why else
-             "post-peak shelf (12-bar low) broke — exit in profit" if "지지선" in why else
-             "-1% stop (close-confirmed)" if "-1%" in why else
-             "15:19 closing-bell full clear" if "마감" in why else
-             "straight blue candles after the rise — wave over" if "음봉" in why
-             else (why or "Algo-3 exit signal"))
-    R.append(f"알고3 청산 법칙: {law}")
-    E.append(f"Algo-3 exit law: {law_e}")
+    if "고점" in why:
+        hk, he = ("고점을 찍고 1.5% 내려왔습니다 (종가 확인)",
+                  "it topped out and fell 1.5% from the peak (close-confirmed)")
+    elif "지지선" in why:
+        hk, he = ("고점 뒤 버티던 지지선이 무너졌습니다 (이익 중)",
+                  "the shelf it held after the peak has broken (while in profit)")
+    elif "-1%" in why:
+        hk, he = ("매수가 대비 -1%까지 떨어졌습니다 (종가 확인)",
+                  "it fell -1% below our buy price (close-confirmed)")
+    elif "마감" in why:
+        hk, he = ("장 마감 정리 시간입니다 (15:19)", "the 15:19 closing sweep")
+    else:
+        hk, he = ("상승이 끝나고 음봉이 이어집니다", "the rise ended and blue candles are stacking")
+    R.append("🔵 팔 때입니다 — " + hk)
+    E.append("🔵 TIME TO SELL — " + he)
     try:
         entry = float(lot["price"])
         pnl = (px / entry - 1) * 100
-        R.append(f"매수가 ₩{entry:,.0f} → 현재 ₩{px:,.0f} ({pnl:+.2f}%)")
-        E.append(f"entry ₩{entry:,.0f} → now ₩{px:,.0f} ({pnl:+.2f}%)")
+        R.append(f"① 매수가 ₩{entry:,.0f} → 지금 ₩{px:,.0f} ({pnl:+.2f}%)")
+        E.append(f"① Bought ₩{entry:,.0f} → now ₩{px:,.0f} ({pnl:+.2f}%)")
         if 0 < pnl <= 0.23:
-            R.append("주의: 수수료 구간(0~0.23%) — 알고3는 이 구간에서 팔지 않습니다")
-            E.append("note: inside the fee band (0~0.23%) — Algo 3 does not sell here")
+            R.append("② 주의: 수수료 구간(0~0.23%) — 여기서 팔면 가짜 수익입니다.")
+            E.append("② Careful: the fee zone (0-0.23%) — selling here is a fake win.")
     except Exception:
         pass
-    R.append("보류 법칙 확인: 매수구간(1년 바닥권 또는 5일 최저) 인내 규칙에 해당하지 않음")
-    E.append("patience law checked: not in the buying-zone hold rule (1-year bottom or 5-day low)")
+    R.append("③ 인내 규칙 확인 — 매수구간(1년 바닥권 또는 5일 최저)이 아니므로 기다리지 않습니다.")
+    E.append("③ Patience rule checked — it is NOT in the buying zone (year bottom or 5-day low), "
+             "so we do not wait.")
     return R, E
 
 
