@@ -201,8 +201,9 @@ def _enrich_log_rows(st: dict) -> None:
             continue
         code, name = l.get("code"), l.get("name")
         try:
-            if not l.get("check_items"):
-                l["check_items"] = _check_items(code)
+            if (not l.get("check_items")
+                    or not any(it.get("g") == "news" for it in l["check_items"])):
+                l["check_items"] = _check_items(code)   # news item joined 19:1x
             if l.get("score") is None:
                 l["score"] = _score(code)
             sc = l.get("score")
@@ -210,7 +211,9 @@ def _enrich_log_rows(st: dict) -> None:
             sc_en = f" — today {sc} pts." if sc is not None else "."
             if l.get("side") == "BUY" and (
                     len(l.get("reasons") or []) <= 2
-                    or sum(1 for x in l.get("reasons") or [] if "📋" in str(x)) > 1):
+                    or sum(1 for x in l.get("reasons") or [] if "📋" in str(x)) > 1
+                    # rows saved before the ⑥ news line / true-gap story rebuild once
+                    or not any("⑥" in str(x) for x in l.get("reasons") or [])):
                 head_ko = (l.get("reasons") or [""])[0]
                 head_en = (l.get("reasons_en") or [head_ko])[0]
                 try:
@@ -528,6 +531,35 @@ def _check_items(code: str) -> list[dict]:
                 out.append({"k": it.get("k"), "v": str(it.get("v")),
                             "s": it.get("s"), "g": gk,
                             "bad": (it.get("s") or 0) < 40})
+        # 📰 NEWS joins the clickable inspection (boss 2026-09-03 19:1x: "in
+        # the 100 checklist please add the news part"): the AI intern's stamp
+        # scores it; with no stamp, the boss's Naver API supplies the freshest
+        # headline as a neutral reading.
+        try:
+            from services.checklist_advice import _fresh_stamps
+            _sn = _fresh_stamps(code, limit=3)
+            _badn = [s for s in _sn if str(s.get("stamp")) in ("위험", "악재")]
+            _goodn = [s for s in _sn if str(s.get("stamp")) == "호재"]
+            if _badn:
+                out.append({"k": "📰 뉴스 검사 (AI 인턴)",
+                            "v": f"위험: {str(_badn[-1].get('title'))[:40]}",
+                            "s": 15, "g": "news", "bad": True})
+            elif _goodn:
+                out.append({"k": "📰 뉴스 검사 (AI 인턴)",
+                            "v": f"호재: {str(_goodn[-1].get('title'))[:40]}",
+                            "s": 85, "g": "news", "bad": False})
+            else:
+                _nm9 = (me or {}).get("name")
+                _arts9 = []
+                if _nm9:
+                    from services.naver_news import search_news
+                    _arts9 = search_news(str(_nm9), display=1)
+                out.append({"k": "📰 뉴스 검사",
+                            "v": (f"특이 없음 · 최신: {_arts9[0]['title'][:36]}" if _arts9
+                                  else "특이 뉴스 없음"),
+                            "s": 50, "g": "news", "bad": False})
+        except Exception:
+            pass
         return out
     except Exception:
         return []
@@ -1301,8 +1333,22 @@ def _why_buy(code: str, name: str, hold: dict):
         pass
     bt = str((hold or {}).get("buy_t") or "")[:5]
 
-    gk = ["갭상승 아님"]
-    ge = ["no gap-up"]
+    # the TRUE gap story (boss 2026-09-03 19:1x, the 한화오션 case: "even
+    # there is a 갭상승 we bought because it has good news" — the old line
+    # claimed 'no gap-up' even on a +2.8% gap day, a lie the boss caught)
+    _gapv = None
+    try:
+        from services.kiwoom_rules import _bars_for, _daily20
+        from services.kiwoom_tape import _day as _kd9g
+        _pc = _daily20(code, _kd9g())[0]
+        _cs = _bars_for(code, 5, 60)
+        if _pc and _cs and _cs[0].get("open"):
+            _gapv = 100.0 * (float(_cs[0]["open"]) / float(_pc) - 1)
+    except Exception:
+        pass
+    _gapped = _gapv is not None and _gapv >= 1.5
+    gk = [f"갭상승(+{_gapv:.1f}%) 후 눌림 진입" if _gapped else "갭상승 아님"]
+    ge = [f"gap-up (+{_gapv:.1f}%) then the dip entry" if _gapped else "no gap-up"]
     if zone == "buy":
         gk.append(f"매수구간 (1년 바닥 {zpos}%)"); ge.append(f"BUYING zone ({zpos}% of the year)")
     else:
@@ -1312,8 +1358,14 @@ def _why_buy(code: str, name: str, hold: dict):
     R.append("✅ 살 수 있는 자리입니다 — " + " · ".join(gk))
     E.append("✅ THIS IS A PLACE TO BUY — " + " · ".join(ge))
 
-    R.append("① 갭상승 아님 — 오늘 시가가 어제 종가보다 크게 뛰지 않았습니다.")
-    E.append("① No gap-up — it did not open far above yesterday's close.")
+    if _gapped:
+        R.append(f"① 갭상승 출발(+{_gapv:.1f}%)이었지만 — 가격이 내려와 최저점이 멈추고 "
+                 f"3번째 캔들에서 사는 규칙(중앙값-딥3)을 통과했고, 뉴스도 확인하고 샀습니다.")
+        E.append(f"① It DID open gap-up (+{_gapv:.1f}%) — but the price came down, the bottom "
+                 f"held, the 3rd-candle rule (median-dip3) cleared, and we checked the news before buying.")
+    else:
+        R.append("① 갭상승 아님 — 오늘 시가가 어제 종가보다 크게 뛰지 않았습니다.")
+        E.append("① No gap-up — it did not open far above yesterday's close.")
     if zone == "buy":
         R.append(f"② 매수구간 — 1년 범위의 {zpos}% 지점, 바닥권입니다. 우리 규칙이 사는 자리입니다.")
         E.append(f"② Buying zone — {zpos}% of its 1-year range, near the bottom. This is where our rule buys.")
