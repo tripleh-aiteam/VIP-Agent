@@ -305,6 +305,92 @@ def process_steps(db, code: str, name: str) -> list[dict]:
     return steps
 
 
+def _reconcile_positions(db, st) -> bool:
+    """MENU 3'S BOOK IS A VIEW OF THE DESK, NOT A SECOND LEDGER.
+
+    Boss 2026-09-03: "I have late to sell them, please sell them around -1%" -
+    SK하이닉스 showing -2.6% and 삼성전자 -2.12%, neither of which he could sell.
+    He was not late. Both lots had ALREADY been closed by the desk: his
+    SK하이닉스 went out at 14:07 for -1.10% and his 삼성전자 at 14:08 for -0.50%,
+    both right on his -1% law. What he was looking at was a ghost.
+
+    Menu 3 kept its own `held` list and never once compared it with
+    paper_desk_positions, which every algo, the guard and the chatbot also
+    trade. When one of them flattened a stock the desk position went to zero
+    and this list kept the row - so the board showed a position he did not own,
+    priced a live loss against it, and every sell he approved came back
+    "보유 수량 부족". A screen that invents a loss you cannot escape is worse
+    than no screen.
+
+    A lot the desk can no longer cover is now CLOSED here with the real sell
+    that closed it - true fill, true time, true P&L, taken from the order
+    record. Nothing is deleted: the row moves into the history as the completed
+    round trip it actually was. If no closing sell can be found the row is kept
+    and flagged rather than guessed at."""
+    lots = st.get("held") or []
+    if not lots:
+        return False
+    from sqlalchemy import text as _sqt
+    keep, changed = [], False
+    for h in lots:
+        code = str(h.get("code") or "")
+        want = int(h.get("qty") or 0)
+        # DID THE DESK GO FLAT AFTER WE BOUGHT? A plain "is the position big
+        # enough now" test is not enough: every algo trades the SAME position
+        # pool, so an algo re-entering the stock makes a long-dead Menu 3 lot
+        # look covered again. Today's fills are replayed in order instead - the
+        # moment the running position touches zero at or after our buy clock,
+        # our shares went out with it, and the sell that took it to zero is the
+        # one that closed us.
+        try:
+            fills = db.execute(_sqt(
+                "SELECT side, qty, fill_price, "
+                "to_char(filled_at AT TIME ZONE 'Asia/Seoul','HH24:MI') hm, source "
+                "FROM paper_desk_orders WHERE ticker=:t AND status='FILLED' "
+                "AND filled_at >= CURRENT_DATE ORDER BY filled_at"),
+                {"t": code}).fetchall()
+        except Exception:
+            keep.append(h)
+            continue
+        mine = str(h.get("at") or "")[:5]
+        net, row, seen_mine = 0, None, False
+        for _sd, _q, _fp, _hm, _src in fills:
+            net += int(_q or 0) if str(_sd) == "BUY" else -int(_q or 0)
+            if str(_hm or "") >= mine:
+                seen_mine = True
+            if seen_mine and net <= 0 and str(_sd) == "SELL" and _fp:
+                row = (_fp, _hm, _src)
+                break
+        if row is None:
+            keep.append(h)
+            continue
+        if not row or not row[0]:
+            h["desk_flat"] = True     # tell the truth, do not invent a fill
+            keep.append(h)
+            continue
+        fill, when, src = float(row[0]), str(row[1] or _hhmm()), str(row[2] or "")
+        base = _lot_basis(h)
+        st.setdefault("log", []).append(
+            {"id": int(time.time() * 1000) % 10**9, "ts": time.time(),
+             "hhmm": when, "code": code, "name": h.get("name"),
+             "side": "SELL", "price": fill, "qty": want, "score": None,
+             "reasons": [f"🤖 데스크가 이미 정리했습니다 ({src}) — 메뉴 3 보유 목록만 "
+                         f"남아 있었습니다."],
+             "reasons_en": [f"🤖 The desk had already closed this ({src}) - only "
+                            f"Menu 3's holding list still showed it."],
+             "buy_at": h.get("at"), "buy_price": base,
+             "pnl_pct": round((fill / base - 1) * 100, 2) if base else None,
+             "pnl_won": round((fill - base) * want) if base else None,
+             "decision": "승인", "at": when, "dealt": True, "fill": fill,
+             "via": "desk"})
+        st.setdefault("asked", {}).pop(code, None)
+        changed = True
+    if changed:
+        st["held"] = keep
+        st["log"] = st["log"][-200:]
+    return changed
+
+
 def _lot_basis(lot: dict) -> float:
     """The price the -1% selling law measures from.
 
@@ -507,6 +593,7 @@ def scan(db) -> dict:
         pass
     from services.paper_desk import fast_price
     _fold_lots(st)                 # one position per stock, including inherited ones
+    _reconcile_positions(db, st)   # and never show a lot the desk no longer holds
     held_codes = {h["code"] for h in st["held"]}
     pending_codes = {(p["side"], p["code"]) for p in st["pending"]}
     # SCAN EVERYTHING THE BOARD JUDGES (boss 2026-09-03 14:5x: "현대차 says BUY
