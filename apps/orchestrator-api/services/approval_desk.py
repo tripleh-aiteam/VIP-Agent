@@ -228,6 +228,8 @@ def scan(db) -> dict:
     # and the row resurrected; filtering here makes the removal stick)
     st["log"] = [l for l in st.get("log") or []
                  if not any("테스트" in str(x) for x in l.get("reasons") or [])]
+    # a queued limit approval that has since filled flips 미체결 → 체결
+    _reconcile_fills(db, st)
     # room meta snapshot (score + zone) computed HERE in the background so the
     # instant feed never blocks on cold caches; the top-4 rotate automatically
     # as the checklist re-scores (ranking cache ~10 min)
@@ -292,6 +294,14 @@ def scan(db) -> dict:
                     if last is None or str(r.get("sell_t") or "") > str(last.get("sell_t") or ""):
                         last = r
                 _rs9, _rse9 = _why_sell(code, lot, last, px)
+                _sp9, _sko9, _sen9 = _book_price(code, "SELL", px)
+                _rs9.append("💰 왜 이 가격인가 — " + _sko9)
+                _rse9.append("💰 WHY THIS PRICE — " + _sen9)
+                _rs9.append(f"🔢 왜 이 수량인가 — 보유 {lot['qty']:,}주 전량입니다 "
+                            f"(알고3는 조각내지 않고 한 번에 정리합니다).")
+                _rse9.append(f"🔢 WHY THIS QUANTITY — the whole holding, {lot['qty']:,} sh "
+                             f"(알고3 exits a ride in one piece, not in slices).")
+                px = _sp9
                 _mk_sug(st, code, name, "SELL", _rs9, px, lot["qty"], score,
                         reasons_en=_rse9)
                 continue
@@ -311,16 +321,35 @@ def scan(db) -> dict:
             except Exception:
                 pass
             reasons, reasons_en = _why_buy(code, name, a_hold)
-            _bq = a_hold.get("qty") or 0
-            try:
-                _bp = float(a_hold.get("base") or a_hold.get("entry") or px)
-            except Exception:
-                _bp = px
+            # WHY THIS COMPANY (boss 2026-09-03 10:5x: "for company name also
+            # add why this company with explanation") - stated before the price
+            _six9 = {"000660", "005930", "035420", "017670", "042660", "034020"}
+            if code in _six9:
+                reasons.insert(0, f"🏷 왜 {name}인가 — 회장님이 고정하신 6종목 중 하나입니다. "
+                                  f"체크리스트 순위와 상관없이 항상 감시하며, 아래 관문을 "
+                                  f"모두 통과했을 때만 삽니다.")
+                reasons_en.insert(0, f"🏷 WHY {name} — one of your six fixed stocks. It is watched "
+                                     f"every day regardless of rank, and bought only when every "
+                                     f"gate below passes.")
+            else:
+                reasons.insert(0, f"🏷 왜 {name}인가 — 오늘 에이전트가 뽑은 5종목 중 하나입니다. "
+                                  f"1개월·1년 평균 아래이고, 연속 상승이 아니며, 갭상승·매도존· "
+                                  f"악재뉴스 관문을 모두 통과해 상위에 올랐습니다.")
+                reasons_en.insert(0, f"🏷 WHY {name} — one of the five the agent picked today: below "
+                                     f"both its 1-month and 1-year averages, not on a rising run, "
+                                     f"and clear of the gap-up, selling-zone and bad-news gates.")
+            # the price a person can actually place, off the live order book
+            _bp, _pko, _pen = _book_price(code, "BUY", px)
+            _bq = int(10_000_000 // _bp) if _bp else 0
             if not _bq:
                 from services.chat_trade import advise_qty
                 _bq = advise_qty(px)
-            reasons.append(f"제안: ₩{_bp:,.0f} · {int(_bq):,}주 "
-                           f"(알고3의 진입가와 수량 그대로)")
+            _qko, _qen = _why_qty(_bp, _bq)
+            reasons.append("💰 왜 이 가격인가 — " + _pko)
+            reasons_en.append("💰 WHY THIS PRICE — " + _pen)
+            reasons.append("🔢 왜 이 수량인가 — " + _qko)
+            reasons_en.append("🔢 WHY THIS QUANTITY — " + _qen)
+
             reasons_en.append(f"Proposal: ₩{_bp:,.0f} · {int(_bq):,} shares "
                               f"(Algo 3's own entry price and size)")
             _mk_sug(st, code, name, "BUY", reasons, _bp, int(_bq), score,
@@ -383,6 +412,60 @@ def _algo3_view(code: str, name: str, board: dict | None = None) -> dict:
     return {"hold": (b.get("hold") or {}).get(code),
             "rows": (b.get("rows") or {}).get(code) or [],
             "err": b.get("err")}
+
+
+def _book_price(code: str, side: str, fallback: float):
+    """THE PRICE COMES FROM THE ORDER BOOK (boss 2026-09-03 10:5x: "suggested
+    price must be in the Kiwoom waiting list - for selling one step below the
+    most top volume, for buying we should offer top; now it suggests unusual
+    prices like 356666666").
+
+    It was quoting the engine's slice AVERAGE - ₩83,166.67 for 한화오션 - which
+    is not a price a person can place. His standing law (08-11) is to stand one
+    tick IN FRONT of the biggest wall: buy one tick above the largest bid wall
+    so we fill before it, sell one tick under the largest ask wall so we clear
+    before it. Returns (price, why_ko, why_en); falls back to a tick-rounded
+    live price when no book has arrived yet."""
+    from services.kiwoom_rules import krx_tick
+    try:
+        from services.kiwoom_tape import load_book, _day
+        snaps = load_book(code, _day()) or []
+        if snaps:
+            b = snaps[-1]
+            side_rows = (b.get("bids") or []) if side == "BUY" else (b.get("asks") or [])
+            rows = [(float(px), float(q)) for px, q in side_rows if px and q]
+            if rows:
+                wall_px, wall_q = max(rows, key=lambda r: r[1])
+                tk = krx_tick(wall_px) or 1
+                if side == "BUY":
+                    out = wall_px + tk
+                    ko = (f"매수벽 최대 ₩{wall_px:,.0f}({wall_q:,.0f}주) 바로 한 호가 위 "
+                          f"₩{out:,.0f} — 벽 앞에 서서 먼저 체결되게 합니다.")
+                    en = (f"One tick above the biggest bid wall ₩{wall_px:,.0f} "
+                          f"({wall_q:,.0f} sh) → ₩{out:,.0f}, so we fill in front of it.")
+                else:
+                    out = wall_px - tk
+                    ko = (f"매도벽 최대 ₩{wall_px:,.0f}({wall_q:,.0f}주) 바로 한 호가 아래 "
+                          f"₩{out:,.0f} — 벽보다 먼저 팔리게 합니다.")
+                    en = (f"One tick below the biggest ask wall ₩{wall_px:,.0f} "
+                          f"({wall_q:,.0f} sh) → ₩{out:,.0f}, so we sell ahead of it.")
+                return float(out), ko, en
+    except Exception:
+        pass
+    tk = krx_tick(fallback) or 1
+    px = float(int(round(fallback / tk)) * tk)
+    return px, (f"호가창이 아직 없어 현재가를 호가 단위로 맞춘 ₩{px:,.0f}입니다."),            (f"No order book yet - the live price rounded to a valid tick, ₩{px:,.0f}.")
+
+
+def _why_qty(price: float, qty: int, budget: int = 10_000_000):
+    """WHY THIS MANY SHARES (boss 2026-09-03 10:5x: 'for price and number of
+    stock also should have explanation')."""
+    cost = price * qty
+    ko = (f"예산 ₩{budget:,} 기준 · ₩{price:,.0f} × {qty:,}주 = ₩{cost:,.0f} "
+          f"— 한 종목에 예산을 넘기지 않는 크기입니다.")
+    en = (f"Budget ₩{budget:,} · ₩{price:,.0f} x {qty:,} sh = ₩{cost:,.0f} "
+          f"— sized so one stock never exceeds the budget.")
+    return ko, en
 
 
 def _why_buy(code: str, name: str, hold: dict):
@@ -558,4 +641,4 @@ def _reconcile_fills(db, st) -> None:
                     st["held"] = [h for h in st.get("held") or []
                                   if h["code"] != l["code"]]
     except Exception as e:
-        log.warning(f"approval reconcile: {str(e)[:80]}")
+        print(f"[approval] reconcile skipped: {str(e)[:80]}")
