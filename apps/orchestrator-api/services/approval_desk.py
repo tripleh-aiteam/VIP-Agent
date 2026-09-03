@@ -232,6 +232,33 @@ def process_steps(db, code: str, name: str) -> list[dict]:
     return steps
 
 
+def _lot_basis(lot: dict) -> float:
+    """The price the -1% selling law measures from.
+
+    When the boss moves a lot's buy clock, the board already shows that
+    moment's REAL market price beside the new time. The selling law must
+    measure from the SAME number or the screen and the behaviour tell two
+    different stories - the exact fault found in trip_editor this morning,
+    where an edited price kept the old percentage. A percentage is not an
+    independent fact. (boss 2026-09-03: "buying time should be 09:17 and if it
+    has a -1% decrease sell all, otherwise keep holding".)
+
+    Display and behaviour now share one basis; the accounting lot is still
+    never rewritten."""
+    base = float(lot.get("price") or 0)
+    try:
+        ov = time_overrides().get(str(lot.get("code") or "")) or {}
+        at = str(ov.get("at") or "")[:5]
+        if not at:
+            return base
+        if ov.get("frm") and str(lot.get("at") or "")[:5] not in (ov["frm"], at):
+            return base
+        px = _px_at_cached(str(lot.get("code")), at)
+        return float(px) if px else base
+    except Exception:
+        return base
+
+
 def _add_lot(st, code, name, qty, price, sug_at=None, at=None) -> None:
     """ONE POSITION PER STOCK (boss's standing law: we do not buy before we
     sell). Two places open a position - the approval itself, and the reconciler
@@ -467,7 +494,7 @@ def scan(db) -> dict:
             # The 알고3 exit mirror ('rise ended', peak-drop, shelf…) is GONE
             # from this desk; the one and only sell trigger is the -1% law.
             if lot:
-                pnl9 = (px / float(lot["price"]) - 1) * 100
+                pnl9 = (px / _lot_basis(lot) - 1) * 100
                 if pnl9 > -1.0:
                     continue                      # otherwise: HOLD, always
                 if ("SELL", code) in pending_codes:
@@ -479,11 +506,11 @@ def scan(db) -> dict:
                 # and total decrease -1%, then sold out — this is our rule")
                 _rs9 = [f"🔵 팔 때입니다 — 상승이 멈추고 하락으로 돌아서 매수가 대비 -1%에 닿았습니다 ({pnl9:+.2f}%)",
                         "① 계속 오르던 흐름이 멈추고 내려가기 시작했습니다.",
-                        f"② 매수가 ₩{float(lot['price']):,.0f} → 지금 ₩{px:,.0f} — 총 하락이 -1%에 도달했습니다.",
+                        f"② 매수가 ₩{_lot_basis(lot):,.0f} → 지금 ₩{px:,.0f} — 총 하락이 -1%에 도달했습니다.",
                         "③ 우리의 규칙 — 상승이 끝나고 총 -1% 하락이면 전량 매도합니다. 규칙대로 팝니다."]
                 _rse9 = [f"🔵 TIME TO SELL — the rise stopped, turned down, and reached -1% below our buy ({pnl9:+.2f}%)",
                          "① The continuous rise has stopped and price started to decrease.",
-                         f"② Bought ₩{float(lot['price']):,.0f} → now ₩{px:,.0f} — the total decrease reached -1%.",
+                         f"② Bought ₩{_lot_basis(lot):,.0f} → now ₩{px:,.0f} — the total decrease reached -1%.",
                          "③ Our rule — when the rise ends and the total fall hits -1%, we sell it all. Sold by the rule."]
                 _sp9, _sko9, _sen9 = _book_price(code, "SELL", px)
                 _rs9.append("💰 왜 이 가격인가 — " + _sko9)
