@@ -692,6 +692,32 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
         score_en = " · ".join(pe) if pe else None
     except Exception:
         pass
+    # 🤖 THE MENU 3 AGENT JOINS THE CONVERSATION (boss 2026-09-03 16:0x: "in
+    # menu 3 also I wanna connect with chatbot — if I ask buy SK하이닉스 it
+    # should talk and discuss"): the approval desk's own gate verdict for this
+    # stock rides in the confirmation, so chat and board speak with one voice.
+    m3_ko = m3_en = None
+    if side == "BUY":
+        try:
+            from routers.approval import _BRAIN_CACHE
+            _bd = (_BRAIN_CACHE or {}).get("data") or {}
+            _ent = next((e for e in (_bd.get("six") or []) + (_bd.get("universe") or [])
+                         if str(e.get("code")) == code), None)
+            if _ent:
+                if _ent.get("pass"):
+                    m3_ko = ("🤖 메뉴3 에이전트 의견: ✅ 모든 관문 통과 — "
+                             "메뉴3 기준으로도 살 수 있는 자리입니다.")
+                    m3_en = ("🤖 Menu 3 agent's view: ✅ all gates passed — "
+                             "a place to buy by the desk's own rules too.")
+                else:
+                    _sh9 = _ent.get("no_buy_short") or "관문 미통과"
+                    _she9 = _ent.get("no_buy_short_en") or _sh9
+                    m3_ko = (f"🤖 메뉴3 에이전트 의견: ⛔ {_sh9} — "
+                             f"그래도 진행할지는 사장님의 결정입니다.")
+                    m3_en = (f"🤖 Menu 3 agent's view: ⛔ {_she9} — "
+                             f"proceeding anyway is your call.")
+        except Exception:
+            pass
     # ⚠️ LOSS WARNING on sells below break-even (2026-08-26: a whole-position sell
     # queued BELOW the average cost and the bot never said a word)
     be_ko = be_en = None
@@ -743,6 +769,8 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
             L.append(f"· {score_en}")
         if warn_en:
             L.append(warn_en)
+        if m3_en:
+            L.append(m3_en)
         if be_en:
             L.append(be_en)
         L += ["", f"**Do you really want to {side.lower()}?** Reply **yes** to execute · "
@@ -777,6 +805,8 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
             L.append(f"· {score_ko}")
         if warn_ko:
             L.append(warn_ko)
+        if m3_ko:
+            L.append(m3_ko)
         if be_ko:
             L.append(be_ko)
         L += ["", f"**정말 {side_ko}할까요?** 실행하려면 **네**, 취소는 **아니요** 라고 답해 주세요 "
@@ -1233,6 +1263,12 @@ def finish(db, word: str) -> Optional[str]:
                                   order_type="market", source="chatbot", direct=True)
                 if res.get("ok"):
                     f9 = float(res.get("fill_price") or o.get("px") or 0)
+                    try:
+                        from services.approval_desk import chat_mirror
+                        chat_mirror(o["code"], o["name"], p["side"],
+                                    int(o["qty"]), f9)
+                    except Exception:
+                        pass
                     lines.append(f"· ✅ {o['name']}: {int(o['qty']):,}"
                                  + ("주" if not en else " sh") + f" @ ₩{f9:,.0f}")
                 else:
@@ -1352,6 +1388,14 @@ def finish(db, word: str) -> Optional[str]:
         log.warning(f"chat_trade order failed: {err}")
         return (f"⚠️ 주문 실패: {err}" if not en else f"⚠️ Order failed: {err}")
     fill = res.get("fill_price") or res.get("live_price") or p.get("px")
+    # 🖥 the Menu 3 board hears the chat too (boss 2026-09-03 16:0x)
+    _m3done = False
+    try:
+        from services.approval_desk import chat_mirror
+        _m3done = chat_mirror(p["code"], p["name"], p["side"],
+                              int(p["qty"]), float(fill))
+    except Exception:
+        pass
     pos = _position_qty(db, p["code"])
     L = []
     if en:
@@ -1359,7 +1403,8 @@ def finish(db, word: str) -> Optional[str]:
                  f"(total ~₩{fill * p['qty']:,.0f})")
         if res.get("realized_pnl") is not None:
             L.append(f"💰 Realized P&L: ₩{res['realized_pnl']:,.0f} ({res.get('realized_pnl_pct', 0):+.2f}%)")
-        L.append(f"📒 Position now: {pos:,} shares · recorded as a 💬 chatbot order in the desk history.")
+        L.append(f"📒 Position now: {pos:,} shares · recorded as a 💬 chatbot order in the desk history."
+                 + (" Also on the 🖥 Menu 3 board (holding list + history)." if _m3done else ""))
         L.append("")
         L.append(_desk_links(True))
     else:
@@ -1367,7 +1412,8 @@ def finish(db, word: str) -> Optional[str]:
                  f"(총 ~₩{fill * p['qty']:,.0f})")
         if res.get("realized_pnl") is not None:
             L.append(f"💰 실현 손익: ₩{res['realized_pnl']:,.0f} ({res.get('realized_pnl_pct', 0):+.2f}%)")
-        L.append(f"📒 현재 보유: {pos:,}주 · 데스크 기록에 💬 챗봇(chatbot) 주문으로 남았습니다.")
+        L.append(f"📒 현재 보유: {pos:,}주 · 데스크 기록에 💬 챗봇(chatbot) 주문으로 남았습니다."
+                 + (" 🖥 메뉴3 보드(보유 목록·매매 기록)에도 함께 기록되었습니다." if _m3done else ""))
         L.append("")
         L.append(_desk_links(False))
     return "\n".join(L)

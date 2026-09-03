@@ -527,11 +527,12 @@ def check_limit_orders(db) -> int:
     """Fill OPEN limit orders whose trigger the live price has touched. Returns fills."""
     _ensure(db)
     rows = db.execute(text(
-        "SELECT id, ticker, name, side, qty, limit_price FROM paper_desk_orders "
+        "SELECT id, ticker, name, side, qty, limit_price, COALESCE(source,'') "
+        "FROM paper_desk_orders "
         "WHERE status='OPEN' AND order_type='limit' ORDER BY id")).fetchall()
     fills = 0
     price_cache: dict[str, Optional[float]] = {}
-    for oid, ticker, name, side, qty, lp in rows:
+    for oid, ticker, name, side, qty, lp, src9 in rows:
         if ticker not in price_cache:
             price_cache[ticker], _ = _live_price(ticker)
         px = price_cache[ticker]
@@ -545,6 +546,15 @@ def check_limit_orders(db) -> int:
             res = _fill(db, oid, ticker, name, side, int(qty), px)
             if res.get("status") == "FILLED":
                 fills += 1
+                # 🖥 a chat limit that fills LATER reaches the Menu 3 board too
+                # (boss 2026-09-03 16:0x: chat and Menu 3 are one desk)
+                if src9 in ("chat", "chatbot"):
+                    try:
+                        from services.approval_desk import chat_mirror
+                        chat_mirror(ticker, name, side, int(qty),
+                                    float(res.get("fill_price") or px))
+                    except Exception:
+                        pass
             continue
         # THE GIVE-UP LAW (boss 2026-09-03: "if we offer price and it will not
         # reach, it should give up and cancel"): once the live price runs away

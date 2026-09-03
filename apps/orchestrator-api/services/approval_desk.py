@@ -106,6 +106,55 @@ def held(st: Optional[dict] = None) -> list[dict]:
     return list((st if st is not None else _load()).get("held") or [])
 
 
+def chat_mirror(code: str, name: str, side: str, qty: int, fill: float) -> bool:
+    """A 💬 chatbot fill on a Menu 3 room stock joins the desk's own board
+    (boss 2026-09-03 16:0x: 'in menu 3 also I wanna connect with chatbot —
+    we could buy or sell using chatbot also'). BUYs join the holding list,
+    SELLs close the lot with the full round-trip fields; the history row is
+    marked 💬 so the boards tell who ordered. Returns True when mirrored."""
+    try:
+        codes = {c for c, _n, _s in desk_codes()}
+    except Exception:
+        codes = {c for c, _n in SIX}
+    if str(code) not in codes:
+        return False
+    st = _load()
+    _trip: dict = {}
+    if side == "BUY":
+        st.setdefault("held", []).append(
+            {"code": code, "name": name, "qty": int(qty), "price": float(fill),
+             "sug_at": _hhmm(), "at": _hhmm(), "via": "chat"})
+    else:
+        _lot = next((h for h in st.get("held") or [] if h["code"] == code), None)
+        _bp9 = _bat9 = None
+        if _lot and _lot.get("price"):
+            _bp9, _bat9 = float(_lot["price"]), _lot.get("at")
+        else:
+            # the scanner's save can race a fresh chat lot out of held — the
+            # BUY log row survives, so the round trip pairs from there
+            _lb9 = next((l for l in reversed(st.get("log") or [])
+                         if l.get("code") == code and l.get("side") == "BUY"
+                         and l.get("fill")), None)
+            if _lb9:
+                _bp9, _bat9 = float(_lb9["fill"]), _lb9.get("at")
+        if _bp9:
+            _trip = {"buy_at": _bat9, "buy_price": _bp9,
+                     "pnl_pct": round((float(fill) / _bp9 - 1) * 100, 2),
+                     "pnl_won": round((float(fill) - _bp9) * int(qty))}
+        st["held"] = [h for h in st.get("held") or [] if h["code"] != code]
+    st.setdefault("log", []).append(
+        {"id": int(time.time() * 1000) % 10**9, "ts": time.time(),
+         "hhmm": _hhmm(), "code": code, "name": name, "side": side,
+         "reasons": ["💬 챗봇 주문 — 사장님이 채팅으로 직접 지시하셨습니다."],
+         "reasons_en": ["💬 Chatbot order — the boss ordered it in chat."],
+         "price": float(fill), "qty": int(qty), "score": None, **_trip,
+         "decision": "승인", "at": _hhmm(), "dealt": True, "fill": float(fill),
+         "via": "chat"})
+    st["log"] = st["log"][-200:]
+    _save(st)
+    return True
+
+
 def process_steps(db, code: str, name: str) -> list[dict]:
     """The room's 'what the agent is doing' — REAL numbers, easy words.
     Bilingual (boss 2026-09-03: 'in English mode it should be English')."""
@@ -273,9 +322,8 @@ def scan(db) -> dict:
     # now covers every stock the board has an opinion about.
     _rooms9 = list(desk_codes())
     try:
-        from routers.approval import _BRAIN9 as _B9
         _seen9 = {c for c, _n, _s in _rooms9}
-        for _e9 in ((_B9.get("v") or {}).get("six") or []) + ((_B9.get("v") or {}).get("universe") or []):
+        for _e9 in _brain_rows():
             if str(_e9.get("code")) not in _seen9:
                 _rooms9.append((str(_e9.get("code")), _e9.get("name"), _e9.get("score")))
                 _seen9.add(str(_e9.get("code")))
@@ -360,13 +408,24 @@ def scan(db) -> dict:
 
             # ---- BUY: the gates say yes, and we are flat in this stock ----
             if lot or ("BUY", code) in pending_codes:
+                st.setdefault("why_skip", {})[code] = "already held or popup pending"
                 continue                      # 사기 전에 팔지 않는다 - one at a time
             if _working_order(db, code):
-                continue                      # our own limit is still in the book
+                st.setdefault("why_skip", {})[code] = "our limit is still working"
+                continue
             if st.get("asked", {}).get(code):
-                continue                      # this opportunity was already answered
-            if not _gates_pass(code):
-                continue                      # the board's own condition, verbatim
+                st.setdefault("why_skip", {})[code] = "already answered"
+                continue
+            # DRIVEN BY THE BOARD ITSELF (boss 2026-09-03 15:0x: "현대차 says BUY
+            # but the popup is not coming" - twice). Re-testing the gates here
+            # meant two code paths could disagree, and they did. The scan now
+            # asks the board for its OWN verdict: if the card says BUY, the
+            # popup is raised; if it does not, nothing is raised. One source.
+            _ln9 = _lane_of(code)
+            st.setdefault("why_skip", {})[code] = (
+                "lane=" + (_ln9 or "?") + (" -> popup" if _ln9 == "BUY" else ""))
+            if _ln9 != "BUY":
+                continue
             try:
                 from services.checklist_advice import _fresh_stamps
                 if any(str(x.get("stamp")) in ("위험", "악재")
@@ -630,6 +689,34 @@ def apply_time_overrides(held: list, log: list) -> None:
         row["time_fixed"] = True
 
 
+_BRAIN_VIEW = {"v": None}
+
+
+def publish_brain(v: dict) -> None:
+    """The brain hands its finished verdicts DOWN to the scanner (boss
+    2026-09-03 15:1x - the scanner was reading lane='?' for every stock).
+    approval_desk must not import routers.approval to fetch them: routers
+    imports services at start-up, so the reverse import inside a background
+    thread resolved to nothing and every lane came back empty, which is why the
+    board showed eight BUY cards and not one popup was ever raised. The
+    dependency now runs one way only."""
+    _BRAIN_VIEW["v"] = v
+
+
+def _brain_rows() -> list:
+    b = _BRAIN_VIEW.get("v") or {}
+    return (b.get("six") or []) + (b.get("universe") or [])
+
+
+def _lane_of(code: str) -> str:
+    """The board's own verdict for this stock, read from the same object the
+    page renders - so the popup and the card can never diverge."""
+    for e in _brain_rows():
+        if str(e.get("code")) == code:
+            return str(e.get("lane") or "")
+    return ""
+
+
 def _gates_pass(code: str) -> bool:
     """The board's own BUY condition, read from the same place the board reads
     it, so the two can never diverge again (boss 2026-09-03 14:3x)."""
@@ -638,14 +725,9 @@ def _gates_pass(code: str) -> bool:
     # self-call that deadlocked the server this morning, and when it timed out
     # this returned False for every stock - which is exactly why the board
     # showed eight BUY cards and no popup appeared (boss 2026-09-03 14:4x).
-    try:
-        from routers.approval import _BRAIN9
-        b = _BRAIN9.get("v") or {}
-        for e in (b.get("six") or []) + (b.get("universe") or []):
-            if str(e.get("code")) == code:
-                return bool(e.get("pass"))
-    except Exception:
-        pass
+    for e in _brain_rows():
+        if str(e.get("code")) == code:
+            return bool(e.get("pass"))
     return False
 
 
@@ -734,9 +816,7 @@ def _why_buy(code: str, name: str, hold: dict):
     # killed the process twice this morning. The brain already holds these
     # numbers in memory.
     try:
-        from routers.approval import _BRAIN9
-        rows = (((_BRAIN9.get("v") or {}).get("six") or [])
-                + ((_BRAIN9.get("v") or {}).get("universe") or []))
+        rows = _brain_rows()
         me = next((r for r in rows if str(r.get("code")) == code), None)
         if me:
             score, mid, midy = me.get("score"), me.get("mid"), me.get("midy")
