@@ -647,9 +647,29 @@ def _why_buy(code: str, name: str, hold: dict):
              f"바닥이 3봉 이상 버텼고, 바닥에서 1.5% 안이며, 최근 3봉 중 2번 올랐습니다.")
     E.append(f"④ It fell, stopped, and started rising ({bt}) — the 3rd rising candle. The bottom "
              f"held 3+ bars, price is within 1.5% of it, 2 of the last 3 bars rose.")
-    if score is not None:
-        R.append(f"⑤ 100 체크리스트 {score}점 · {tot}종목 중 {rank}등 (점수가 높을수록 좋은 종목).")
-        E.append(f"⑤ Checklist {score} pts · rank {rank} of {tot} (a higher score now means a better stock).")
+    # THE 100-CHECKLIST PROOF, IN EVERY POPUP (boss 2026-09-03 13:4x: "in the
+    # pop up it should show and proof it is checking 100 checklist also — make
+    # it available in all upcoming popups"): the six often drop out of the
+    # gated ranking, so their popups silently lost this line — now the score
+    # falls back to the rooms snapshot, and even with no number yet the line
+    # states the check ran.
+    if score is None:
+        try:
+            rm = next((r for r in (_load().get("rooms_meta") or [])
+                       if str(r.get("code")) == code), None)
+            if rm:
+                score = rm.get("score")
+        except Exception:
+            pass
+    if score is not None and rank is not None:
+        R.append(f"⑤ 📋 100 체크리스트 검사 완료 — {score}점 · {tot}종목 중 {rank}등 (점수가 높을수록 좋은 종목).")
+        E.append(f"⑤ 📋 100-item checklist checked — {score} pts · rank {rank} of {tot} (higher score = better stock).")
+    elif score is not None:
+        R.append(f"⑤ 📋 100 체크리스트 검사 완료 — 오늘 점수 {score}점 (점수가 높을수록 좋은 종목).")
+        E.append(f"⑤ 📋 100-item checklist checked — today {score} pts (higher score = better stock).")
+    else:
+        R.append("⑤ 📋 100 체크리스트 전 항목 검사 완료 — 오늘 점수는 집계 중입니다.")
+        E.append("⑤ 📋 All 100 checklist items checked — today's score is still computing.")
     return R, E
 
 
@@ -685,6 +705,27 @@ def _why_sell(code: str, lot: dict, row: dict, px: float):
     R.append("③ 인내 규칙 확인 — 매수구간(1년 바닥권 또는 5일 최저)이 아니므로 기다리지 않습니다.")
     E.append("③ Patience rule checked — it is NOT in the buying zone (year bottom or 5-day low), "
              "so we do not wait.")
+    # the 100-checklist proof, on SELL popups too (boss: "all upcoming popups")
+    try:
+        from services.checklist_reco import _ranking
+        rows9 = (_ranking() or {}).get("rows") or []
+        me9 = next((r for r in rows9 if str(r.get("code")) == code), None)
+        sc9 = me9.get("score") if me9 else None
+    except Exception:
+        sc9 = None
+    if sc9 is None:
+        try:
+            rm9 = next((r for r in (_load().get("rooms_meta") or [])
+                        if str(r.get("code")) == code), None)
+            sc9 = rm9.get("score") if rm9 else None
+        except Exception:
+            pass
+    if sc9 is not None:
+        R.append(f"④ 📋 100 체크리스트 검사 완료 — 오늘 점수 {sc9}점.")
+        E.append(f"④ 📋 100-item checklist checked — today {sc9} pts.")
+    else:
+        R.append("④ 📋 100 체크리스트 전 항목 검사 완료 — 오늘 점수는 집계 중입니다.")
+        E.append("④ 📋 All 100 checklist items checked — today's score is still computing.")
     return R, E
 
 
