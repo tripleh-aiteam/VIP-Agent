@@ -1019,8 +1019,31 @@ def scan(db) -> dict:
 
             reasons_en.append(f"Proposal: ₩{_bp:,.0f} · {int(_bq):,} shares "
                               f"(Algo 3's own entry price and size)")
+            # THE GUARD SPEAKS LAST (boss 2026-09-04: "create a guard or
+            # another agent to check before sending the popup - if you send
+            # 09:07 and I check Kiwoom and it is not a buying condition, that
+            # is wrong. CONSISTENCY MOST IMPORTANT"). Everything above this
+            # line is cached to some degree; this re-derives the time-critical
+            # facts from the freshest price and tape at the instant of sending
+            # and refuses if they no longer hold.
+            _vok9, _vk9, _ve9, _vs9 = verify_now(code, "BUY")
+            if not _vok9:
+                st.setdefault("why_skip", {})[code] = "guard refused: " + (_ve9 or "")[:70]
+                st.setdefault("log", []).append(
+                    {"id": int(time.time() * 1000) % 10**9, "ts": time.time(),
+                     "hhmm": _hhmm(), "code": code, "name": name, "side": "BUY",
+                     "decision": "보류", "at": _hhmm(), "dealt": None,
+                     "why_gone": _vk9, "why_gone_en": _ve9, "guard": _vs9,
+                     "reasons": ["🛡 발송 직전 재확인에서 걸렸습니다 — " + _vk9],
+                     "reasons_en": ["🛡 Stopped by the check run at the moment "
+                                    "of sending - " + _ve9]})
+                st["log"] = st["log"][-200:]
+                continue
             _sg9 = _mk_sug(st, code, name, "BUY", reasons, _bp, int(_bq), score,
                            reasons_en=reasons_en)
+            # the popup carries the numbers it was sent on, so it can be
+            # checked against Kiwoom at that exact minute
+            _sg9["guard"] = _vs9
             _sg9['algo_t'] = _algo_t
         except Exception as e:
             log.warning(f"approval scan {code}: {str(e)[:80]}")
@@ -1476,6 +1499,124 @@ def _why_qty(price: float, qty: int, budget: int = 10_000_000):
     en = (f"Budget ₩{budget:,} · ₩{price:,.0f} x {qty:,} sh = ₩{cost:,.0f} "
           f"— sized so one stock never exceeds the budget.")
     return ko, en
+
+
+def verify_now(code: str, side: str = "BUY", day: str = "",
+               at_px: float = 0.0, upto: str = "") -> tuple:
+    """THE SECOND PAIR OF EYES, RUN AT THE MOMENT OF SENDING.
+
+    Boss 2026-09-04: "you have to create like a guard or another agent to check
+    before sending the popup - is it in the buying condition, is it in the
+    selling condition, then it should send. For example if you send 09:07 and
+    I check Kiwoom and it is not a buying condition, that is wrong.
+    CONSISTENCY MOST IMPORTANT."
+
+    Everything upstream is CACHED: the brain recomputes every 6s, the scan runs
+    on its own clock, the board's verdict is published a cycle later. On a fast
+    tape those seconds are enough for a stock to leave the condition it was
+    judged in - and the popup then arrives claiming something the market no
+    longer shows. This re-derives the time-critical facts from the FRESHEST
+    price and tape at the instant the popup would go out, and refuses to send
+    if they no longer hold.
+
+    Returns (ok, why_ko, why_en, snapshot). The snapshot travels with the popup
+    so it can prove which numbers it was sent on."""
+    from services.paper_desk import fast_price
+    from services.kiwoom_tape import load as _ld, bars_time as _bt, _day as _dy
+    # day/at_px/upto exist so the guard can be REPLAYED against a past
+    # session and proved right or wrong on cases whose answer we already know
+    _d0 = day or _dy()
+    snap = {"at": upto or _hhmm(), "code": code}
+    px = float(at_px or 0)
+    if not px:
+        try:
+            px = float((fast_price(code) or [None])[0] or 0)
+        except Exception:
+            px = 0.0
+    if not px:
+        return False, "실시간 가격을 읽지 못했습니다 — 보내지 않습니다.",                "no live price could be read - not sending.", snap
+    snap["px"] = px
+    try:
+        bars = _bt(_ld(code, _d0), 60)
+        if upto:
+            bars = [b for b in bars if str(b["hhmm"])[:5] <= upto]
+    except Exception:
+        bars = []
+    if not bars:
+        return False, "오늘 분봉이 없어 확인할 수 없습니다 — 보내지 않습니다.",                "no minute tape today, cannot verify - not sending.", snap
+
+    if side == "SELL":
+        return True, "", "", snap        # the sell law is checked by its own rule
+
+    hi = max(b["high"] for b in bars)
+    lo = min(b["low"] for b in bars)
+    op = bars[0]["open"]
+    snap.update({"high": hi, "low": lo, "open": op})
+
+    # ① 갭상승 — measured from yesterday's LAST price, after-hours included
+    try:
+        from services.kiwoom_rules import _gap_ref
+        ref = float(_gap_ref(code, _d0) or 0)
+    except Exception:
+        ref = 0.0
+    if ref and op:
+        gap = (op / ref - 1) * 100
+        snap["gap"] = round(gap, 2)
+        if gap >= 1.5:
+            back = any(b["low"] <= ref for b in bars)
+            reds = 0
+            done = False
+            started = False
+            for b in bars:
+                if b["low"] <= ref:
+                    started = True
+                if not started:
+                    continue
+                if b["close"] > b["open"]:
+                    reds += 1
+                elif abs(b["close"] / b["open"] - 1) * 100 > 0.2:
+                    reds = 0
+                if reds >= 3:
+                    done = True
+                    break
+            if not (back and done):
+                return (False,
+                        f"갭상승 +{gap:.1f}% — 아직 어제 마지막 가격 ₩{ref:,.0f}까지 "
+                        f"{'내려왔지만 양봉 3개가 안 나왔습니다' if back else '내려오지 않았습니다'}. "
+                        f"보내지 않습니다.",
+                        f"gap-up +{gap:.1f}% - it has "
+                        f"{'come back to ' if back else 'NOT come back to '}"
+                        f"yesterday's last price of {ref:,.0f}"
+                        f"{' but three red candles have not formed' if back else ''}. "
+                        f"Not sending.", snap)
+
+    # ② 오늘 위치 — never chase the top of the day
+    if hi > lo:
+        rng = (hi - lo) / lo * 100
+        pos = (px - lo) / (hi - lo) * 100
+        snap.update({"pos": round(pos, 1), "range": round(rng, 2)})
+        if rng >= 0.8 and pos >= 85.0:
+            return (False,
+                    f"지금 오늘 움직임의 {pos:.0f}% 지점(고가권)입니다 — 따라 사지 "
+                    f"않습니다. 보내지 않습니다.",
+                    f"it stands at {pos:.0f}% of today's range - the top of the "
+                    f"day. We do not chase. Not sending.", snap)
+
+    # ③ the two average lines
+    try:
+        from services.kiwoom_rules import _daily20
+        d = _daily20(code, _d0)
+        ma20, mayr = float(d[3] or 0), float(d[4] or 0)
+        snap.update({"ma20": ma20, "mayr": mayr})
+        if ma20 and mayr and px > ma20 and px > mayr:
+            return (False,
+                    f"지금 ₩{px:,.0f}은 1개월 평균(₩{ma20:,.0f})과 1년 평균"
+                    f"(₩{mayr:,.0f}) 둘 다 위입니다 — 보내지 않습니다.",
+                    f"at {px:,.0f} it is above BOTH the 1-month ({ma20:,.0f}) "
+                    f"and 1-year ({mayr:,.0f}) averages. Not sending.", snap)
+    except Exception:
+        pass
+    return True, "", "", snap
 
 
 def trade_story(code: str, name: str = "") -> dict:
