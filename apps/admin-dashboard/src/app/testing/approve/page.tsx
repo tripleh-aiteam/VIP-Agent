@@ -101,6 +101,7 @@ export default function ApprovePage() {
   const [histOpen, setHistOpen] = useState(true);              // 📜 history fold (boss: closeable)
   const [rzOpen, setRzOpen] = useState<string | null>(null);   // opened why-we-traded rows
   const [ckOpen, setCkOpen] = useState<string | null>(null);   // opened 100-checklist detail
+  const [popTop, setPopTop] = useState<number | null>(null);   // which popup is up front
   const [money3, setMoney3] = useState(false);                 // 💰 money law: hidden by default (2026-08-19)
   const [open, setOpen] = useState<string | null>(null);          // opened room code
   const [steps, setSteps] = useState<Step[]>([]);
@@ -1019,10 +1020,37 @@ export default function ApprovePage() {
             </table>}
       </div>
 
-      {/* ─ suggestion POPUPS ─ */}
+      {/* ─ suggestion POPUPS — ONE full card at a time (boss 2026-09-03 17:3x:
+          "if we have 2 popups I cannot see the top one — reorganize"): the
+          reasons made the cards tall, so extra proposals fold into slim
+          clickable bars above the active card; the stack itself scrolls if
+          even one card outgrows the screen. ─ */}
       <div style={{ position: "fixed", right: 16, bottom: 16, width: 340, zIndex: 60,
-                    display: "flex", flexDirection: "column", gap: 10 }}>
-        {(feed?.pending || []).slice(-3).map((p) => {
+                    display: "flex", flexDirection: "column", gap: 8,
+                    maxHeight: "calc(100vh - 32px)", overflowY: "auto" }}>
+        {(feed?.pending || []).map((p, _pi, _arr) => {
+          const actId = _arr.some((x) => x.id === popTop) ? popTop : _arr[_arr.length - 1]?.id;
+          if (p.id !== actId) {
+            // a folded proposal: one slim bar — click to bring it up front
+            return (
+              <div key={p.id} onClick={() => setPopTop(p.id)}
+                style={{ border: `2px solid ${p.side === "BUY" ? "#e53935" : "#1e88e5"}`,
+                         borderRadius: 10, padding: "8px 11px", background: "#ffffff",
+                         color: "#12161b", cursor: "pointer", display: "flex",
+                         alignItems: "center", boxShadow: "0 6px 18px rgba(0,0,0,0.3)" }}>
+                <b style={{ fontSize: 13, color: p.side === "BUY" ? "#c62828" : "#1565c0" }}>
+                  {p.side === "BUY" ? "🔴" : "🔵"} {p.name}</b>
+                <span style={{ marginLeft: 7, fontSize: 11.5, color: "#5b6570" }}>
+                  {W(p.price)} × {p.qty.toLocaleString()}</span>
+                <span style={{ marginLeft: "auto", fontSize: 11.5, fontWeight: 800, color: "#6a1b9a" }}>
+                  {p.hhmm} · {t("보기 ▲", "view ▲")}</span>
+              </div>);
+          }
+          return null;
+        })}
+        {(feed?.pending || []).filter((p, _pi, _arr) =>
+            p.id === (_arr.some((x) => x.id === popTop) ? popTop : _arr[_arr.length - 1]?.id)
+          ).map((p) => {
           // EDITABLE SUGGESTION, READABLE POPUP (boss 2026-09-03 09:4x: "font is
           // black so it should be white, cancel is not visible, and the number of
           // stock and price must be editable - it is a suggestion, if we do not
