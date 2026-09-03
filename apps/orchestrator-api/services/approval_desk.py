@@ -268,6 +268,30 @@ def scan(db) -> dict:
     pending_codes = {(p["side"], p["code"]) for p in st["pending"]}
     _rooms9 = desk_codes()
     _board9 = _algo3_board([c for c, _n, _s in _rooms9])
+    # A POPUP LIVES ONLY WHILE ITS REASON DOES (boss 2026-09-03 14:1x). A BUY
+    # proposal stands only while the engine still holds that position; a SELL
+    # proposal only while we still own the stock and the engine has closed it.
+    # The moment either stops being true the popup is withdrawn, so the board
+    # and the popup can never tell the room two different things.
+    _live9 = set((_board9.get("hold") or {}).keys())
+    _ourc9 = {h["code"] for h in st.get("held") or []}
+    _keep9, _drop9 = [], []
+    for _p9 in (st.get("pending") or []):
+        _c9, _sd9 = str(_p9.get("code")), str(_p9.get("side"))
+        if _sd9 == "BUY" and _c9 not in _live9:
+            _drop9.append(_p9)
+        elif _sd9 == "SELL" and (_c9 not in _ourc9 or _c9 in _live9):
+            _drop9.append(_p9)
+        else:
+            _keep9.append(_p9)
+    if _drop9:
+        st["pending"] = _keep9
+        for _p9 in _drop9:
+            st.setdefault("log", []).append(
+                {**_p9, "decision": "자동 취소", "at": _hhmm(),
+                 "dealt": None,
+                 "why_gone": "조건이 사라져 제안을 거둡니다 / condition no longer true"})
+        st["log"] = st["log"][-200:]
     for code, name, score in _rooms9:
         try:
             px, chg, _t, _s = fast_price(code)
@@ -290,25 +314,31 @@ def scan(db) -> dict:
             a_hold = view.get("hold")
             lot = next((h for h in st["held"] if h["code"] == code), None)
 
-            # ---- SELL: we hold it, 알고3 has closed it ----
-            if lot and not a_hold:
+            # ---- SELL: ONLY at -1% below OUR buy price (boss 2026-09-03 14:4x,
+            # the 한화오션 10:50 case: "I do not tell you sell in this kind of
+            # condition, I do not see even -1% decrease. Remove the selling
+            # part — if there is -1% decrease sell, otherwise HOLD it").
+            # The 알고3 exit mirror ('rise ended', peak-drop, shelf…) is GONE
+            # from this desk; the one and only sell trigger is the -1% law.
+            if lot:
+                pnl9 = (px / float(lot["price"]) - 1) * 100
+                if pnl9 > -1.0:
+                    continue                      # otherwise: HOLD, always
                 if ("SELL", code) in pending_codes:
                     continue
                 if time.time() - st["cool"].get(f"SELL:{code}", 0) <= _SELL_COOLDOWN:
                     continue
-                rws = view.get("rows") or []
-                last = None
-                for r in rws:
-                    if last is None or str(r.get("sell_t") or "") > str(last.get("sell_t") or ""):
-                        last = r
-                _rs9, _rse9 = _why_sell(code, lot, last, px)
+                _rs9 = [f"🔵 팔 때입니다 — 매수가 대비 -1% 아래로 떨어졌습니다 ({pnl9:+.2f}%)",
+                        f"① 매수가 ₩{float(lot['price']):,.0f} → 지금 ₩{px:,.0f} ({pnl9:+.2f}%)",
+                        "② 사장님의 매도법 — 이 데스크는 -1% 하락일 때만 팝니다. 그 외에는 무조건 보유합니다."]
+                _rse9 = [f"🔵 TIME TO SELL — it fell -1% below our buy price ({pnl9:+.2f}%)",
+                         f"① Bought ₩{float(lot['price']):,.0f} → now ₩{px:,.0f} ({pnl9:+.2f}%)",
+                         "② The boss's selling law — this desk sells ONLY on a -1% fall. Anything else, we HOLD."]
                 _sp9, _sko9, _sen9 = _book_price(code, "SELL", px)
                 _rs9.append("💰 왜 이 가격인가 — " + _sko9)
                 _rse9.append("💰 WHY THIS PRICE — " + _sen9)
-                _rs9.append(f"🔢 왜 이 수량인가 — 보유 {lot['qty']:,}주 전량입니다 "
-                            f"(알고3는 조각내지 않고 한 번에 정리합니다).")
-                _rse9.append(f"🔢 WHY THIS QUANTITY — the whole holding, {lot['qty']:,} sh "
-                             f"(알고3 exits a ride in one piece, not in slices).")
+                _rs9.append(f"🔢 왜 이 수량인가 — 보유 {lot['qty']:,}주 전량입니다.")
+                _rse9.append(f"🔢 WHY THIS QUANTITY — the whole holding, {lot['qty']:,} sh.")
                 px = _sp9
                 _mk_sug(st, code, name, "SELL", _rs9, px, lot["qty"], score,
                         reasons_en=_rse9)

@@ -337,7 +337,8 @@ export default function ApprovePage() {
                 const reach = failAt >= 0 ? Math.min(cursor, failAt + 1) : Math.min(cursor, STEP.length);
                 const done = failAt < 0 && cursor >= STEP.length;
                 const colour = lane === "SELL" ? "#e65100" : lane === "HOLD" ? "#1565c0"
-                             : failAt >= 0 ? "#c62828" : done ? "#2e7d32" : "#6a1b9a";
+                             : failAt >= 0 ? "#c62828"
+                             : lane === "BUY" ? "#c62828" : done ? "#2e7d32" : "#6a1b9a";
                 return (
                   <div key={u.code} style={{ border: `2px solid ${colour}`, borderRadius: 10,
                       padding: "9px 10px", background: "var(--card,#fff)" }}>
@@ -391,6 +392,10 @@ export default function ApprovePage() {
                             {it.bad ? "✗" : "✓"} {it.k} <b>{it.v}</b>
                           </div>))}
                       </div>)}
+                    {/* BUY only when a popup really exists; a stock that has
+                        cleared the gates but is still waiting for its entry
+                        signal says 준비, so the board can never promise a popup
+                        that is not there (boss 2026-09-03 14:1x) */}
                     {done && lane === "BUY" && (
                       <div style={{ marginTop: 6, padding: "7px 8px", borderRadius: 8,
                                     background: "#c62828", textAlign: "center" }}>
@@ -398,8 +403,18 @@ export default function ApprovePage() {
                                       letterSpacing: ".06em" }}>
                           {t("매수 BUY", "BUY")}</div>
                         <div style={{ fontSize: 9.5, color: "#ffe3e3", fontWeight: 700 }}>
-                          {t("모든 관문 통과 — 즉시 팝업 제안",
-                             "all gates passed — popup sent immediately")}</div>
+                          {t("진입 신호 발생 — 팝업으로 승인 요청 중",
+                             "entry signal fired — asking approval by popup")}</div>
+                      </div>)}
+                    {done && lane === "READY" && (
+                      <div style={{ marginTop: 6, padding: "6px 8px", borderRadius: 8,
+                                    background: "rgba(46,125,50,0.12)",
+                                    border: "1.5px solid #2e7d32", textAlign: "center" }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 900, color: "#2e7d32" }}>
+                          {t("준비 완료 READY", "READY")}</div>
+                        <div style={{ fontSize: 9.5, color: "#2e7d32", fontWeight: 700 }}>
+                          {t("모든 관문 통과 — 진입 신호(급락 후 3번째 양봉) 대기",
+                             "all gates passed — waiting for the entry signal")}</div>
                       </div>)}
                     {!done && failAt < 0 && (
                       <div style={{ fontSize: 10.5, marginTop: 4, opacity: 0.6 }}>

@@ -500,6 +500,14 @@ def _brain_compute():
     # hold and which to sell - like a simulation"). A stock we own is judged by
     # the SELL rules; everything else by the BUY gates. Nothing is in two lanes.
     _own = {r["code"]: r for r in sell_rows}
+    # which stocks the ENGINE is actually in right now - the board may only
+    # say BUY for these, because only these produce a popup
+    _eng = set()
+    try:
+        from services.approval_desk import _algo3_board, desk_codes as _dc9
+        _eng = set((_algo3_board([c for c, _n, _s in _dc9()]).get("hold") or {}).keys())
+    except Exception:
+        pass
     for e in out["six"] + out["universe"]:
         o = _own.get(e["code"])
         if o:
@@ -507,13 +515,26 @@ def _brain_compute():
             e["lane_why"] = o.get("why")
             e["lane_why_en"] = o.get("why_en")
             e["pnl"] = o.get("pnl")
-        else:
-            e["lane"] = "BUY" if e.get("pass") else "NOBUY"
+        elif not e.get("pass"):
+            e["lane"] = "NOBUY"
             e["lane_why"] = e.get("no_buy")
             e["lane_why_en"] = e.get("no_buy_en")
+        elif e["code"] in _eng:
+            # the engine is in it and a popup is live - this is the only state
+            # that may say BUY (boss 2026-09-03 14:1x)
+            e["lane"] = "BUY"
+            e["lane_why"] = "모든 관문 통과 · 진입 신호 발생 — 팝업으로 승인 요청 중"
+            e["lane_why_en"] = ("all gates passed and the entry signal fired - "
+                                "asking your approval by popup")
+        else:
+            e["lane"] = "READY"
+            e["lane_why"] = ("모든 관문 통과 — 진입 신호(급락 후 3번째 양봉)를 "
+                             "기다리는 중입니다")
+            e["lane_why_en"] = ("all gates passed - waiting for the entry signal "
+                                "(the 3rd rise after a fall)")
     out["lanes"] = {k: [e["name"] for e in out["six"] + out["universe"]
                         if e.get("lane") == k]
-                    for k in ("BUY", "NOBUY", "HOLD", "SELL")}
+                    for k in ("BUY", "READY", "NOBUY", "HOLD", "SELL")}
     out["conditions"] = len(out["six"] + out["universe"]) * 6 + len(sell_rows) * 6
     return out
 
