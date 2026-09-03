@@ -509,16 +509,53 @@ def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
         st.setdefault("pending", []).append(p)      # keep the popup, report the error
         _save(st)
         return {"ok": False, "error": res.get("error") or "order failed"}
-    fill = float(res.get("fill_price") or p["price"])
-    if p["side"] == "BUY":
-        st.setdefault("held", []).append({"code": p["code"], "name": p["name"],
-                                          "qty": int(p["qty"]), "price": fill,
-                                          "at": _hhmm()})
-    else:
-        st["held"] = [h for h in st.get("held") or [] if h["code"] != p["code"]]
-    st.setdefault("log", []).append({**p, "decision": "승인", "fill": fill, "at": _hhmm(),
-                                     "pnl": (round((fill / next((h["price"] for h in [p]), fill) - 1) * 100, 2)
-                                             if False else None)})
+    # DEALT OR NOT DEALT (boss 2026-09-03: "if we offer some price it will not
+    # deal — the trading history should have a column like dealt or not"): a
+    # LIMIT approval can queue unfilled. Only a REAL fill joins the holding
+    # list; a queued one logs 미체결 and the scanner reconciles when it fills.
+    fill = res.get("fill_price")
+    queued = (str(res.get("status") or "").upper() == "OPEN") or not fill
+    if not queued:
+        fill = float(fill)
+        if p["side"] == "BUY":
+            st.setdefault("held", []).append({"code": p["code"], "name": p["name"],
+                                              "qty": int(p["qty"]), "price": fill,
+                                              "at": _hhmm()})
+        else:
+            st["held"] = [h for h in st.get("held") or [] if h["code"] != p["code"]]
+    st.setdefault("log", []).append({**p, "decision": "승인", "at": _hhmm(),
+                                     "dealt": (not queued),
+                                     "fill": (fill if not queued else None),
+                                     "oid": res.get("id") or res.get("order_id")})
     st["log"] = st["log"][-200:]
     _save(st)
+    if queued:
+        return {"ok": True, "decision": "queued",
+                "note": f"limit ₩{float(p.get('price') or 0):,.0f} waiting in the book"}
     return {"ok": True, "decision": "approved", "fill": fill}
+
+
+def _reconcile_fills(db, st) -> None:
+    """A 승인-but-미체결 limit that later fills flips to 체결 and joins holdings."""
+    open_logs = [l for l in st.get("log") or []
+                 if l.get("decision") == "승인" and l.get("dealt") is False and l.get("oid")]
+    if not open_logs:
+        return
+    try:
+        from sqlalchemy import text as _sqt
+        for l in open_logs:
+            row = db.execute(_sqt(
+                "SELECT status, fill_price FROM paper_desk_orders WHERE id=:i"),
+                {"i": l["oid"]}).fetchone()
+            if row and str(row[0]) == "FILLED" and row[1]:
+                l["dealt"] = True
+                l["fill"] = float(row[1])
+                if l.get("side") == "BUY":
+                    st.setdefault("held", []).append(
+                        {"code": l["code"], "name": l["name"], "qty": int(l["qty"]),
+                         "price": float(row[1]), "at": _hhmm()})
+                else:
+                    st["held"] = [h for h in st.get("held") or []
+                                  if h["code"] != l["code"]]
+    except Exception as e:
+        log.warning(f"approval reconcile: {str(e)[:80]}")

@@ -173,14 +173,47 @@ def _brain_compute():
     import json as _j, urllib.request as _ur
     from services.kiwoom_tape import WATCH, _day as _kd
     out = {"ok": True, "universe": [], "six": [], "five": [], "day": _kd()}
+    # IN-PROCESS, NEVER OVER HTTP TO OURSELVES (boss 2026-09-03 10:2x: the
+    # background brain never finished. It fetched /paper-desk/daily-pick from
+    # our OWN server, so while the desk was busy the request queued behind the
+    # very work it was waiting on - a self-deadlock. Standalone the same
+    # computation finishes in 51s; inside the server it hung forever. It now
+    # calls the picker directly.
+    # THE CACHED PICK, NOT A FRESH ONE (boss 2026-09-03 10:3x: the background
+    # brain still never finished). Calling daily_pick.pick() directly recomputes
+    # every score from the database - 51s standalone and far longer while the
+    # desk is replaying beside it. The /paper-desk/daily-pick endpoint holds a
+    # 60s cache of exactly this, and the room scanner has been reading it that
+    # way all morning without trouble, so the brain reads it the same way.
     try:
         d = _j.load(_ur.urlopen(
             "http://127.0.0.1:8000/paper-desk/daily-pick", timeout=120))
         rows = d.get("rows") or []
     except Exception as e:
         return {"ok": False, "error": str(e)[:120]}
+    if not rows:
+        return {"ok": False, "error": "no scored rows"}
+    # the zone chips come from the same helper the rooms use
+    try:
+        from services.checklist_reco import _year_zone as _yz9
+        for _r9 in rows:
+            if _r9.get("zone") is None:
+                _z9 = _yz9(str(_r9.get("code")))
+                if _z9:
+                    _r9["zone"], _r9["zone_pos"] = _z9.get("zone"), _z9.get("pos")
+    except Exception:
+        pass
     SIX = ["000660", "005930", "035420", "017670", "042660", "034020"]
     watch_codes = {c for c, _n in WATCH}
+    # ONLY WHAT CAN ACTUALLY BE TRADED TODAY (boss 2026-09-03 10:2x: the panel
+    # still never finished under load). It was walking all 38 scored names, but
+    # a stock outside the collector has no tape today - it can be scored and
+    # never bought, so weighing it costs a database round trip and buys nothing.
+    # Restricted to the collector's set plus the fixed six: about half the work,
+    # every row genuinely tradeable, and their daily lines are already warm in
+    # the desk's cache.
+    _keep9 = watch_codes | set(SIX)
+    rows = [r for r in rows if str(r.get("code")) in _keep9]
     # live gap check: today's open vs yesterday's close, once bars exist
     def _gap(code):
         """Today's open vs yesterday's close, read IN-PROCESS (boss 2026-09-03
