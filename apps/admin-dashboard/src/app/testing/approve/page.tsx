@@ -95,6 +95,7 @@ export default function ApprovePage() {
   const [fDeal, setFDeal] = useState("");
   const [guOpen, setGuOpen] = useState<number | null>(null);   // opened give-up detail row
   const [histOpen, setHistOpen] = useState(true);              // 📜 history fold (boss: closeable)
+  const [rzOpen, setRzOpen] = useState<string | null>(null);   // opened why-we-traded rows
   const [money3, setMoney3] = useState(false);                 // 💰 money law: hidden by default (2026-08-19)
   const [open, setOpen] = useState<string | null>(null);          // opened room code
   const [steps, setSteps] = useState<Step[]>([]);
@@ -380,7 +381,10 @@ export default function ApprovePage() {
                         {t("🟠 매도 신호 — 팝업으로 승인 요청", "🟠 SELL — asking approval by popup")}</div>)}
                     {/* every remaining checklist item, one by one, after the
                         six gates (boss 2026-09-03 13:4x) */}
-                    {reach >= STEP.length && (u.items || []).length > 0 && (
+                    {/* the checklist always shows - a card that stops at gate 1
+                        never reached STEP.length, which is why SK하이닉스 showed
+                        none of it (boss 2026-09-03 14:5x) */}
+                    {(u.items || []).length > 0 && (
                       <div style={{ marginTop: 4, paddingTop: 4,
                                     borderTop: "1px dashed rgba(128,128,128,0.35)" }}>
                         <div style={{ fontSize: 9.5, opacity: 0.6, marginBottom: 2 }}>
@@ -661,9 +665,22 @@ export default function ApprovePage() {
                 <tbody>{holds.map((h, i) => {
                   const room = feed!.rooms.find((r) => r.code === h.code);
                   const pnl = room?.pnl;
+                  // THE SAVED POPUP REASONS, ONE CLICK AWAY (boss 2026-09-03
+                  // 16:3x: "save each one we bought, dealt and without dealt —
+                  // if I click any stock it should show these reasons")
+                  const buyRow = (feed!.log || []).find((l) => l.code === h.code
+                      && l.side === "BUY" && (l.at === h.at || l.hhmm === h.sug_at))
+                    || (feed!.log || []).find((l) => l.code === h.code && l.side === "BUY");
+                  const ko9 = t("k", "e") === "k";
                   return (
-                    <tr key={i} style={{ borderTop: "1px solid rgba(128,128,128,0.15)" }}>
-                      <td style={{ width: 130, padding: "5px 0", verticalAlign: "top" }}><b>🎞 {h.name}</b></td>
+                    <Fragment key={i}>
+                    <tr style={{ borderTop: "1px solid rgba(128,128,128,0.15)" }}>
+                      <td style={{ width: 130, padding: "5px 0", verticalAlign: "top",
+                                   cursor: "pointer" }}
+                          onClick={() => setRzOpen(rzOpen === `h${i}` ? null : `h${i}`)}
+                          title={t("클릭하면 매수 이유를 보여줍니다", "click for why we bought")}>
+                        <b style={{ textDecoration: "underline dotted", textUnderlineOffset: 3 }}>
+                          🎞 {h.name}</b> {rzOpen === `h${i}` ? "▲" : "▼"}</td>
                       <td style={{ padding: "5px 0" }}>
                         <div style={lineB}>▲ {h.at} {W(h.price)} × {h.qty.toLocaleString()}{t("주", "sh")}</div>
                         <div style={{ fontSize: 11.5, opacity: 0.75 }}>
@@ -672,7 +689,20 @@ export default function ApprovePage() {
                             {pnl >= 0 ? "+" : ""}{pnl}%</b>}
                         </div></td>
                       {money3 && <td style={{ width: 110, textAlign: "right", opacity: 0.5 }}>—</td>}
-                    </tr>);
+                    </tr>
+                    {rzOpen === `h${i}` && (
+                      <tr><td colSpan={money3 ? 3 : 2} style={{ padding: "4px 6px 8px" }}>
+                        <div style={{ borderLeft: "3px solid #e53935", borderRadius: 6,
+                                      background: "rgba(229,57,53,0.06)", padding: "6px 9px",
+                                      fontSize: 12, lineHeight: 1.55 }}>
+                          <b style={{ color: "#c62828" }}>🔴 {t(`매수 이유 (${h.at})`, `Why we bought (${h.at})`)}</b>
+                          {(buyRow ? (ko9 ? buyRow.reasons : (buyRow.reasons_en || buyRow.reasons)) : []).map((x, k2) => (
+                            <div key={k2}>· {x}</div>))}
+                          {!buyRow && <div style={{ opacity: 0.6 }}>
+                            {t("저장된 이유가 없습니다 (이 매수는 팝업 없이 기록되었습니다).", "No saved reasons (this buy was recorded without a popup).")}</div>}
+                        </div>
+                      </td></tr>)}
+                    </Fragment>);
                 })}</tbody>
               </table></>)}
             {groups.length > 0 && (<>
@@ -683,9 +713,27 @@ export default function ApprovePage() {
                   const bought = g.legs.filter((x) => x.kind === "B")
                     .reduce((a, x) => a + x.qty, 0);
                   let left = bought;
+                  // THE TWO REASON ROWS (boss 2026-09-03 16:3x: "if I click
+                  // 한화시스템 it should show the reason why we bought, and
+                  // since it is in the trading history a selling reason also —
+                  // make this in the two rows"): the buy row's saved popup
+                  // reasons + the sell row's, both kept on the log.
+                  const buyTs = new Set(g.legs.filter((x) => x.kind === "B").map((x) => x.tt));
+                  const buyRows = (feed!.log || []).filter((l) => l.code === g.code
+                      && l.side === "BUY" && l.fill && (buyTs.has(l.at || "") || buyTs.size === 0));
+                  const sellRows = done.filter((l) => l.code === g.code);
+                  const ko9 = t("k", "e") === "k";
+                  const rz = (l?: LogRow) =>
+                    (l ? (ko9 ? l.reasons : (l.reasons_en || l.reasons)) : []) || [];
                   return (
-                    <tr key={i} style={{ borderTop: "1px solid rgba(128,128,128,0.15)" }}>
-                      <td style={{ width: 130, padding: "5px 0", verticalAlign: "top" }}><b>🎞 {g.name}</b></td>
+                    <Fragment key={i}>
+                    <tr style={{ borderTop: "1px solid rgba(128,128,128,0.15)" }}>
+                      <td style={{ width: 130, padding: "5px 0", verticalAlign: "top",
+                                   cursor: "pointer" }}
+                          onClick={() => setRzOpen(rzOpen === `c${i}` ? null : `c${i}`)}
+                          title={t("클릭하면 매수·매도 이유를 보여줍니다", "click for why we bought AND why we sold")}>
+                        <b style={{ textDecoration: "underline dotted", textUnderlineOffset: 3 }}>
+                          🎞 {g.name}</b> {rzOpen === `c${i}` ? "▲" : "▼"}</td>
                       <td style={{ padding: "5px 0" }}>
                         {g.legs.map((x, j) => {
                           if (x.kind === "B") return (
@@ -710,7 +758,33 @@ export default function ApprovePage() {
                                    paddingTop: 5, fontWeight: 800,
                                    color: g.won >= 0 ? "#e53935" : "#1e88e5" }}>
                         {wonFmt(g.won)}</td>}
-                    </tr>);
+                    </tr>
+                    {rzOpen === `c${i}` && (
+                      <tr><td colSpan={money3 ? 3 : 2} style={{ padding: "4px 6px 8px" }}>
+                        {/* row 1: WHY WE BOUGHT (red) */}
+                        <div style={{ borderLeft: "3px solid #e53935", borderRadius: 6,
+                                      background: "rgba(229,57,53,0.06)", padding: "6px 9px",
+                                      fontSize: 12, lineHeight: 1.55, marginBottom: 6 }}>
+                          <b style={{ color: "#c62828" }}>
+                            🔴 {t("매수 이유", "Why we bought")}
+                            {buyRows[0] ? ` (${buyRows[0].at})` : ""}</b>
+                          {rz(buyRows[0]).map((x, k2) => <div key={k2}>· {x}</div>)}
+                          {!buyRows.length && <div style={{ opacity: 0.6 }}>
+                            {t("저장된 매수 이유가 없습니다.", "No saved buy reasons.")}</div>}
+                        </div>
+                        {/* row 2: WHY WE SOLD (blue) — one block per sell */}
+                        {sellRows.map((s9, k3) => (
+                          <div key={k3} style={{ borderLeft: "3px solid #1e88e5", borderRadius: 6,
+                                        background: "rgba(30,136,229,0.06)", padding: "6px 9px",
+                                        fontSize: 12, lineHeight: 1.55,
+                                        marginBottom: k3 < sellRows.length - 1 ? 6 : 0 }}>
+                            <b style={{ color: "#1565c0" }}>
+                              🔵 {t(`매도 이유 (${s9.at})`, `Why we sold (${s9.at})`)}</b>
+                            {rz(s9).map((x, k2) => <div key={k2}>· {x}</div>)}
+                            {s9.conv_note && <div style={{ opacity: 0.7 }}>· {s9.conv_note}</div>}
+                          </div>))}
+                      </td></tr>)}
+                    </Fragment>);
                 })}</tbody>
               </table></>)}
             </>)}
