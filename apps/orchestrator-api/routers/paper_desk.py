@@ -801,6 +801,58 @@ def _swr(key, fresh_sec: float, compute, placeholder=None, vital: bool = False):
     return v
 
 
+def _fam_stats(rows, holding) -> dict:
+    """The trading-history header numbers, computed from EXACTLY the rows given.
+    PIECE-COUNT WIN % (boss 2026-08-28 17:1x: "each one +% must count as one
+    winning - all positive winning cases divided by overall trading cases"):
+    every ▼ sell line is one count, judged against its own at-the-moment base;
+    rows without piece records count their whole trip once (net_pct, fee incl).
+    The trip ruler lives in ep_wins/ep_losses; invested sums every buy fill
+    (boss 2026-08-31: "how much we have invested and how much we gain").
+    Called a SECOND time after the display filters (chat merge, time edits,
+    eraser) so the header never counts a trip the board does not show — boss
+    2026-09-03 12:3x: "there is not losing but it shows 1 lost" (the loss was
+    a chat-erased trip, hidden from the table but still inside the numbers)."""
+    w = l = 0
+    for r in rows:
+        sells = (r.get("parts") or {}).get("sells") or []
+        counted = False
+        if sells and len(sells[0]) >= 7:
+            for sr in sells:
+                _b0 = (sr[6] if len(sr) > 6 and sr[6] else r.get("entry"))
+                if _b0:
+                    counted = True
+                    if sr[0] > _b0:
+                        w += 1
+                    elif sr[0] < _b0:
+                        l += 1
+        if not counted and not r.get("partial"):
+            _n9 = r.get("net_pct") or 0
+            if _n9 > 0:
+                w += 1
+            elif _n9 < 0:
+                l += 1
+    ew = sum(1 for r in rows
+             if not r.get("partial") and (r.get("net_pct") or 0) > 0)
+    el = sum(1 for r in rows
+             if not r.get("partial") and (r.get("net_pct") or 0) < 0)
+    _inv9 = 0.0
+    for r in rows:
+        if r.get("partial"):
+            continue
+        for b9 in ((r.get("parts") or {}).get("buys") or []):
+            _inv9 += (b9[0] or 0) * (b9[1] or 0)
+    for h9 in holding:
+        for b9 in ((h9.get("parts") or {}).get("buys") or []):
+            _inv9 += (b9[0] or 0) * (b9[1] or 0)
+    return {"trips": len(rows), "wins": w, "losses": l,
+            "ep_wins": ew, "ep_losses": el,
+            "win_pct_ep": round(ew / (ew + el) * 100) if (ew + el) else 0,
+            "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
+            "invested": round(_inv9),
+            "net_won": sum((r.get("won") or 0) for r in rows)}
+
+
 @router.get("/live/rules/family-trades")
 def live_family_trades(family: str = Query("new"), tick: int = Query(5),
                        period: int = Query(0), day: str = Query(""),
@@ -856,6 +908,17 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
             res = {**res,
                    "rows": _tef(_ted(list(res.get("rows") or []), _d9e), _d9e),
                    "holding": _teh(_ted(list(res.get("holding") or []), _d9e), _d9e)}
+    except Exception:
+        pass
+    # THE HEADER COUNTS WHAT THE BOARD SHOWS (boss 2026-09-03 12:3x: "there is
+    # not losing but it shows 1 lost"): the stats were computed before the chat
+    # merge and the eraser, so a hidden trip still counted — recount over the
+    # final displayed rows/holding so W/L, win%, invested and P&L always match
+    # the table beneath them. The raw (unfiltered) truth stays in the records.
+    try:
+        if res.get("ok") and not res.get("computing"):
+            res = {**res, **_fam_stats(list(res.get("rows") or []),
+                                       list(res.get("holding") or []))}
     except Exception:
         pass
     return res
@@ -1427,57 +1490,9 @@ def _fam_compute(family: str, tick: int, period: int, day: str,
                     break
         if _gd:
             r["guard"] = _gd
-    # PIECE-COUNT WIN % (boss 2026-08-28 17:1x, his explicit word after hearing
-    # the trip-ruler case: "each one +% must count as one winning - all positive
-    # winning cases divided by overall trading cases"): every ▼ sell line is one
-    # count, judged against its own at-the-moment base. ON RECORD: this ruler
-    # can read green on a red-money day (deployed reading 63% beside -1.01M on
-    # d2/m1) - the trip ruler stays in ep_wins/ep_losses and the money column
-    # tells the rest. Rows without piece records count their whole trip once.
-    w = l = 0
-    for r in rows:
-        sells = (r.get("parts") or {}).get("sells") or []
-        counted = False
-        if sells and len(sells[0]) >= 7:
-            for sr in sells:
-                _b0 = (sr[6] if len(sr) > 6 and sr[6] else r.get("entry"))
-                if _b0:
-                    counted = True
-                    if sr[0] > _b0:
-                        w += 1
-                    elif sr[0] < _b0:
-                        l += 1
-        if not counted and not r.get("partial"):
-            _n9 = r.get("net_pct") or 0
-            if _n9 > 0:
-                w += 1
-            elif _n9 < 0:
-                l += 1
-    ew = sum(1 for r in rows
-             if not r.get("partial") and (r.get("net_pct") or 0) > 0)
-    el = sum(1 for r in rows
-             if not r.get("partial") and (r.get("net_pct") or 0) < 0)
-    # TOTAL INVESTED (boss 2026-08-31 evening: "add one statistics on top -
-    # how much we have invested and how much we gain with price and %"):
-    # every won that went into buys, completed episodes and open holdings
-    # alike, summed from the raw fills.
-    _inv9 = 0.0
-    for r in rows:
-        if r.get("partial"):
-            continue
-        for b9 in ((r.get("parts") or {}).get("buys") or []):
-            _inv9 += (b9[0] or 0) * (b9[1] or 0)
-    for h9 in holding:
-        for b9 in ((h9.get("parts") or {}).get("buys") or []):
-            _inv9 += (b9[0] or 0) * (b9[1] or 0)
     _res = {"ok": True, "family": family, "rows": rows,
-            "trips": len(rows), "wins": w, "losses": l,
-            "ep_wins": ew, "ep_losses": el,
-            "win_pct_ep": round(ew / (ew + el) * 100) if (ew + el) else 0,
-            "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
-            "holding": holding, "waiting": waiting,
-            "invested": round(_inv9),
-            "net_won": sum(r["won"] for r in rows)}
+            **_fam_stats(rows, holding),
+            "holding": holding, "waiting": waiting}
     _FAM_TTL[_fk] = (_t.time(), _res)   # kept: family_daily still reads it
     return _res
 
