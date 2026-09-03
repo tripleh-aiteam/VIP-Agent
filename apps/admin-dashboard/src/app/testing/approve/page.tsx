@@ -511,13 +511,17 @@ export default function ApprovePage() {
                   <td>{W(l.price)}</td>
                   <td style={{ fontWeight: 700 }}>{t(l.decision, l.decision === "승인" ? "approved" : "cancelled")}</td>
                   {/* dealt or not (boss 2026-09-03: a limit offer may never fill) */}
-                  <td style={{ fontWeight: 700 }}>
-                    {l.decision !== "승인" ? <span style={{ opacity: 0.5 }}>—</span>
-                     : (l.dealt === false)
-                       ? <span style={{ color: "#e6a817" }}>{t("🕐 미체결", "🕐 not dealt")}</span>
-                       : (l.dealt === true || l.fill)
-                         ? <span style={{ color: "#2e7d32" }}>{t("✅ 체결", "✅ dealt")}</span>
-                         : <span style={{ opacity: 0.5 }}>—</span>}</td>
+                  {/* EVERY ROW SAYS DEAL OR NOT DEAL (boss 2026-09-03 11:1x:
+                      "if it fill deal and if not deal you should write not
+                      deal") - a cancelled proposal is a NOT DEAL too, and an
+                      approved limit can sit unfilled in the book, so neither
+                      is left as a bare dash. */}
+                  <td style={{ fontWeight: 800 }}>
+                    {l.decision !== "승인"
+                      ? <span style={{ color: "#c62828" }}>{t("✖ 미체결 (취소)", "✖ NOT DEAL (cancelled)")}</span>
+                      : (l.dealt === true || l.fill)
+                        ? <span style={{ color: "#2e7d32" }}>{t("✅ 체결 완료", "✅ DEAL")}</span>
+                        : <span style={{ color: "#b26a00" }}>{t("🕐 미체결 (대기 중)", "🕐 NOT DEAL (waiting)")}</span>}</td>
                   <td>{l.fill ? W(l.fill) : "-"}</td></tr>))}</tbody>
             </table>}
       </div>
