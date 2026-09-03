@@ -217,74 +217,9 @@ export default function ApprovePage() {
   })();
 
   return (
-    <div style={{ display: "flex", alignItems: "flex-start" }}>
-      {/* the rail is ALWAYS mounted — even before first data it shows the agent waking */}
-      <div className="agent-rail"
-           style={{ flex: "0 0 236px", position: "sticky", top: 8, margin: "16px 0 16px 10px",
-                    border: "2px solid #6a1b9a", borderRadius: 12, padding: "12px 12px",
-                    background: "rgba(106,27,154,0.06)", fontSize: 12.5 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <span style={{ fontSize: 18 }}>🤖</span>
-          {/* the heading moved to the page title (boss 2026-09-03 13:4x:
-              "remove Agent working from the left side and put the LIVE icon in
-              Real Time Monitoring") - the rail keeps only its pulse */}
-          <span style={{ width: 8, height: 8, borderRadius: 99, background: "#e53935",
-                         animation: "railPulse 1s infinite" }} />
-        </div>
-        {!rail && (
-          <div style={{ marginTop: 10, opacity: 0.75, lineHeight: 1.6 }}>
-            {t("깨어나는 중 — 전 종목 1년 데이터를 읽고 있어요",
-               "Waking up — reading a year of data for every stock")}{".".repeat((railTick % 3) + 1)}
-          </div>)}
-        {rail && (
-          <div style={{ marginTop: 9 }}>
-            <div style={{ fontSize: 14, fontWeight: 900 }}>
-              🔍 {rail.u.name}
-              <span style={{ fontSize: 10.5, fontWeight: 600, opacity: 0.6, marginLeft: 6 }}>
-                {rail.si + 1}/{rail.uni.length}</span>
-            </div>
-            <div style={{ marginTop: 6 }}>
-              {rail.u.gates.slice(0, rail.nChecks).map((g, i) => (
-                <div key={i} style={{ padding: "3px 0", lineHeight: 1.4,
-                                      animation: "fadeIn .3s ease both",
-                                      color: g.bad ? "#c62828" : "#2e7d32",
-                                      fontWeight: g.bad ? 800 : 600 }}>
-                  {g.bad ? "✗" : "✓"} {GICO[i] || "📋"} {t(g.k, g.en)}
-                  <span style={{ marginLeft: 5, opacity: 0.85, fontWeight: 700 }}>{g.v}</span>
-                </div>))}
-              {rail.extraBeat && !rail.verdictBeat && (
-                <div style={{ padding: "3px 0", color: "#2e7d32", fontWeight: 600,
-                              animation: "fadeIn .3s ease both" }}>
-                  ⏳ 📋 {t("나머지 체크리스트 94개 검사 중…", "checking the other 94 checklist items…")}
-                </div>)}
-              {!rail.verdictBeat && !rail.extraBeat && rail.nChecks < (rail.clean ? rail.u.gates.length : rail.badIdx + 1) + 1 && (
-                <div style={{ padding: "3px 0", opacity: 0.55 }}>
-                  ⏳ {t("다음 검사", "next check")}{".".repeat((railTick % 3) + 1)}</div>)}
-              {rail.verdictBeat && (rail.clean
-                ? <div style={{ marginTop: 5, padding: "6px 8px", borderRadius: 8, fontWeight: 900,
-                                background: "rgba(106,27,154,0.15)", color: "#6a1b9a",
-                                animation: "fadeIn .3s ease both" }}>
-                    🎉 {t("모든 관문 통과! 기회가 오면 → 팝업", "All gates passed! On a chance → popup")}
-                  </div>
-                : <div style={{ marginTop: 5, padding: "6px 8px", borderRadius: 8, fontWeight: 900,
-                                background: "rgba(198,40,40,0.12)", color: "#c62828",
-                                animation: "fadeIn .3s ease both" }}>
-                    ⛔ {t(rail.u.no_buy_short || "매수 금지", rail.u.no_buy_short_en || "NO BUY")}
-                  </div>)}
-            </div>
-            <div style={{ marginTop: 9, borderTop: "1px dashed rgba(106,27,154,0.4)",
-                          paddingTop: 6, fontSize: 10.5, opacity: 0.65, lineHeight: 1.5 }}>
-              {t("다음 차례: ", "next up: ")}
-              {rail.uni.slice(rail.si + 1, rail.si + 4).map((x) => x.name).join(" · ")
-                || rail.uni.slice(0, 3).map((x) => x.name).join(" · ")}
-            </div>
-          </div>)}
-        <style>{`@keyframes railPulse{0%,100%{opacity:1}50%{opacity:.25}}
-                 @media (max-width:1180px){.agent-rail{display:none!important}}`}</style>
-      </div>
+    <div>
 
-      <div style={{ maxWidth: 1080, margin: "0 auto", padding: 16, fontFamily: "inherit",
-                    flex: 1, minWidth: 0 }}>
+      <div style={{ maxWidth: 1180, margin: "0 auto", padding: 16, fontFamily: "inherit" }}>
       <div style={{ fontSize: 11.5, marginBottom: 6, display: "flex", gap: 12, opacity: 0.85 }}>
         <a href="/testing" style={{ color: "inherit" }}>{t("← 모의투자 메뉴", "← Paper Trading menu")}</a>
         <a href="/testing/live" style={{ color: "#00838f" }}>{t("📡 메뉴1 실시간 키움", "📡 Menu 1 Live Kiwoom")}</a>
