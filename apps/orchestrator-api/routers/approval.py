@@ -486,6 +486,24 @@ def _brain_compute():
         try:
             from services.kiwoom_rules import _daily20, _bars_for
             pc = _daily20(code, _kd())[0]
+            # THE OVERNIGHT REFERENCE IS THE LAST PRICE THE MARKET PAID (boss
+            # 2026-09-03 evening: "after market price we have to consider the
+            # 20:00 price and the 9am price we have to compare for 갭상승").
+            # KRX keeps trading to 18:00 after the bell, so yesterday's 15:30
+            # close can be hours stale by the time we measure a gap against it.
+            # When the previous session was recorded past the bell we use its
+            # LAST traded price; until an evening tape exists this falls back
+            # to the official close and behaves exactly as before.
+            try:
+                from services.kiwoom_tape import prev_ref
+                from services.kiwoom_rules import stored_days
+                _sd9 = [d for d in (stored_days() or []) if d < _kd()]
+                if _sd9:
+                    _ev9 = prev_ref(code, _sd9[-1])
+                    if _ev9:
+                        pc = _ev9
+            except Exception:
+                pass
             cs = _bars_for(code, 5, 60)
             if not (pc and cs and cs[0].get("open")):
                 return None, None

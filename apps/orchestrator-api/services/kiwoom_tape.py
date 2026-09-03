@@ -166,6 +166,44 @@ def market_open(now: datetime | None = None) -> bool:
     return (n.hour, n.minute) >= (9, 0) and (n.hour, n.minute) <= (15, 30)
 
 
+def collect_open(now: datetime | None = None) -> bool:
+    """Should the COLLECTOR be recording? 09:00-18:00 on a weekday.
+
+    Boss 2026-09-03 evening: "after market price we have to consider the 20:00
+    price and the 9am price we have to compare for 갭상승". He is right that
+    yesterday's 15:30 close is not what the market last paid for a stock - KRX
+    keeps trading after the bell (15:40-16:00 시간외 종가, then 16:00-18:00
+    시간외 단일가), and an overnight gap measured from a price six hours stale
+    is measured from the wrong number.
+
+    We had NONE of it: the collector stopped dead at 15:30, so every tape in
+    the system ends at the bell and no evening price exists anywhere. Recording
+    now runs to 18:00, which is where KRX actually stops - there is no 20:00
+    session, so 18:00 is the last real price of the day.
+
+    TRADING hours are untouched: market_open() still ends 15:30 and the desk
+    still goes quiet at 15:20. This widens what we RECORD, never what we do."""
+    n = now or datetime.now(KST)
+    if n.weekday() >= 5:
+        return False
+    return (9, 0) <= (n.hour, n.minute) <= (18, 0)
+
+
+def prev_ref(code: str, prev_day: str) -> float | None:
+    """The last price the market actually paid on the previous session -
+    after-hours included. Falls back to nothing when that day was never
+    recorded past the bell, and the caller then keeps the official close."""
+    try:
+        ticks = load(code, prev_day)
+        for t in reversed(ticks):
+            px = t.get("px") or t.get("price")
+            if px:
+                return float(px)
+    except Exception:
+        pass
+    return None
+
+
 def _fetch(code: str) -> list[dict]:
     """The newest ~900 executions, oldest first. Kiwoom returns newest first."""
     from services.kiwoom_rest import _request
@@ -393,10 +431,10 @@ def _loop():
     refresh_watch(force=True)
     while True:
         try:
-            if not market_open():
+            if not collect_open():
                 # the quiet window before the bell is when the checklist chooses
                 refresh_watch()
-            if market_open():
+            if collect_open():
                 for code, _name in WATCH:
                     try:
                         n = poll_once(code)
