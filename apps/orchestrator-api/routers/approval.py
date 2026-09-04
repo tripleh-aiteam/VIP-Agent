@@ -202,8 +202,14 @@ def _display_stats(held: list, log: list, rooms: list) -> dict:
     every semi order ever, hidden/deleted/test rows included, so it said 57.1%
     with 7 trips while the visible history showed 3 clean wins). Computed from
     the SAME filtered held/log rows the page renders, live prices from rooms."""
+    # TODAY ONLY (boss 2026-09-04 09:5x: "today we have not sold yet" while
+    # the card showed 17 trips — it was counting every stored day). The card
+    # is today's scoreboard; past days live in the history's day dropdown.
+    import time as _tm0
+    _today0 = _tm0.strftime("%Y-%m-%d", _tm0.gmtime(_tm0.time() + 9 * 3600))
     done = [l for l in log if l.get("side") == "SELL" and l.get("fill")
-            and l.get("decision") == "승인" and l.get("pnl_won") is not None]
+            and l.get("decision") == "승인" and l.get("pnl_won") is not None
+            and (l.get("day") or "") == _today0]
     wins = sum(1 for l in done if (l.get("pnl_won") or 0) > 0)
     losses = sum(1 for l in done if (l.get("pnl_won") or 0) < 0)
     net = round(sum(float(l.get("pnl_won") or 0) for l in done))
