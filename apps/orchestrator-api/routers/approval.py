@@ -120,62 +120,20 @@ def _market_move_lines(rooms: list):
 
 
 def _news_offers(rooms: list | None) -> list:
-    """NEWS THE ROOM CAN ACT ON (boss 2026-09-04: "if we have a good news it
-    should send with a button - would you like to buy? if bad news, would you
-    like to sell?").
+    """RETIRED THE DAY IT SHIPPED (boss 2026-09-04: "in case of news the popup
+    is coming - please remove this, because now news looks like the MAIN
+    priority").
 
-    The watch note already read the news; it just had nowhere to put the
-    conclusion. It now names the stock and offers the one action that news
-    implies: a 호재 on something we do NOT own becomes a BUY offer, a
-    위험/악재 on something we DO own becomes a SELL offer.
+    He is right and it is the more important principle. The desk buys and sells
+    on measured rules - the gates, the zone, the -1% line - and news is context
+    that colours them, never a reason of its own. A button that says "good news,
+    would you like to buy?" quietly promotes a headline above every rule we
+    measured, and on a screen it looks like the loudest thing there. The news
+    still gets read and still gets REPORTED; it no longer asks for money.
 
-    The gate verdict rides along and is shown on the button. A blocked stock is
-    still offered, because this is HIS decision and the news is his reason -
-    but it says plainly that the rules would not have bought it, so a click is
-    never made in the dark."""
-    from services.approval_desk import _load, can_propose, _gates_pass
-    if not can_propose():
-        return []
-    st = _load()
-    held = {h.get("code"): h for h in (st.get("held") or [])}
-    asked = st.get("asked") or {}
-    px_of = {str(r.get("code")): r.get("price") for r in (rooms or [])}
-    nm_of = {str(r.get("code")): r.get("name") for r in (rooms or [])}
-    out = []
-    for code, lot in held.items():
-        n = _news_of(str(code))
-        if n and n["stamp"] in ("위험", "악재"):
-            out.append({"code": str(code), "name": lot.get("name") or nm_of.get(str(code)),
-                        "side": "SELL", "stamp": n["stamp"], "title": n["title"],
-                        "qty": int(lot.get("qty") or 0), "price": px_of.get(str(code)),
-                        "gates_ok": None,
-                        "ko": f"⚠️ 보유 중인 {lot.get('name')}에 나쁜 뉴스가 떴습니다 — 파시겠습니까?",
-                        "en": f"⚠️ Bad news on {lot.get('name')}, which we hold - would you like to SELL?"})
-            break
-    for code in [str(r.get("code")) for r in (rooms or [])]:
-        if code in held or asked.get(code):
-            continue
-        n = _news_of(code)
-        if not (n and n["stamp"] == "호재"):
-            continue
-        px = px_of.get(code)
-        if not px:
-            continue
-        ok = False
-        try:
-            ok = bool(_gates_pass(code))
-        except Exception:
-            pass
-        out.append({"code": code, "name": nm_of.get(code) or code, "side": "BUY",
-                    "stamp": n["stamp"], "title": n["title"],
-                    "qty": max(1, int(10_000_000 // float(px))), "price": px,
-                    "gates_ok": ok,
-                    "ko": (f"📈 {nm_of.get(code)}에 좋은 뉴스가 있습니다 — 사시겠습니까?"
-                           + ("" if ok else " (참고: 지금은 규칙상 매수 금지 상태입니다)")),
-                    "en": (f"📈 Good news on {nm_of.get(code)} - would you like to BUY?"
-                           + ("" if ok else " (note: the rules would NOT buy it right now)"))})
-        break
-    return out
+    Kept as an empty function rather than deleted so the shape of what was
+    tried, and why it was withdrawn, stays on the record."""
+    return []
 
 
 def _watch_note(pending: list, n_held: int = 0, rooms: list | None = None) -> dict | None:
@@ -227,6 +185,10 @@ def _watch_note(pending: list, n_held: int = 0, rooms: list | None = None) -> di
                                   # read 0 while the desk held nine positions
     why_ko = ", ".join(f"{k} {v}종목" for k, v in top) or "조건 미충족"
     why_en = ", ".join(f"{gates_en.get(k, k)} {v}" for k, v in top) or "no condition met"
+    # THE RULES SPEAK FIRST (boss 2026-09-04: "now news looks like main
+    # priority"). The market/news paragraph used to open the card, so the first
+    # thing he read every three minutes was a headline. What decides a trade is
+    # the gate count; the news is context and now sits under it, in one line.
     lines_ko = [
         f"🔍 {len(rows)}개 종목을 동시에 검사했습니다 — 지금은 매수·매도 자리가 없습니다.",
         f"🚫 매수 금지 {n_no}종목 — 막은 관문: {why_ko}.",
@@ -239,17 +201,21 @@ def _watch_note(pending: list, n_held: int = 0, rooms: list | None = None) -> di
         f"✅ {n_done} already decided by you · {n_hold} held (offered again after we sell).",
         "👀 Still watching — the moment a condition matches, a BUY/SELL popup appears.",
     ]
-    # a broad market move puts its news verdict ON TOP of the note
+    # THE NEWS GOES UNDER THE RULES, NOT OVER THEM (boss 2026-09-04: "now news
+    # looks like main priority"). A broad market move used to be prepended, so
+    # the first thing he read every three minutes was a headline and the gate
+    # count came last. What decides a trade is the gates; the market/news
+    # paragraph is context and now follows them.
     try:
         _mm = _market_move_lines(rooms or [])
         if _mm:
-            lines_ko = _mm[0] + [""] + lines_ko
-            lines_en = _mm[1] + [""] + lines_en
+            lines_ko = lines_ko + [""] + _mm[0]
+            lines_en = lines_en + [""] + _mm[1]
     except Exception:
         pass
     import datetime as _dt
     _NOTE9["t"] = _t.time()
-    _NOTE9["v"] = {"offers": _news_offers(rooms),
+    _NOTE9["v"] = {"offers": [],
                    "id": int(_t.time()), "hhmm": _dt.datetime.now().strftime("%H:%M"),
                    "kind": "watch", "n": len(rows),
                    "lines": lines_ko, "lines_en": lines_en}
@@ -457,42 +423,13 @@ def approve(sid: int, qty: int = Query(0), price: float = Query(0.0),
     return ad.decide(db, sid, True, qty=qty or None, price=price or None)
 
 
-@router.post("/news-order")
-def news_order(code: str = Query(...), side: str = Query(...),
-               db: Session = Depends(get_db)):
-    """The news button. It does NOT invent a private order path: it builds the
-    same suggestion a popup would carry and hands it to the same decide(), so
-    the fill, the holding, the history row and the accounting are identical to
-    an approved popup - and it is recorded as HIS decision, made on the news."""
-    from services import approval_desk as ad
-    side = "SELL" if str(side).upper() == "SELL" else "BUY"
-    st = ad._load()
-    lot = next((h for h in (st.get("held") or []) if h.get("code") == code), None)
-    if side == "SELL" and not lot:
-        return {"ok": False, "error": "we do not hold this stock"}
-    if side == "BUY" and lot:
-        return {"ok": False, "error": "already holding this stock"}
-    n = _news_of(code) or {}
-    try:
-        from services.paper_desk import fast_price
-        px = float((fast_price(code) or [None])[0] or 0)
-    except Exception:
-        px = 0.0
-    if not px:
-        return {"ok": False, "error": "no live price"}
-    qty = int(lot.get("qty")) if side == "SELL" else max(1, int(10_000_000 // px))
-    nm = (lot or {}).get("name") or code
-    ko = [("📰 뉴스 판단 — 사장님이 뉴스를 보고 직접 결정하셨습니다."
-           if side == "BUY" else "📰 나쁜 뉴스 — 사장님이 정리하기로 결정하셨습니다."),
-          f"제목: \"{n.get('title') or '-'}\"",
-          "🛒 시장가로 즉시 체결합니다." if side == "BUY" else "🛒 시장가로 전량 정리합니다."]
-    en = [("📰 News call - the boss decided this himself, on the news."
-           if side == "BUY" else "📰 Bad news - the boss decided to close it."),
-          f"headline: \"{n.get('title') or '-'}\"",
-          "🛒 Market order, fills immediately." if side == "BUY" else "🛒 Market order, closing the whole lot."]
-    sug = ad._mk_sug(st, code, nm, side, ko, px, qty, None, reasons_en=en)
-    ad._save(st)
-    return ad.decide(db, sug["id"], True)      # no price -> MARKET, so it fills
+# THE NEWS ORDER ENDPOINT IS GONE (boss 2026-09-04: "news looks like main
+# priority - please remove this"). It shipped and was withdrawn the same
+# morning, deliberately: a one-click "good news, would you like to buy?" path
+# puts a headline above every rule we measured, and the desk's whole claim is
+# that it trades on measured rules. The news is still read, still stamped, and
+# still REPORTED in the watch note - it simply no longer asks for money, and
+# there is no longer a path by which it can.
 
 
 @router.post("/reject/{sid}")
