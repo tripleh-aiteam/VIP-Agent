@@ -52,7 +52,7 @@ def _save(st: dict) -> None:
         pass
 
 
-def _save_scan(st: dict, seen_ids: set) -> None:
+def _save_scan(st: dict, seen_ids: set, seen_held: set | None = None) -> None:
     """THE SCANNER MUST NOT ERASE AN ANSWER MADE WHILE IT WAS THINKING.
 
     Boss 2026-09-04: "if I click approve and choose market value, the popup
@@ -80,7 +80,16 @@ def _save_scan(st: dict, seen_ids: set) -> None:
     live = {p.get("id") for p in (cur.get("pending") or [])}
     st["pending"] = [p for p in (st.get("pending") or [])
                      if (p.get("id") not in seen_ids) or (p.get("id") in live)]
-    # 3. holdings opened by an approval during the scan must survive
+    # 3. holdings opened by an approval during the scan must survive - AND a
+    #    holding CLOSED during the scan must stay closed. The first version
+    #    only carried lots forward, so a lot sold or struck off while the scan
+    #    was thinking came straight back on the next write (caught 2026-09-04:
+    #    두산에너빌리티 was removed and kept reappearing, and the news card went
+    #    on offering to sell it). A disappearance is a decision too.
+    live = {h.get("code") for h in (cur.get("held") or [])}
+    if seen_held:
+        st["held"] = [h for h in (st.get("held") or [])
+                      if (h.get("code") not in seen_held) or (h.get("code") in live)]
     have = {h.get("code") for h in (st.get("held") or [])}
     for h in (cur.get("held") or []):
         if h.get("code") not in have:
@@ -181,10 +190,41 @@ def _market_pulse() -> dict:
     return out
 
 
+_VOLSCALE9: dict = {}
+
+
+def _vol_scale(code: str, day8: str, tape_total: int) -> float:
+    """OUR TAPE UNDERCOUNTS (boss 2026-09-04 10:2x: 'volume does not match
+    Kiwoom's actual number' — measured: the websocket feed conflates ticks and
+    our tape held only 41–78% of the official volume). The official
+    accumulated volume (Naver realtime daily row) calibrates the tape: every
+    absolute share count is scaled by official/tape for that day. The ×-avg
+    multiples were already fair (same sampling top and bottom)."""
+    key = (code, day8)
+    hit = _VOLSCALE9.get(key)
+    if hit and time.time() - hit[0] < 120:
+        return hit[1]
+    scale = 1.0
+    try:
+        from services.naver_stock import daily_history
+        want = f"{day8[:4]}-{day8[4:6]}-{day8[6:]}"
+        for r in daily_history(code, days=8):
+            if str(r.get("date")) == want and r.get("volume") and tape_total:
+                scale = float(r["volume"]) / float(tape_total)
+                break
+    except Exception:
+        pass
+    if not (0.5 <= scale <= 20):        # a mad ratio means bad data — no scaling
+        scale = 1.0
+    _VOLSCALE9[key] = (time.time(), scale)
+    return scale
+
+
 def _vol_at(code: str, hhmm: str, day8: str | None = None):
     """Trading volume AT a moment, from THAT DAY's Kiwoom tape (boss 2026-09-03
     20:0x + 09-04 10:0x: yesterday's 11:30 buy must read yesterday's tape, not
-    today's). Returns (minute_vol, mult_vs_avg_minute, cum_vol)."""
+    today's), CALIBRATED to the official volume (10:2x).
+    Returns (minute_vol, mult_vs_avg_minute, cum_vol)."""
     try:
         import json as _j
         from services.kiwoom_tape import _day as _kd
@@ -210,7 +250,11 @@ def _vol_at(code: str, hhmm: str, day8: str | None = None):
         mv = per_min.get(hhmm) or per_min.get(upto[-1]) or 0
         cum = sum(per_min[k] for k in upto)
         avg_min = cum / max(1, len(upto))
-        return int(mv), (mv / avg_min if avg_min else None), int(cum)
+        # calibrate absolute counts to the OFFICIAL volume; the multiple is
+        # scale-invariant (same sampling above and below the division)
+        from services.kiwoom_tape import _day as _kd2
+        _sc = _vol_scale(code, day8 or _kd2(), sum(per_min.values()))
+        return int(mv * _sc), (mv / avg_min if avg_min else None), int(cum * _sc)
     except Exception:
         return None, None, None
 
@@ -364,7 +408,7 @@ def _enrich_log_rows(st: dict) -> None:
                     # rows saved before the 🌐 market items rebuild once
                     or not any(it.get("g") == "market" for it in l["check_items"])
                     # v3: day-correct volume + rank-only-when-it-helps (09-04 10:0x)
-                    or l.get("_rv") != 3):
+                    or l.get("_rv") != 4):
                 # time-stamped at the row's own clock (volume of THAT minute)
                 _d8r = None
                 try:
@@ -377,7 +421,7 @@ def _enrich_log_rows(st: dict) -> None:
             sc = l.get("score")
             sc_ko = f" — 오늘 {sc}점." if sc is not None else "."
             sc_en = f" — today {sc} pts." if sc is not None else "."
-            l["_rv"] = 3
+            l["_rv"] = 4
             if l.get("side") == "BUY" and (
                     len(l.get("reasons") or []) <= 2
                     or sum(1 for x in l.get("reasons") or [] if "📋" in str(x)) > 1
@@ -901,6 +945,7 @@ def scan(db) -> dict:
     st.setdefault("held", [])
     st.setdefault("cool", {})
     _seen0 = {p.get("id") for p in st["pending"]}
+    _seenh0 = {h.get("code") for h in st["held"]}
     # YESTERDAY'S ANSWERS DO NOT SILENCE TODAY (found 2026-09-04: the asked
     # marks still carried 11:46, 13:03 and 15:31 from the previous session, so
     # every stock he answered yesterday could never be offered again today).
@@ -960,7 +1005,7 @@ def scan(db) -> dict:
                      "why_gone": "장 마감 — 제안을 거둡니다 / market closed"})
             st["pending"] = []
             st["log"] = st["log"][-200:]
-        _save_scan(st, _seen0)
+        _save_scan(st, _seen0, _seenh0)
         return st
     # NO SUGGESTIONS AFTER 15:20 (boss 2026-09-03 18:1x: "after 15:20 our
     # agent should not give suggestions because the market is closing") — the
@@ -968,7 +1013,7 @@ def scan(db) -> dict:
     if _hhmm() >= "15:20":
         if st["pending"]:
             st["pending"] = []
-        _save_scan(st, _seen0)
+        _save_scan(st, _seen0, _seenh0)
         return st
     from services.paper_desk import fast_price
     _fold_lots(st)                 # one position per stock, including inherited ones
@@ -1224,7 +1269,7 @@ def scan(db) -> dict:
         except Exception as e:
             log.warning(f"approval scan {code}: {str(e)[:80]}")
 
-    _save_scan(st, _seen0)
+    _save_scan(st, _seen0, _seenh0)
     return st
 
 
