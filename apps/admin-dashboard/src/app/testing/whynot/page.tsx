@@ -135,6 +135,13 @@ export default function WhyNotPage() {
                                      style={{ fontWeight: 800, color: "#1565c0" }}>
                       📎 {t("기사 읽기", "read the article")}</a></>}
                   </div>))}
+                {/* the cascade stops at the first blocked gate (boss 2026-09-04
+                    17:4x: "no need to add other explanations") */}
+                {r.stopped_at != null && r.gates.length < 5 && (
+                  <div style={{ fontSize: 11.5, opacity: 0.55, padding: "2px 4px" }}>
+                    {t(`나머지 ${5 - r.gates.length}개 관문은 이 관문을 통과한 뒤에 검사합니다.`,
+                       `The remaining ${5 - r.gates.length} gate(s) are checked only after this one is passed.`)}
+                  </div>)}
 
                 {/* ⑤ the item-by-item weights, gap/volume/news excluded */}
                 {(r.items?.length || 0) > 0 && (

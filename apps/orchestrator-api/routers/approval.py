@@ -587,11 +587,17 @@ def whynot(db: Session = Depends(get_db)):
         W = lambda v: f"₩{v:,.0f}" if v else "?"
 
         def _gate(n, key, passed, ko, en, link=None):
+            # EXPLANATIONS STOP AT THE FIRST BLOCKED GATE (boss 2026-09-04
+            # 17:4x: "if it is not passed second gate, no need to add other
+            # explanations — explanation need until passed gate"): once a
+            # gate fails, the later gates are not even shown.
+            if r["stopped_at"] is not None:
+                return
             g = {"n": n, "key": key, "passed": bool(passed), "ko": ko, "en": en}
             if link:
                 g["link"] = link
             r["gates"].append(g)
-            if not passed and r["stopped_at"] is None:
+            if not passed:
                 r["stopped_at"] = n
 
         # ① 갭상승
@@ -732,6 +738,10 @@ def whynot(db: Session = Depends(get_db)):
                   f"The 100-checklist score is LOW — {sc} pts, rank {rk} of {tot9} "
                   f"(picking bar: top-5 or ≥50 pts).{_tail_en} The full item-by-item "
                   f"weights are in the table below.")
+        # the cascade stopped before gate 5 → the checklist table would be
+        # an explanation past the blocked gate; it stays hidden (same law)
+        if r["stopped_at"] is not None and r["stopped_at"] < 5:
+            r["items"] = []
         # the verdict line
         if r["held"]:
             r["verdict_ko"] = "이미 보유 중 — 종목당 한 손 법칙으로 추가 매수는 없습니다."
