@@ -620,7 +620,7 @@ export default function ApprovePage() {
               {zoneChip(r.zone)}
               {r.held && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8,
                                         background: "#2e7d32", color: "#fff" }}>
-                {t("보유 ", "held ")}{r.held.qty.toLocaleString()}{t("주", " sh")} {r.pnl != null ? `(${r.pnl >= 0 ? "+" : ""}${r.pnl}%)` : ""}</span>}
+                {t("보유 ", "held ")}{(r.held.qty ?? 0).toLocaleString()}{t("주", " sh")} {r.pnl != null ? `(${r.pnl >= 0 ? "+" : ""}${r.pnl}%)` : ""}</span>}
             </div>
           </div>
         ))}
@@ -667,10 +667,10 @@ export default function ApprovePage() {
             return (<div style={{ marginTop: 10 }}>
               <b style={{ fontSize: 12.5 }}>{t("📜 이 방의 매매 기록", "📜 This room: trading record")}</b>
               {lot && <div style={{ fontSize: 12, padding: "3px 0", color: "#2e7d32" }}>
-                {t("📦 보유 중: ", "📦 Holding: ")}{lot.qty.toLocaleString()}{t("주", " sh")} @ {W(lot.price)} ({lot.at}{t(" 승인 매수", " approved buy")})</div>}
+                {t("📦 보유 중: ", "📦 Holding: ")}{(lot.qty ?? 0).toLocaleString()}{t("주", " sh")} @ {W(lot.price)} ({lot.at}{t(" 승인 매수", " approved buy")})</div>}
               {rows.map((l, i) => (
                 <div key={i} style={{ fontSize: 12, padding: "2px 0", opacity: 0.9 }}>
-                  {l.at} · {l.side === "BUY" ? t("🔴 매수", "🔴 BUY") : t("🔵 매도", "🔵 SELL")} {l.qty.toLocaleString()}{t("주", " sh")}
+                  {l.at} · {l.side === "BUY" ? t("🔴 매수", "🔴 BUY") : t("🔵 매도", "🔵 SELL")} {(l.qty ?? 0).toLocaleString()}{t("주", " sh")}
                   — <b>{t(l.decision, l.decision === "승인" ? "approved" : "cancelled")}</b>{l.fill ? ` @ ${W(l.fill)}` : ""}
                   {l.decision === "승인" && l.dealt === false &&
                     <b style={{ color: "#e6a817", marginLeft: 5 }}>{t("🕐 미체결", "🕐 not dealt")}</b>}</div>))}
@@ -695,7 +695,7 @@ export default function ApprovePage() {
                 const pnl = room?.pnl;
                 return (<tr key={i} style={{ borderTop: "1px solid rgba(128,128,128,0.2)" }}>
                   <td style={{ padding: "4px 0" }}><b>{h.name}</b></td>
-                  <td>{h.qty.toLocaleString()}{t("주", "")}</td><td>{W(h.price)}</td>
+                  <td>{(h.qty ?? 0).toLocaleString()}{t("주", "")}</td><td>{W(h.price)}</td>
                   <td>{W(room?.price)}</td>
                   <td style={{ color: (pnl ?? 0) >= 0 ? "#e53935" : "#1e88e5", fontWeight: 700 }}>
                     {pnl != null ? `${pnl >= 0 ? "+" : ""}${pnl}%` : "-"}</td>
@@ -875,7 +875,7 @@ export default function ApprovePage() {
                         <b style={{ textDecoration: "underline dotted", textUnderlineOffset: 3 }}>
                           🎞 {h.name}</b> {rzOpen === `h${i}` ? "▲" : "▼"}</td>
                       <td style={{ padding: "5px 0" }}>
-                        <div style={lineB}>▲ {h.at} {W(h.price)} × {h.qty.toLocaleString()}{t("주", "sh")}</div>
+                        <div style={lineB}>▲ {h.at} {W(h.price)} × {(h.qty ?? 0).toLocaleString()}{t("주", "sh")}</div>
                         <div style={{ fontSize: 11.5, opacity: 0.75 }}>
                           {t("보유 중 — 아직 매도 안 함", "holding — not sold yet")}
                           {pnl != null && <b style={{ marginLeft: 6, color: pnl >= 0 ? "#e53935" : "#1e88e5" }}>
@@ -1163,7 +1163,7 @@ export default function ApprovePage() {
                   <td style={{ padding: "4px 0", opacity: 0.7 }}>{l.at}</td>
                   <td style={{ color: l.side === "BUY" ? "#e53935" : "#1e88e5", fontWeight: 700 }}>
                     {l.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")}</td>
-                  <td><b>{l.name}</b></td><td>{l.qty.toLocaleString()}{t("주", "")}</td>
+                  <td><b>{l.name}</b></td><td>{(l.qty ?? 0).toLocaleString()}{t("주", "")}</td>
                   <td>{W(l.price)}</td>
                   <td style={{ fontWeight: 700 }}>{t(l.decision, l.decision === "승인" ? "approved" : "cancelled")}</td>
                   {/* dealt or not (boss 2026-09-03: a limit offer may never fill) */}

@@ -1164,6 +1164,13 @@ def scan(db) -> dict:
                     {"id": int(time.time() * 1000) % 10**9, "ts": time.time(),
                      "hhmm": _hhmm(), "code": code, "name": name, "side": "BUY",
                      "decision": "보류", "at": _hhmm(), "dealt": None,
+                     # A ROW MUST CARRY THE FIELDS EVERY BOARD READS (2026-09-04:
+                     # this row shipped without qty or price, and Menu 3 renders
+                     # l.qty.toLocaleString() - so ONE refusal row threw a
+                     # TypeError and blanked the whole page with "Application
+                     # error: a client-side exception". The guard knows both
+                     # numbers; it must say them.)
+                     "qty": int(_bq), "price": _bp, "score": score,
                      "why_gone": _vk9, "why_gone_en": _ve9, "guard": _vs9,
                      "reasons": ["🛡 발송 직전 재확인에서 걸렸습니다 — " + _vk9],
                      "reasons_en": ["🛡 Stopped by the check run at the moment "
