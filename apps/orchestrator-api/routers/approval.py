@@ -509,7 +509,8 @@ def _brain_compute():
             if not (pc and cs and cs[0].get("open")):
                 return None, None
             g = 100.0 * (float(cs[0]["open"]) / float(pc) - 1)
-            if g < 1.5:
+            from services.proof_lab import GAP_PCT
+            if g < GAP_PCT:
                 return g, False
             # THE GAP PAUSE CAN BE LIFTED (boss 2026-09-03 evening): "do not buy
             # if there is a 갭상승; you can buy when it decreases and is equal
@@ -716,18 +717,21 @@ def _brain_compute():
         # original checklist number. They ride alongside the six gates so a card
         # can list every check the desk actually performs.
         _items = []
-        from services.approval_desk import _ITEM_EN, _VAL_EN, _fmt_big
+        from services.approval_desk import _ITEM_EN, _VAL_EN, _fmt_big, _fmt_big_en
         for _gk, _lst in (r.get("detail") or {}).items():
             for _it in (_lst or []):
                 _k0 = str(_it.get("k") or "")
                 _b0 = _k0.split(" (")[0]
                 _e0 = (next((v for p0, v in _ITEM_EN.items() if _b0.startswith(p0)), _b0)
                        + _k0[len(_b0):])
-                _v0 = str(_it.get("v"))
-                _d0 = _v0.replace(",", "").replace("-", "")
+                _r0 = str(_it.get("v"))
+                _v0 = _r0
+                _d0 = _r0.replace(",", "").replace("-", "")
                 if _d0.isdigit() and len(_d0) > 8:
-                    _v0 = _fmt_big(_v0)
-                _ve0 = _VAL_EN.get(_v0, _v0)
+                    _v0 = _fmt_big(_r0)
+                    _ve0 = _fmt_big_en(_r0)
+                else:
+                    _ve0 = _VAL_EN.get(_v0, _v0)
                 _items.append({"k": _k0, "en": _e0, "v": _v0, "ven": _ve0,
                                "s": _it.get("s"), "g": _gk,
                                "bad": (_it.get("s") or 0) < 40})

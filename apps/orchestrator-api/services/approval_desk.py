@@ -212,6 +212,20 @@ def _fmt_big(v: str) -> str:
         return v
 
 
+def _fmt_big_en(v: str) -> str:
+    """The English twin: 7,034,784,542,800 → ₩7.03T · 160,100,000,000 → ₩160.1B."""
+    try:
+        n = float(str(v).replace(",", ""))
+        a = abs(n)
+        if a >= 1e12:
+            return f"₩{n / 1e12:.2f}T"
+        if a >= 1e8:
+            return f"₩{n / 1e9:.1f}B"
+        return v
+    except Exception:
+        return v
+
+
 def _vol_ratio(code: str):
     """Today's volume vs the 20-day average — (ratio, today_vol) or (None, None)."""
     try:
@@ -308,7 +322,12 @@ def _enrich_log_rows(st: dict) -> None:
         try:
             if (not l.get("check_items")
                     or not any(it.get("g") == "news" for it in l["check_items"])
-                    or not any(it.get("g") == "volume" for it in l["check_items"])):
+                    or not any(it.get("g") == "volume" for it in l["check_items"])
+                    # items saved before the bilingual fields rebuild once, so
+                    # English mode shows English (boss 2026-09-04 09:1x)
+                    or not any(it.get("en") for it in l["check_items"])
+                    # the old ugly '160100M won' values rebuild into ₩160.1B
+                    or any("M won" in str(it.get("ven") or "") for it in l["check_items"])):
                 # time-stamped at the row's own clock (volume of THAT minute)
                 l["check_items"] = _check_items(code, str(l.get("at") or l.get("hhmm") or "")[:5] or None)
             if l.get("score") is None:
@@ -320,7 +339,14 @@ def _enrich_log_rows(st: dict) -> None:
                     len(l.get("reasons") or []) <= 2
                     or sum(1 for x in l.get("reasons") or [] if "📋" in str(x)) > 1
                     # rows saved before the ⑥ news line / true-gap story rebuild once
-                    or not any("⑥" in str(x) for x in l.get("reasons") or [])):
+                    or not any("⑥" in str(x) for x in l.get("reasons") or [])
+                    # rows still naming 알고3 rebuild with the engine-free wording
+                    or any("알고3" in str(x) for x in l.get("reasons") or [])
+                    # rows with the rejected 'not the selling zone' phrasing
+                    # rebuild into the positive low-place wording (09:1x)
+                    or (any("매도구간 아님" in str(x) for x in l.get("reasons") or [])
+                        and not l.get("_zone_reworded"))):
+                l["_zone_reworded"] = True
                 head_ko = (l.get("reasons") or [""])[0]
                 head_en = (l.get("reasons_en") or [head_ko])[0]
                 try:
@@ -669,12 +695,14 @@ def _check_items(code: str, hhmm: str | None = None) -> list[dict]:
                 _num9 = _k9[len(_base9):]
                 _en9 = (next((v for p9, v in _ITEM_EN.items()
                               if _base9.startswith(p9)), _base9) + _num9)
-                _v9 = str(it.get("v"))
-                _digits9 = _v9.replace(",", "").replace("-", "")
+                _raw9 = str(it.get("v"))
+                _v9 = _raw9
+                _digits9 = _raw9.replace(",", "").replace("-", "")
                 if _digits9.isdigit() and len(_digits9) > 8:
-                    _v9 = _fmt_big(_v9)          # 7,034,784,542,800 → 7.03조원
-                _ven9 = _VAL_EN.get(_v9, _v9).replace("조원", "T won").replace("억원", "00M won") \
-                    if _v9 in _VAL_EN or "조원" in _v9 or "억원" in _v9 else _v9
+                    _v9 = _fmt_big(_raw9)        # 7,034,784,542,800 → 7.03조원
+                    _ven9 = _fmt_big_en(_raw9)   # → ₩7.03T
+                else:
+                    _ven9 = _VAL_EN.get(_v9, _v9)
                 out.append({"k": _k9, "en": _en9, "v": _v9, "ven": _ven9,
                             "s": it.get("s"), "g": gk,
                             "bad": (it.get("s") or 0) < 40})
@@ -1613,7 +1641,8 @@ def verify_now(code: str, side: str = "BUY", day: str = "",
     if ref and op:
         gap = (op / ref - 1) * 100
         snap["gap"] = round(gap, 2)
-        if gap >= 1.5:
+        from services.proof_lab import GAP_PCT
+        if gap >= GAP_PCT:
             back = any(b["low"] <= ref for b in bars)
             reds = 0
             done = False
@@ -1828,11 +1857,40 @@ def _why_buy(code: str, name: str, hold: dict):
     _gap_talk = (not _gapped) and ((not bt) or bt < "10:30")
     gk = ["갭상승 아님"] if _gap_talk else []
     ge = ["no gap-up"] if _gap_talk else []
+    # POSITIVE ZONE WORDING with the numbers (boss 2026-09-04 09:1x: "instead
+    # of saying not the selling zone, say this IS a buying zone because it is
+    # lower than the average price — with numerical proof"). The six often
+    # drop out of the gated ranking, so the averages fall back to the live
+    # price vs the same MA lines the engine trades on.
+    if mid is None or midy is None:
+        try:
+            from services.kiwoom_rules import _daily20
+            from services.kiwoom_tape import _day as _kd9z
+            from services.paper_desk import fast_price
+            _d20 = _daily20(code, _kd9z())
+            _px9z, _c9z, _t9z, _s9z = fast_price(code)
+            if _px9z and _d20:
+                if mid is None and _d20[3]:
+                    mid = (float(_px9z) / float(_d20[3]) - 1) * 100
+                if midy is None and _d20[4]:
+                    midy = (float(_px9z) / float(_d20[4]) - 1) * 100
+        except Exception:
+            pass
+    _below_avgs = (mid is not None and mid < 0) and (midy is not None and midy < 0)
     if zone == "buy":
         gk.append(f"매수구간 (1년 바닥 {zpos}%)"); ge.append(f"BUYING zone ({zpos}% of the year)")
+    elif _below_avgs:
+        gk.append(f"살 수 있는 낮은 자리 (1년 {zpos}% · 평균 아래)")
+        ge.append(f"a LOW place to buy ({zpos}% of the year · below the averages)")
     else:
         gk.append(f"매도구간 아님 (1년 {zpos}%)"); ge.append(f"not the selling zone ({zpos}%)")
-    gk.append("1개월·1년 평균 아래"); ge.append("below BOTH averages")
+    # the averages chunk carries its NUMBERS and only claims what is true
+    if _below_avgs:
+        gk.append(f"1개월 평균 {mid:+.1f}% · 1년 평균 {midy:+.1f}% (평균 아래)")
+        ge.append(f"{mid:+.1f}% vs 1-month avg · {midy:+.1f}% vs 1-year avg (below both)")
+    elif mid is not None and midy is not None:
+        gk.append(f"평균 대비 1개월 {mid:+.1f}% · 1년 {midy:+.1f}%")
+        ge.append(f"{mid:+.1f}% vs 1-month · {midy:+.1f}% vs 1-year avg")
     gk.append("하락 멈추고 반등 시작"); ge.append("the fall stopped, it is turning up")
     # THE NUMBERS HE ASKED FOR (boss 2026-09-04: "volume number at this time is
     # this number and it increased x%"): the fuel behind the move, measured now,
@@ -1885,20 +1943,37 @@ def _why_buy(code: str, name: str, hold: dict):
     if zone == "buy":
         R.append(f"② 매수구간 — 1년 범위의 {zpos}% 지점, 바닥권입니다. 우리 규칙이 사는 자리입니다.")
         E.append(f"② Buying zone — {zpos}% of its 1-year range, near the bottom. This is where our rule buys.")
+    elif _below_avgs:
+        R.append(f"② 살 수 있는 낮은 자리입니다 — 1년 범위의 {zpos}% 지점이고, 1개월 평균보다 "
+                 f"{mid:+.2f}%, 1년 평균보다 {midy:+.2f}% 낮습니다. 평균보다 싸게 사는 자리입니다.")
+        E.append(f"② This IS a low place to buy — at {zpos}% of its 1-year range, and the price sits "
+                 f"{mid:+.2f}% vs the 1-month average and {midy:+.2f}% vs the 1-year average. "
+                 f"We are buying BELOW the averages.")
     else:
         R.append(f"② 매도구간 아님 — 1년 범위의 {zpos}% 지점으로 고점권(85%↑)이 아닙니다.")
         E.append(f"② Not the selling zone — {zpos}% of its 1-year range, far from the 85% top.")
+    # 'Still cheap' only when it IS cheap (boss 2026-09-04 09:1x: the line
+    # claimed cheap at +43.8% above the 1-year average) — above the averages
+    # the sentence tells the truth instead
     if mid is not None and midy is not None:
-        R.append(f"③ 아직 싼 자리 — 1개월 평균보다 {mid:+.2f}%, 1년 평균보다 {midy:+.2f}%. "
-                 f"두 평균 아래일 때만 수익이 났습니다.")
-        E.append(f"③ Still cheap — {mid:+.2f}% vs the 1-month average and {midy:+.2f}% vs the "
-                 f"1-year average. Only stocks below BOTH made money.")
+        if _below_avgs:
+            R.append(f"③ 아직 싼 자리 — 1개월 평균보다 {mid:+.2f}%, 1년 평균보다 {midy:+.2f}% 낮습니다. "
+                     f"두 평균 아래일 때만 수익이 났습니다.")
+            E.append(f"③ Still cheap — {mid:+.2f}% vs the 1-month average and {midy:+.2f}% vs the "
+                     f"1-year average, BELOW both. Only stocks below both made money.")
+        else:
+            R.append(f"③ 평균 대비 위치 — 1개월 평균 대비 {mid:+.2f}%, 1년 평균 대비 {midy:+.2f}%. "
+                     f"평균 위라 싸지는 않지만, 아래 진입 신호가 조건을 채웠습니다.")
+            E.append(f"③ Position vs the averages — {mid:+.2f}% vs 1-month, {midy:+.2f}% vs 1-year. "
+                     f"Not cheap (above the averages), but the entry signal below met its conditions.")
     # THE ENGINE'S OWN VIEW, STATED HONESTLY (boss 2026-09-03 14:3x). Menu 3 now
     # proposes on HIS gate set, which can be ready before 알고3's entry shape is;
     # rather than hide that, the popup says whether the engine has entered yet.
     if bt:
-        R.append(f"④ 알고3도 진입했습니다 ({bt}) — 하락이 멈추고 3번째 양봉, 제1조 통과.")
-        E.append(f"④ 알고3 has entered too ({bt}) - the 3rd rise after the fall, 제1조 cleared.")
+        # no engine names in the boss's reading (2026-09-04 09:1x: "remove the
+        # word 알고3") — the SIGNAL is the reason, not who else took it
+        R.append(f"④ 진입 신호 확인 ({bt}) — 하락이 멈추고 3번째 양봉이 섰습니다. 급락 직후 매수 금지 규칙(제1조)도 통과했습니다.")
+        E.append(f"④ Entry signal confirmed ({bt}) — the fall stopped and the 3rd rising candle stood; the no-buy-right-after-a-crash rule also cleared.")
     else:
         R.append("④ 알고3는 아직 진입 신호(급락 후 3번째 양봉)를 기다리는 중입니다 — "
                  "관문은 모두 열렸고, 승인하시면 지금 들어갑니다.")
