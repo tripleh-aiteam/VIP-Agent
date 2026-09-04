@@ -728,10 +728,14 @@ export default function ApprovePage() {
       {(() => {
         // 📅 the day picker (boss 2026-09-03 19:3x: "adding dropdown menu to
         // trading history to see before days' results to compare")
-        const allDays = Array.from(new Set((feed?.log || [])
-          .map((l) => l.day || "").filter(Boolean))).sort().reverse();
-        const dayPick = allDays.includes(histDay) ? histDay : (allDays[0] || "");
-        const isLatestDay = !allDays.length || dayPick === allDays[0];
+        // the REAL calendar day rules the label (boss 2026-09-04 09:0x: "the
+        // history shows yesterday's result as today") — a fresh day starts
+        // empty and selected, yesterday stays in the dropdown by its date
+        const kstToday = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+        const allDays = Array.from(new Set([kstToday, ...(feed?.log || [])
+          .map((l) => l.day || "").filter(Boolean)])).sort().reverse();
+        const dayPick = allDays.includes(histDay) ? histDay : kstToday;
+        const isLatestDay = dayPick === kstToday;
         const done = (feed?.log || [])
           .filter((l) => l.side === "SELL" && (l.dealt === true || l.fill) && l.buy_price != null
                   && (!dayPick || (l.day || "") === dayPick));
@@ -789,7 +793,7 @@ export default function ApprovePage() {
                            background: "var(--card,#fff)", color: "inherit" }}>
                   {allDays.map((d) => (
                     <option key={d} value={d}>
-                      {d === allDays[0] ? t(`오늘 (${d})`, `today (${d})`) : d}</option>))}
+                      {d === kstToday ? t(`오늘 (${d})`, `today (${d})`) : d}</option>))}
                 </select>)}
               {/* 💰 the money law, same as Menu 2 (boss 2026-08-19: "by default
                   it should be hide money") */}
