@@ -14,7 +14,8 @@ import { API } from "../../../components/api";
 
 type Gate = { n: number; key: string; passed: boolean; ko: string; en: string;
               link?: string | null };
-type Item = { k: string; en?: string; v: string; ven?: string; s?: number | null };
+type Item = { k: string; en?: string; v: string; ven?: string; s?: number | null;
+              w?: number | null; ctr?: number | null };
 type Row = { code: string; name: string; name_en?: string;
              held?: boolean; pending?: boolean;
              yc?: number | null; op?: number | null; px?: number | null;
@@ -126,10 +127,12 @@ export default function WhyNotPage() {
                                 borderLeft: `3px solid ${g.passed ? "#2e7d32" : "#c62828"}`,
                                 fontWeight: !g.passed && g.n === r.stopped_at ? 700 : 400 }}>
                     {g.passed ? "✅" : "⛔"} <b>{g.n}. {t(
-                      ({ gap: "갭상승 관문", bottom: "바닥 확인 관문", volume: "거래량 관문",
-                         news: "나쁜 뉴스 관문", score: "100 체크리스트 관문" } as Record<string, string>)[g.key] || g.key,
-                      ({ gap: "Gap-up gate", bottom: "Bottom-check gate", volume: "Volume gate",
-                         news: "Bad-news gate", score: "100-checklist gate" } as Record<string, string>)[g.key] || g.key)}</b>
+                      ({ gap: "갭상승 관문", position: "주간 포지션 관문", bottom: "바닥 확인 관문",
+                         volume: "거래량 관문", news: "나쁜 뉴스 관문",
+                         score: "100 체크리스트 관문" } as Record<string, string>)[g.key] || g.key,
+                      ({ gap: "Gap-up gate", position: "Weekly-position gate", bottom: "Bottom-check gate",
+                         volume: "Volume gate", news: "Bad-news gate",
+                         score: "100-checklist gate" } as Record<string, string>)[g.key] || g.key)}</b>
                     {" — "}{ko ? g.ko : g.en}
                     {g.link && <> <a href={g.link} target="_blank" rel="noreferrer"
                                      style={{ fontWeight: 800, color: "#1565c0" }}>
@@ -153,27 +156,50 @@ export default function WhyNotPage() {
                       📋 {t(`체크리스트 항목별 점수·가중치 보기 (${r.items!.length}개 — 갭·거래량·뉴스 제외)`,
                             `see the item-by-item scores & weights (${r.items!.length} items — gap/volume/news excluded)`)} {itemsOpen === r.code ? "▲" : "▼"}
                     </span>
-                    {itemsOpen === r.code && (
+                    {itemsOpen === r.code && (() => {
+                      // HIGHEST FIRST + TRUE WEIGHTS (boss 2026-09-04 18:0x:
+                      // "correct order from highest to lowest… a 100-score
+                      // item isn't 100 of the total — think weighting"):
+                      // sorted by real contribution; weight = the item's
+                      // %-share of the total score, contribution = s×w/100.
+                      const its = [...r.items!].sort((a, b) =>
+                        ((b.ctr ?? b.s ?? 0) as number) - ((a.ctr ?? a.s ?? 0) as number));
+                      const hasW = its.some((x) => x.w != null);
+                      const totC = its.reduce((a, x) => a + (x.ctr ?? 0), 0);
+                      return (
                       <div style={{ overflowX: "auto", marginTop: 5 }}>
                         <table style={{ fontSize: 11.5, borderCollapse: "collapse", width: "100%" }}>
                           <thead><tr style={{ opacity: 0.6, textAlign: "left" }}>
                             <th style={{ padding: "3px 8px 3px 0" }}>{t("항목", "item")}</th>
                             <th style={{ padding: "3px 8px 3px 0" }}>{t("측정값", "measured")}</th>
-                            <th style={{ padding: "3px 0" }}>{t("점수(가중치)", "score (weight)")}</th>
+                            <th style={{ padding: "3px 8px 3px 0" }}>{t("점수(0-100)", "score (0-100)")}</th>
+                            {hasW && <th style={{ padding: "3px 8px 3px 0" }}>{t("가중치", "weight")}</th>}
+                            {hasW && <th style={{ padding: "3px 0" }}>{t("기여 점수", "contributed")}</th>}
                           </tr></thead>
                           <tbody>
-                            {[...r.items!].sort((a, b) => (a.s ?? 50) - (b.s ?? 50)).map((it, k) => (
-                              <tr key={k} style={{ borderTop: "1px solid rgba(128,128,128,0.15)" }}>
+                            {its.map((it, k) => (
+                              <tr key={k} style={{ borderTop: "1px solid rgba(128,128,128,0.15)",
+                                                   opacity: it.w === 0 ? 0.5 : 1 }}>
                                 <td style={{ padding: "3px 8px 3px 0" }}>{ko ? it.k : (it.en || it.k)}</td>
                                 <td style={{ padding: "3px 8px 3px 0" }}>{ko ? it.v : (it.ven || it.v)}</td>
-                                <td style={{ padding: "3px 0", fontWeight: 700,
+                                <td style={{ padding: "3px 8px 3px 0", fontWeight: 700,
                                              color: (it.s ?? 50) < 40 ? "#c62828"
                                                : (it.s ?? 50) >= 70 ? "#2e7d32" : "inherit" }}>
                                   {it.s ?? "-"}</td>
+                                {hasW && <td style={{ padding: "3px 8px 3px 0" }}>
+                                  {it.w != null ? `${it.w}%` : "-"}</td>}
+                                {hasW && <td style={{ padding: "3px 0", fontWeight: 700 }}>
+                                  {it.ctr != null ? `${it.ctr}` : "-"}{t("점", " pts")}</td>}
                               </tr>))}
                           </tbody>
                         </table>
-                      </div>)}
+                        {hasW && (
+                          <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
+                            {t(`가중치 0% 항목은 점수가 높아도 총점에 들어가지 않습니다 (회색). 표의 기여 합계 ≈ ${totC.toFixed(1)}점 — 여기에 갭·거래량·뉴스 관문 몫이 더해져 총점이 됩니다.`,
+                               `A 0%-weight item adds nothing to the total even at score 100 (greyed). Contributions here sum to ≈ ${totC.toFixed(1)} pts — the gap/volume/news gates carry the rest of the total.`)}
+                          </div>)}
+                      </div>);
+                    })()}
                   </div>)}
               </div>)}
           </div>

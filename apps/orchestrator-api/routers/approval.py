@@ -641,19 +641,39 @@ def whynot(db: Session = Depends(get_db)):
                   f"{(gap if gap is not None else 0):+.2f}%). 1관문 통과.",
                   f"No gap-up at the open ({W(op)}, {(gap if gap is not None else 0):+.2f}% "
                   f"vs yesterday's close {W(yc)}). Gate 1 passed.")
-        # ② 바닥 확인 — still falling?
-        falling = (len(last3) == 3 and last3[2] < last3[0] and last3[2] <= last3[1])
-        tr_txt = " → ".join(f"₩{v:,.0f}" for v in last3) if len(last3) == 3 else "?"
-        if falling:
-            _gate(2, "bottom", False,
-                  f"아직 내려가는 중입니다 — 최근 3분: {tr_txt}. 떨어지는 칼은 잡지 않습니다: "
-                  f"하락이 멈추고 바닥이 버텨야 2관문 통과입니다.",
-                  f"Still FALLING — last 3 minutes: {tr_txt}. We do not catch a falling "
-                  f"knife: the drop must stop and the bottom must hold to pass gate 2.")
+        # ② 주간 포지션 (boss 2026-09-04 18:0x: "2. Position (Weekly)") — the
+        # engine's own gate: we buy only at or under the past week's lowest
+        # close (the same low5 line the gate-chart draws)
+        low5 = None
+        try:
+            from services.kiwoom_rules import _daily20
+            _d20 = _daily20(code, day)
+            low5 = float(_d20[2] or 0) or None
+        except Exception:
+            pass
+        r["low5"] = low5
+        if low5 and px:
+            _dp = round((px / low5 - 1) * 100, 2)
+            if px <= low5 * 1.002:
+                _gate(2, "position", True,
+                      f"주간 포지션 — 현재 {W(px)}가 지난 1주 최저 종가 ₩{low5:,.0f} "
+                      f"부근/아래입니다 ({_dp:+.2f}%) — 살 수 있는 낮은 자리. 2관문 통과.",
+                      f"Weekly position — now {W(px)}, at or under the past week's "
+                      f"lowest close (₩{low5:,.0f}, {_dp:+.2f}%) — a low place to buy. "
+                      f"Gate 2 passed.")
+            else:
+                _gate(2, "position", False,
+                      f"주간 포지션이 높습니다 — 지난 1주 최저 종가 ₩{low5:,.0f}, 현재 "
+                      f"{W(px)} ({_dp:+.2f}% 위). 우리는 주간 저점 부근/아래에서만 삽니다 — "
+                      f"아직 살 자리가 아닙니다.",
+                      f"The weekly POSITION is high — the past week's lowest close is "
+                      f"₩{low5:,.0f} and price sits {W(px)} ({_dp:+.2f}% above it). "
+                      f"We buy only at or under the week's low — not a buying place yet.")
         else:
-            _gate(2, "bottom", True,
-                  f"하락이 멈췄습니다 — 최근 3분: {tr_txt}. 2관문 통과.",
-                  f"The fall has stopped — last 3 minutes: {tr_txt}. Gate 2 passed.")
+            _gate(2, "position", True,
+                  "주간 포지션 — 주간 저점 자료 수집 중, 막는 근거 없음. 2관문 통과.",
+                  "Weekly position — week-low data still collecting, nothing blocking. "
+                  "Gate 2 passed.")
         # ③ 거래량
         try:
             r9v, tv9 = ad._vol_ratio(code)
@@ -695,19 +715,49 @@ def whynot(db: Session = Depends(get_db)):
         r["score"], r["rank"], r["tot"] = sc, rk, tot9
         items9 = []
         try:
-            _src9 = (brain_by.get(code) or {}).get("items") or []
-            if not _src9:
-                # brain cache cold — measure the items directly, the same
-                # bilingual inspection the popups carry
-                _src9 = ad._check_items(code) or []
-            for it in _src9:
-                k9 = str(it.get("k") or "")
-                if (it.get("g") in ("news", "market") or "거래량" in k9
-                        or "갭" in k9):
-                    continue        # the gates above (and the weather) — not counted twice
-                items9.append({"k": it.get("k"), "en": it.get("en"),
-                               "v": it.get("v"), "ven": it.get("ven"),
-                               "s": it.get("s")})
+            # THE TRUE WEIGHTS (boss 2026-09-04 18:0x: "some item has a 100
+            # score but our total is 100 including the gates — we have to
+            # think weighting"): the scorer's own detail carries each item's
+            # intra-group weight, and the group weights carry the rest, so
+            # every item shows its REAL share of the total (w, in %-points)
+            # and the points it actually contributed (ctr = s × w / 100).
+            # A 100-score item in a 0-weight group honestly contributes 0.
+            _rrow9 = next((r0 for r0 in rows9 if str(r0.get("code")) == code), None)
+            _det9 = (_rrow9 or {}).get("detail") or {}
+            if _det9:
+                from services.daily_pick import _weights_now
+                from services.approval_desk import _ITEM_EN, _VAL_EN, _fmt_big, _fmt_big_en
+                _GW9 = _weights_now()
+                for _gn9, _its9 in _det9.items():
+                    for it in _its9 or []:
+                        k9 = str(it.get("k") or "")
+                        if "거래량" in k9 or "갭" in k9 or "뉴스" in k9:
+                            continue    # the gates above — not counted twice
+                        _tw = round((float(it.get("w") or 0) / 100)
+                                    * float(_GW9.get(_gn9) or 0), 1)
+                        _s9 = float(it.get("s") or 0)
+                        _kb = k9.split(" (")[0]
+                        _v9 = str(it.get("v") or "")
+                        _en9 = _ITEM_EN.get(_kb) or _ITEM_EN.get(_kb.split(" ·")[0]) or _kb
+                        items9.append({
+                            "k": k9, "en": _en9 + (
+                                " (" + k9.split(" (")[1] if " (" in k9 else ""),
+                            "v": _fmt_big(_v9), "ven": _VAL_EN.get(_v9) or _fmt_big_en(_v9),
+                            "s": round(_s9), "g": _gn9, "w": _tw,
+                            "ctr": round(_s9 * _tw / 100, 1)})
+                items9.sort(key=lambda i: -(i.get("ctr") or 0))
+            else:
+                _src9 = (brain_by.get(code) or {}).get("items") or []
+                if not _src9:
+                    _src9 = ad._check_items(code) or []
+                for it in _src9:
+                    k9 = str(it.get("k") or "")
+                    if (it.get("g") in ("news", "market") or "거래량" in k9
+                            or "갭" in k9):
+                        continue
+                    items9.append({"k": it.get("k"), "en": it.get("en"),
+                                   "v": it.get("v"), "ven": it.get("ven"),
+                                   "s": it.get("s")})
         except Exception:
             pass
         r["items"] = items9
@@ -723,10 +773,15 @@ def whynot(db: Session = Depends(get_db)):
                   f"100-checklist score {sc} pts · rank {rk} of {tot9} — above the "
                   f"picking bar (top-5 or ≥50 pts). Gate 5 passed.")
         else:
+            # the weakest places = where the most WEIGHTED points were lost
             _lw = sorted([i for i in items9 if i.get("s") is not None],
-                         key=lambda i: i["s"])[:3]
-            _lw_ko = ", ".join(f"{i['k']} {i['v']} ({i['s']}점)" for i in _lw)
-            _lw_en = ", ".join(f"{i.get('en') or i['k']} {i.get('ven') or i['v']} ({i['s']} pts)" for i in _lw)
+                         key=lambda i: -((100 - float(i["s"])) * float(i.get("w") or 1)))[:3]
+            _lw_ko = ", ".join(f"{i['k']} {i['v']} ({i['s']}점"
+                               + (f"·가중 {i['w']}%" if i.get("w") is not None else "") + ")"
+                               for i in _lw)
+            _lw_en = ", ".join(f"{i.get('en') or i['k']} {i.get('ven') or i['v']} ({i['s']} pts"
+                               + (f" · weight {i['w']}%" if i.get("w") is not None else "") + ")"
+                               for i in _lw)
             _tail_ko = (f" 갭·거래량·뉴스를 뺀 나머지 항목 중 가장 약한 곳: {_lw_ko}."
                         if _lw else "")
             _tail_en = (f" Weakest items excluding gap/volume/news: {_lw_en}."
