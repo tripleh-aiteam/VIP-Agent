@@ -382,6 +382,65 @@ def process(code: str, db: Session = Depends(get_db)):
             "steps": ad.process_steps(db, code, name)}
 
 
+@router.get("/gate-chart/{code}")
+def gate_chart(code: str, tf: int = 1):
+    """THE CHART THAT ANSWERS THE THREE GATES (boss 2026-09-04: "I want to
+    click and open the chart, real time, and check all 3 gates — mostly
+    position, daily and weekly — so put a 1-minute and 15-minute chart with
+    the volume number, and we can check 갭상승 too").
+
+    Candles with VOLUME, plus the three lines the gates are actually measured
+    against, so he can see the verdict instead of taking our word for it:
+      gate 1  ref   - yesterday's LAST traded price (the 19:59 print). Today's
+                      open above it is the 갭상승; the gate opens where the
+                      candles come back down to this line.
+      gate 2  low5  - the lowest close of the past week. We buy only at or
+                      under it, so price must be on or below this line.
+      gate 3  vol   - each bar's volume, with the pace so far against a normal
+                      week-average day by this hour.
+    tf = 1 or 15 minutes."""
+    per = 900 if int(tf or 1) >= 15 else 60
+    bars = []
+    try:
+        from routers.paper_desk import live_tape
+        d = live_tape(code=code, period=per, tick=5, bars=400)
+        for b in (d.get("bars") or []):
+            bars.append({"t": (b.get("hhmm") or "")[:5], "o": b.get("open"),
+                         "h": b.get("high"), "l": b.get("low"), "c": b.get("close"),
+                         "v": b.get("vol")})
+    except Exception:
+        bars = []
+    out = {"ok": bool(bars), "code": code, "tf": per // 60, "bars": bars}
+    try:
+        from services.kiwoom_rules import _gap_ref, _daily20, _vol5
+        from services.kiwoom_tape import _day as _kd9
+        day = _kd9()
+        d20 = _daily20(code, day)
+        ref = float(_gap_ref(code, day) or 0)
+        out["ref"] = ref or None
+        out["low5"] = float(d20[2] or 0) or None
+        out["ma20"] = float(d20[3] or 0) or None
+        op = bars[0]["o"] if bars else None
+        out["gap_pct"] = round((op / ref - 1) * 100, 2) if (op and ref) else None
+        px = bars[-1]["c"] if bars else None
+        out["price"] = px
+        # gate 1: has price come back to yesterday's last price?
+        out["g1_back"] = bool(ref and any((b.get("l") or 1e18) <= ref for b in bars))
+        # gate 2: are we at or under the week's low?
+        out["g2_ok"] = bool(out.get("low5") and px and px <= out["low5"])
+        # gate 3: the pace
+        avg5 = _vol5(code, day)
+        cum = sum(float(b.get("v") or 0) for b in bars)
+        frac = max(len(bars) / (381.0 / (per / 60)), 0.02)
+        out["vol_cum"] = round(cum)
+        out["vol_avg5"] = round(avg5) if avg5 else None
+        out["vol_pace"] = round(cum / (avg5 * frac), 2) if avg5 else None
+        out["g3_ok"] = bool(out.get("vol_pace") is not None and out["vol_pace"] >= 1.0)
+    except Exception:
+        pass
+    return out
+
+
 @router.get("/chart/{code}")
 def chart(code: str, mode: str = "min"):
     """Room charts (boss 2026-09-02: 'if we click any stock room we can load

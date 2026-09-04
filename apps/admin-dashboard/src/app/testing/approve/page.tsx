@@ -39,8 +39,15 @@ type Feed = { ok: boolean; market_open: boolean; rooms: Room[]; pending: Sug[];
                                   stamp: string; title: string; qty: number;
                                   price?: number | null; gates_ok?: boolean | null;
                                   ko: string; en: string }[] } | null };
+type GateChart = { ok: boolean; code: string; tf: number;
+  bars: { t: string; o: number; h: number; l: number; c: number; v?: number }[];
+  ref?: number | null; low5?: number | null; ma20?: number | null;
+  gap_pct?: number | null; price?: number | null;
+  g1_back?: boolean; g2_ok?: boolean; g3_ok?: boolean;
+  vol_cum?: number; vol_avg5?: number | null; vol_pace?: number | null };
 type Step = { icon: string; t: string; d: string; t_en?: string; d_en?: string };
 
+const W2 = (n?: number | null) => (n == null ? "-" : "₩" + Math.round(n).toLocaleString());
 const W = (n?: number | null) => (n == null ? "-" : "₩" + Math.round(n).toLocaleString());
 
 type CBar = { t: string; o?: number | null; h?: number | null; l?: number | null; c?: number | null };
@@ -100,6 +107,13 @@ export default function ApprovePage() {
   const [brain, setBrain] = useState<Brain | null>(null);
   const [thinkIdx, setThinkIdx] = useState(0);
   const [edits, setEdits] = useState<Record<number, { qty?: number; price?: number }>>({});
+  // the gate chart inside a popup (boss 2026-09-04: "I want to click and open
+  // the chart, real time, and check all 3 gates — 1 minute and 15 minute with
+  // the volume number, and we can check 갭상승 too")
+  const [gcFor, setGcFor] = useState<number | null>(null);
+  const [gcTf, setGcTf] = useState<1 | 15>(1);
+  const [gc, setGc] = useState<GateChart | null>(null);
+  const [gcBusy, setGcBusy] = useState(false);
   const [picked, setPicked] = useState<string[]>([]);   // stock picker for the agent grid
   // history filters (boss 2026-09-03 12:0x: "some filters like per price, day and others")
   const [fStock, setFStock] = useState("");
@@ -275,6 +289,19 @@ export default function ApprovePage() {
             </div>))}
         </div>)}
     </div>);
+
+  const loadGate = useCallback((code: string, tf: 1 | 15) => {
+    setGcBusy(true);
+    fetch(`${base}/approval/gate-chart/${code}?tf=${tf}`)
+      .then((r) => r.json()).then((d) => setGc(d))
+      .catch(() => setGc(null)).finally(() => setGcBusy(false));
+  }, [base]);
+  // real time: while a chart is open it refreshes with the 5s feed poll
+  useEffect(() => {
+    if (gcFor == null || !gc?.code) return;
+    const id = setInterval(() => loadGate(gc.code, gcTf), 5000);
+    return () => clearInterval(id);
+  }, [gcFor, gc?.code, gcTf, loadGate]);
 
   const zoneChip = (z?: Zone) => !z ? null : (
     <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8,
@@ -1343,6 +1370,15 @@ export default function ApprovePage() {
                          background: popBig ? "#37474f" : "#f0f3f6",
                          color: popBig ? "#fff" : "#37474f" }}>
                 {popBig ? t("⤡ 작게", "⤡ shrink") : t("⤢ 크게 보기", "⤢ expand")}</button>
+              {/* ✕ = 취소 (boss 2026-09-04: "it should have a button on the top,
+                  x means cancel"). Same path as the 취소 button below, so a
+                  dismissal is always a recorded answer and never a silent
+                  disappearance. */}
+              <button disabled={busy === p.id} onClick={() => decide(p.id, false)}
+                title={t("취소", "cancel")}
+                style={{ fontSize: 14, fontWeight: 900, lineHeight: 1, padding: "3px 9px",
+                         borderRadius: 7, cursor: "pointer", border: "1.5px solid #b0bac4",
+                         background: "#eef1f4", color: "#37474f" }}>✕</button>
               <span style={{ fontSize: 11.5, fontWeight: 700, color: "#5b6570" }}>{p.hhmm}</span>
             </div>
             {/* the reasons scroll INSIDE the card (boss 2026-09-03 17:4x:
@@ -1371,6 +1407,93 @@ export default function ApprovePage() {
                   style={{ fontWeight: 800, color: "#1565c0", fontSize: 11.5, display: "block", marginBottom: 2 }}>
                   📎 {t("⑥ 뉴스 기사 전체 읽기", "⑥ read the full news article")}</a> : null; })()}
               {chkList(`p${p.id}`, p.check_items)}</div>
+            {/* 📈 THE GATE CHART (boss 2026-09-04). One click opens it beside
+                the price; it redraws every 5s while open. The three lines are
+                the gates themselves, so he reads the verdict off the chart
+                instead of taking our word: the 어제 19:59 line (gate 1 — the
+                candles must come back DOWN to it), the 주간 최저 line (gate 2 —
+                price must sit at or under it), and the volume bars with the
+                pace (gate 3). */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <button onClick={() => {
+                        if (gcFor === p.id) { setGcFor(null); setGc(null); return; }
+                        setGcFor(p.id); setGc(null); loadGate(p.code, gcTf);
+                      }}
+                style={{ flex: 1, padding: "7px 0", borderRadius: 8, fontWeight: 800,
+                         fontSize: 12.5, cursor: "pointer", border: "2px solid #37474f",
+                         background: gcFor === p.id ? "#37474f" : "#f0f3f6",
+                         color: gcFor === p.id ? "#fff" : "#22282f" }}>
+                {gcFor === p.id ? t("📈 차트 닫기", "📈 close chart")
+                                : t("📈 차트로 3관문 확인", "📈 check the 3 gates on the chart")}
+              </button>
+            </div>
+            {gcFor === p.id && (
+              <div style={{ border: "1.5px solid #cfd6dd", borderRadius: 9, padding: 8,
+                            marginBottom: 9, background: "#fafbfc" }}>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                  {([1, 15] as const).map((tf) => (
+                    <button key={tf} onClick={() => { setGcTf(tf); loadGate(p.code, tf); }}
+                      style={{ fontSize: 11.5, fontWeight: 800, padding: "3px 10px", borderRadius: 7,
+                               cursor: "pointer", border: "1.5px solid #9aa5b1",
+                               background: gcTf === tf ? "#1565c0" : "#fff",
+                               color: gcTf === tf ? "#fff" : "#37474f" }}>
+                      {tf}{t("분", "min")}</button>))}
+                  <span style={{ fontSize: 10.5, color: "#5b6570", marginLeft: "auto" }}>
+                    {gcBusy ? t("불러오는 중…", "loading…") : t("5초마다 갱신", "refreshes every 5s")}</span>
+                </div>
+                {gc && gc.bars && gc.bars.length > 0 ? (() => {
+                  const bs = gc.bars.slice(-90);
+                  const lines = [gc.ref, gc.low5].filter((x): x is number => !!x);
+                  const hi = Math.max(...bs.map((b) => b.h), ...lines);
+                  const lo = Math.min(...bs.map((b) => b.l), ...lines);
+                  const H = 116, VH = 34, W = 300, pad = (hi - lo) * 0.06 || 1;
+                  const Y = (v: number) => H - ((v - lo + pad) / (hi - lo + pad * 2)) * H;
+                  const bw = W / bs.length;
+                  const vmax = Math.max(...bs.map((b) => b.v || 0), 1);
+                  return (
+                    <>
+                      <svg viewBox={`0 0 ${W} ${H + VH + 4}`} style={{ width: "100%", height: 168 }}>
+                        {gc.ref && <><line x1={0} x2={W} y1={Y(gc.ref)} y2={Y(gc.ref)}
+                            stroke="#e65100" strokeWidth={1} strokeDasharray="4 3" />
+                          <text x={2} y={Y(gc.ref) - 2} fontSize={7} fill="#e65100">
+                            {t("어제 19:59", "yest 19:59")} {Math.round(gc.ref).toLocaleString()}</text></>}
+                        {gc.low5 && <><line x1={0} x2={W} y1={Y(gc.low5)} y2={Y(gc.low5)}
+                            stroke="#2e7d32" strokeWidth={1} strokeDasharray="4 3" />
+                          <text x={2} y={Y(gc.low5) - 2} fontSize={7} fill="#2e7d32">
+                            {t("주간 최저", "week low")} {Math.round(gc.low5).toLocaleString()}</text></>}
+                        {bs.map((b, i) => {
+                          const up = b.c >= b.o, x = i * bw + bw / 2;
+                          const col = up ? "#e53935" : "#1e88e5";
+                          return (<g key={i}>
+                            <line x1={x} x2={x} y1={Y(b.h)} y2={Y(b.l)} stroke={col} strokeWidth={0.7} />
+                            <rect x={i * bw + bw * 0.18} width={Math.max(bw * 0.64, 0.8)}
+                                  y={Y(Math.max(b.o, b.c))}
+                                  height={Math.max(Math.abs(Y(b.o) - Y(b.c)), 0.8)} fill={col} />
+                            <rect x={i * bw + bw * 0.18} width={Math.max(bw * 0.64, 0.8)}
+                                  y={H + 4 + VH - ((b.v || 0) / vmax) * VH}
+                                  height={((b.v || 0) / vmax) * VH} fill={col} opacity={0.45} />
+                          </g>);
+                        })}
+                      </svg>
+                      <div style={{ display: "flex", justifyContent: "space-between",
+                                    fontSize: 9.5, color: "#5b6570", marginTop: -4 }}>
+                        <span>{bs[0]?.t}</span><span>{bs[bs.length - 1]?.t}</span></div>
+                      <div style={{ fontSize: 11, marginTop: 5, lineHeight: 1.6 }}>
+                        <div style={{ color: gc.g1_back ? "#2e7d32" : "#c62828", fontWeight: 700 }}>
+                          {gc.g1_back ? "✓" : "✗"} {t("① 갭상승", "① gap-up")} {gc.gap_pct != null ? `${gc.gap_pct >= 0 ? "+" : ""}${gc.gap_pct}%` : "-"}
+                          {" — "}{gc.g1_back ? t("어제 가격까지 내려왔습니다", "it came back to yesterday's price")
+                                             : t("아직 어제 가격까지 안 내려왔습니다", "not back to yesterday's price yet")}</div>
+                        <div style={{ color: gc.g2_ok ? "#2e7d32" : "#c62828", fontWeight: 700 }}>
+                          {gc.g2_ok ? "✓" : "✗"} {t("② 주간 위치", "② weekly position")} — {t("지금", "now")} {W2(gc.price)} / {t("주간 최저", "week low")} {W2(gc.low5)}</div>
+                        <div style={{ color: gc.g3_ok ? "#2e7d32" : "#c62828", fontWeight: 700 }}>
+                          {gc.g3_ok ? "✓" : "✗"} {t("③ 거래량", "③ volume")} {(gc.vol_cum || 0).toLocaleString()}{t("주", " sh")}
+                          {" · "}{t("주간 평균 대비", "vs week avg")} {gc.vol_pace ?? "-"}{t("배", "x")}</div>
+                      </div>
+                    </>);
+                })() : (
+                  <div style={{ fontSize: 11.5, color: "#5b6570", padding: "10px 0" }}>
+                    {gcBusy ? t("불러오는 중…", "loading…") : t("차트 데이터가 없습니다.", "no chart data.")}</div>)}
+              </div>)}
             {/* editable numbers */}
             <div style={{ display: "flex", gap: 8, marginBottom: 9 }}>
               <div style={{ flex: 1 }}>
