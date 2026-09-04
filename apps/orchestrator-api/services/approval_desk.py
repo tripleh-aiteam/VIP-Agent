@@ -51,6 +51,47 @@ def _save(st: dict) -> None:
         pass
 
 
+def _save_scan(st: dict, seen_ids: set) -> None:
+    """THE SCANNER MUST NOT ERASE AN ANSWER MADE WHILE IT WAS THINKING.
+
+    Boss 2026-09-04: "if I click approve and choose market value, the popup
+    should not come after clicking approve - but now it keeps asking."
+
+    Both sides did a plain read-modify-write on one JSON file with no lock. The
+    scanner loads the state, replays the engine for SECONDS, then writes
+    everything back - so an approval that landed in that window was simply
+    overwritten: his answer erased, the stock un-marked, and the popup
+    faithfully raised again on the next pass. The popup was not repeating; his
+    click was being undone.
+
+    The scanner now reconciles with whatever is on disk before writing. What
+    the ANSWER owns - the asked marks, the holdings, and the disappearance of a
+    popup that was answered - always wins over what the scan remembered."""
+    cur = _load()
+    if not cur:
+        _save(st)
+        return
+    # 1. asked marks merge, and a mark made during the scan wins
+    merged = dict(st.get("asked") or {})
+    merged.update(cur.get("asked") or {})
+    st["asked"] = merged
+    # 2. a popup that vanished from disk during the scan was ANSWERED - drop it
+    live = {p.get("id") for p in (cur.get("pending") or [])}
+    st["pending"] = [p for p in (st.get("pending") or [])
+                     if (p.get("id") not in seen_ids) or (p.get("id") in live)]
+    # 3. holdings opened by an approval during the scan must survive
+    have = {h.get("code") for h in (st.get("held") or [])}
+    for h in (cur.get("held") or []):
+        if h.get("code") not in have:
+            st.setdefault("held", []).append(h)
+    # 4. keep every log row either side wrote
+    seen_log = {l.get("id") for l in (st.get("log") or [])}
+    extra = [l for l in (cur.get("log") or []) if l.get("id") not in seen_log]
+    if extra:
+        st["log"] = ((st.get("log") or []) + extra)[-200:]
+    _save(st)
+
+
 def can_propose(now=None) -> bool:
     """May the desk ask for a decision RIGHT NOW? (boss 2026-09-03 16:4x: the
     watch note was still speaking at 16:40 - "make sure after 15:20 it should
@@ -765,6 +806,16 @@ def scan(db) -> dict:
     st.setdefault("pending", [])
     st.setdefault("held", [])
     st.setdefault("cool", {})
+    _seen0 = {p.get("id") for p in st["pending"]}
+    # YESTERDAY'S ANSWERS DO NOT SILENCE TODAY (found 2026-09-04: the asked
+    # marks still carried 11:46, 13:03 and 15:31 from the previous session, so
+    # every stock he answered yesterday could never be offered again today).
+    try:
+        from services.kiwoom_tape import _day as _kd0
+        if st.get("asked_day") != _kd0():
+            st["asked"], st["asked_day"] = {}, _kd0()
+    except Exception:
+        pass
     # the flat close runs BEFORE any market-hours gate — evening polls too
     if _hhmm() >= "15:20" and st.get("held"):
         try:
@@ -815,7 +866,7 @@ def scan(db) -> dict:
                      "why_gone": "장 마감 — 제안을 거둡니다 / market closed"})
             st["pending"] = []
             st["log"] = st["log"][-200:]
-        _save(st)
+        _save_scan(st, _seen0)
         return st
     # NO SUGGESTIONS AFTER 15:20 (boss 2026-09-03 18:1x: "after 15:20 our
     # agent should not give suggestions because the market is closing") — the
@@ -823,7 +874,7 @@ def scan(db) -> dict:
     if _hhmm() >= "15:20":
         if st["pending"]:
             st["pending"] = []
-        _save(st)
+        _save_scan(st, _seen0)
         return st
     from services.paper_desk import fast_price
     _fold_lots(st)                 # one position per stock, including inherited ones
@@ -1048,7 +1099,7 @@ def scan(db) -> dict:
         except Exception as e:
             log.warning(f"approval scan {code}: {str(e)[:80]}")
 
-    _save(st)
+    _save_scan(st, _seen0)
     return st
 
 
