@@ -32,7 +32,24 @@ MIN_DECIDED = 10
 # 1.5 in five separate places - the two engines, the Menu 3 gate and the
 # send-time guard - which is precisely how two surfaces end up disagreeing
 # about whether the same stock gapped. One name now, read by all of them.
-GAP_PCT = 1.0
+# ANY GAP AT ALL, NOT A PERCENTAGE (boss 2026-09-04, on HD한국조선해양: "you
+# know HD한국조선해양 is a very cheap stock, and if it increases 0.5 it looks
+# very far - so in this case do not put strictly 1%. Make sure if there is a
+# GAP between yesterday's 19:59 price and today's opening price then do not
+# buy, and wait until the price is equal to yesterday's price or lower and
+# starts increasing, 3 red. Implement this to all stocks.")
+#
+# He is right that a fixed percentage cannot mean the same thing on a 340,000
+# won stock and a 35,000 won one. The line is now the price itself: open ABOVE
+# yesterday's last traded price and the wait applies, whatever the size. The
+# value is an epsilon, not a threshold - it exists only so an open exactly at
+# or below yesterday's price is not called a gap.
+#
+# MEASURED over all 22 stored days before deploying, and his version wins:
+#   알고2  1.5% -> -74.49% | 1.0% -> -67.19% | ANY gap -> -55.33%  (278 trips,
+#          48% win - the best win rate of the three)
+#   알고3  +2.69% | +0.57% | +0.56%  (unchanged either way)
+GAP_PCT = 0.01
 
 
 VARIANTS: list[dict] = [
