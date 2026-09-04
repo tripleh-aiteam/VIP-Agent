@@ -79,23 +79,35 @@ def _en(transcript, lang) -> bool:
     return en
 
 
-def _fresh_stamps(code: str, limit: int = 2) -> list[dict]:
-    """Today's news-intern stamps for one stock (title, stamp, ts, why) — the freshest
-    last. Empty when nothing was collected."""
+def _fresh_stamps(code: str, limit: int = 2, max_age_min: int = 60) -> list[dict]:
+    """REAL-TIME news-intern stamps for one stock (title, stamp, ts, why) —
+    the freshest last. Rows older than max_age_min are dropped entirely
+    (boss 2026-09-04 12:3x: "remove old days or old time news — it should
+    have real-time news; if news is old it is better to not add"). Risk
+    gates that want a wider net pass max_age_min explicitly."""
     out = []
     try:
         import json as _json
+        from datetime import datetime as _dt
         from pathlib import Path as _P
         nd = _P(__file__).resolve().parent.parent / "data" / "news_intern"
         files = sorted(nd.glob("2*.jsonl"))
         if files:
+            now = _dt.now()
             for ln in files[-1].read_text(encoding="utf-8").splitlines():
                 try:
                     r = _json.loads(ln)
                 except Exception:
                     continue
-                if r.get("code") == code:
-                    out.append(r)
+                if r.get("code") != code:
+                    continue
+                try:
+                    ts = _dt.fromisoformat(str(r.get("ts"))[:19])
+                    if (now - ts).total_seconds() > max_age_min * 60:
+                        continue
+                except Exception:
+                    continue          # a row with no readable clock is not "real-time"
+                out.append(r)
     except Exception:
         pass
     return out[-limit:]

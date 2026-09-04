@@ -7267,6 +7267,101 @@ def _run_agent_impl(
     # matrix rig: "trade-first route failed: cannot access local variable 'system'").
     system = ""
 
+    # === 📰 STOCK NEWS LANE (boss 2026-09-04 12:3x: "for the chatbot make
+    # sure if we ask it should know all stock-related news and give us
+    # information using our API key — Naver"). Deterministic: a news question
+    # answers from the boss's OWN Naver News API (the tripleh app keys) plus
+    # the AI news intern's fresh verdicts — never from the LLM's memory.
+    # Real-time law: every line carries the article's own age; nothing older
+    # than 24h is shown, and the board surfaces stay at 1h.
+    if (not confirmed_tool and not attachment_ids and transcript and len(transcript) <= 200
+            and _re.search(r"뉴스|기사|호재|악재|\bnews\b|headline", transcript, _re.IGNORECASE)
+            and not _re.search(r"뉴스\s*인턴|intern|구현|implement|추가해|만들|build|remove|삭제"
+                               r"|번역|translate|요약해|summariz|summarise",
+                               transcript, _re.IGNORECASE)):
+        try:
+            from services.naver_news import fresh_news
+            from services.stock_resolver import resolve_one
+            _nc, _nn = resolve_one(transcript)
+            if not _nc:                          # "any news on it?" → inherit
+                for _h in reversed(history or []):
+                    _nc, _nn = resolve_one(str(_h.get("content") or _h.get("text") or ""))
+                    if _nc:
+                        break
+
+            def _age9(m: float) -> str:
+                m = int(m)
+                if m < 60:
+                    return f"{m}분 전" if lang == "ko" else f"{m} min ago"
+                return f"{m // 60}시간 전" if lang == "ko" else f"{m // 60}h ago"
+
+            lines: list[str] = []
+            if _nc:
+                # ONE stock: its freshest articles + the intern's verdict
+                arts = fresh_news(str(_nn), display=5, max_age_min=1440)
+                _hd = (f"📰 {_nn} 실시간 뉴스 (네이버 API)" if lang == "ko"
+                       else f"📰 {_nn} real-time news (Naver API)")
+                lines.append(_hd)
+                try:
+                    from services.checklist_advice import _fresh_stamps
+                    _sts = _fresh_stamps(_nc, limit=3, max_age_min=180)
+                    _bad = [s for s in _sts if str(s.get("stamp")) in ("위험", "악재")]
+                    _good = [s for s in _sts if str(s.get("stamp")) == "호재"]
+                    if _bad:
+                        lines.append(("🤖 AI 뉴스 인턴 판정: ⚠️ 위험 — " if lang == "ko"
+                                      else "🤖 AI news intern verdict: ⚠️ DANGER — ")
+                                     + str(_bad[-1].get("why") or _bad[-1].get("title"))[:90])
+                    elif _good:
+                        lines.append(("🤖 AI 뉴스 인턴 판정: 호재 — " if lang == "ko"
+                                      else "🤖 AI news intern verdict: GOOD news — ")
+                                     + str(_good[-1].get("why") or _good[-1].get("title"))[:90])
+                except Exception:
+                    pass
+                if arts:
+                    for a in arts:
+                        lines.append(f"· ({_age9(a['age_min'])}) {a['title'][:70]}")
+                        if a.get("link"):
+                            lines.append(f"  🔗 {a['link']}")
+                else:
+                    lines.append("최근 24시간 안의 새 기사가 없습니다 — 오래된 뉴스는 보여드리지 않습니다."
+                                 if lang == "ko" else
+                                 "No new articles inside the last 24 hours — old news is not shown.")
+            else:
+                # NO stock named → the whole market + the 20-stock board
+                arts = fresh_news("코스피 증시", display=5, max_age_min=720)
+                lines.append("📰 시장 실시간 뉴스 (네이버 API)" if lang == "ko"
+                             else "📰 Market real-time news (Naver API)")
+                for a in arts:
+                    lines.append(f"· ({_age9(a['age_min'])}) {a['title'][:70]}")
+                    if a.get("link"):
+                        lines.append(f"  🔗 {a['link']}")
+                try:
+                    from routers.approval import _stamps_by_code
+                    _by = _stamps_by_code()          # 1h window, all 20 stocks
+                    _flags = []
+                    for _c9, _rs9 in _by.items():
+                        for _r9 in reversed(_rs9):
+                            _st9 = str(_r9.get("stamp"))
+                            if _st9 in ("호재", "위험", "악재"):
+                                _flags.append(f"{_r9.get('name') or _c9}: {_st9}")
+                                break
+                    if _flags:
+                        lines.append(("🤖 감시 20종목 중 1시간 내 특이 뉴스 — " if lang == "ko"
+                                      else "🤖 Fresh flags on the 20 watched stocks (last hour) — ")
+                                     + ", ".join(_flags[:6]))
+                    elif lang == "ko":
+                        lines.append("🤖 감시 20종목에는 최근 1시간 특이 뉴스가 없습니다.")
+                    else:
+                        lines.append("🤖 No notable news on the 20 watched stocks in the last hour.")
+                except Exception:
+                    pass
+            if len(lines) > 1:
+                return {"intent": "stock_news", "language": lang,
+                        "reply": "\n".join(lines), "action": None, "speak": True,
+                        "transcript": transcript, "tool_used": "naver_news"}
+        except Exception:
+            pass
+
     # === LLM TASK — translate/summarize/rewrite requests are normal-LLM work; the text
     # they contain must never fire the trading engines. Runs before every stock intent.
     if (not confirmed_tool and not attachment_ids and transcript

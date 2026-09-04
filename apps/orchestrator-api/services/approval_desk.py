@@ -889,28 +889,35 @@ def _check_items(code: str, hhmm: str | None = None, day8: str | None = None) ->
         # scores it; with no stamp, the boss's Naver API supplies the freshest
         # headline as a neutral reading.
         try:
+            # REAL-TIME ONLY (boss 2026-09-04 12:3x): stamps older than an
+            # hour are dropped by _fresh_stamps, and the shown line carries
+            # the news' own clock so its freshness is visible.
             from services.checklist_advice import _fresh_stamps
             _sn = _fresh_stamps(code, limit=3)
             _badn = [s for s in _sn if str(s.get("stamp")) in ("위험", "악재")]
             _goodn = [s for s in _sn if str(s.get("stamp")) == "호재"]
+            def _nhm(s9):
+                return str(s9.get("ts") or "")[11:16]
             if _badn:
                 out.append({"k": "📰 뉴스 검사 (AI 인턴)",
-                            "v": f"위험: {str(_badn[-1].get('title'))[:40]}",
+                            "v": f"위험({_nhm(_badn[-1])}): {str(_badn[-1].get('title'))[:40]}",
                             "s": 15, "g": "news", "bad": True,
                             "link": _badn[-1].get("link")})
             elif _goodn:
                 out.append({"k": "📰 뉴스 검사 (AI 인턴)",
-                            "v": f"호재: {str(_goodn[-1].get('title'))[:40]}",
+                            "v": f"호재({_nhm(_goodn[-1])}): {str(_goodn[-1].get('title'))[:40]}",
                             "s": 85, "g": "news", "bad": False,
                             "link": _goodn[-1].get("link")})
             else:
+                # Naver fallback obeys the same law: a headline older than
+                # 2 hours is NOT shown at all — better no news than old news
                 _nm9 = (me or {}).get("name")
                 _arts9 = []
                 if _nm9:
-                    from services.naver_news import search_news
-                    _arts9 = search_news(str(_nm9), display=1)
+                    from services.naver_news import fresh_news
+                    _arts9 = fresh_news(str(_nm9), display=3, max_age_min=120)
                 out.append({"k": "📰 뉴스 검사",
-                            "v": (f"특이 없음 · 최신: {_arts9[0]['title'][:36]}" if _arts9
+                            "v": (f"특이 없음 · {_arts9[0]['age_min']}분 전: {_arts9[0]['title'][:34]}" if _arts9
                                   else "특이 뉴스 없음"),
                             "s": 50, "g": "news", "bad": False,
                             "link": (_arts9[0].get("link") if _arts9 else None)})
@@ -1241,8 +1248,10 @@ def scan(db) -> dict:
                 continue
             try:
                 from services.checklist_advice import _fresh_stamps
+                # the RISK veto keeps a wider 3h net — missing a danger story
+                # costs money, so the real-time display law does not thin it
                 if any(str(x.get("stamp")) in ("위험", "악재")
-                       for x in _fresh_stamps(code, limit=2)):
+                       for x in _fresh_stamps(code, limit=2, max_age_min=180)):
                     continue            # danger news still vetoes, as before
             except Exception:
                 pass
@@ -2290,14 +2299,19 @@ def _why_buy(code: str, name: str, hold: dict):
         _st6 = _fresh_stamps(code, limit=3)
         _bad6 = [s for s in _st6 if str(s.get("stamp")) in ("위험", "악재")]
         _good6 = [s for s in _st6 if str(s.get("stamp")) == "호재"]
+        # real-time only: _fresh_stamps drops rows older than an hour, and
+        # the line shows the news' own clock (boss 2026-09-04 12:3x: "remove
+        # old days or old time news — if news is old, better do not add")
         if _bad6:
             _t6 = str(_bad6[-1].get("title") or "")[:42]
-            R.append(f"⑥ 📰 뉴스 확인 — ⚠️ 위험 뉴스: \"{_t6}\" — 가격을 끌어내릴 수 있는 재료라 주의합니다.")
-            E.append(f"⑥ 📰 News check — ⚠️ danger news: \"{_t6}\" — a story that can push the price DOWN, so we stay careful.")
+            _h6 = str(_bad6[-1].get("ts") or "")[11:16]
+            R.append(f"⑥ 📰 뉴스 확인 — ⚠️ 위험 뉴스({_h6}): \"{_t6}\" — 가격을 끌어내릴 수 있는 재료라 주의합니다.")
+            E.append(f"⑥ 📰 News check — ⚠️ danger news ({_h6}): \"{_t6}\" — a story that can push the price DOWN, so we stay careful.")
         elif _good6:
             _t6 = str(_good6[-1].get("title") or "")[:42]
-            R.append(f"⑥ 📰 뉴스 확인 — 좋은 뉴스가 있습니다: \"{_t6}\" — 가격 상승에 힘을 보태는 재료입니다.")
-            E.append(f"⑥ 📰 News check — GOOD news: \"{_t6}\" — a story that helps push the price UP.")
+            _h6 = str(_good6[-1].get("ts") or "")[11:16]
+            R.append(f"⑥ 📰 뉴스 확인 — 좋은 뉴스가 있습니다({_h6}): \"{_t6}\" — 가격 상승에 힘을 보태는 재료입니다.")
+            E.append(f"⑥ 📰 News check — GOOD news ({_h6}): \"{_t6}\" — a story that helps push the price UP.")
         # no notable news → SKIP the line entirely (boss 2026-09-03 20:0x:
         # "if no news just skip it")
     except Exception:

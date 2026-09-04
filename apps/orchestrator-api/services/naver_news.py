@@ -24,6 +24,32 @@ def _env(k: str) -> str:
     return (os.environ.get(k) or "").strip()
 
 
+def pub_age_min(pub: str) -> float | None:
+    """Minutes since an article's pubDate (RFC-822, e.g. 'Thu, 04 Sep 2026
+    14:20:00 +0900'), or None when unreadable. The REAL-TIME news law (boss
+    2026-09-04: 'remove old days or old time news') filters on this."""
+    try:
+        from email.utils import parsedate_to_datetime
+        from datetime import datetime, timezone
+        dt = parsedate_to_datetime(str(pub))
+        return (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
+    except Exception:
+        return None
+
+
+def fresh_news(query: str, display: int = 5, max_age_min: int = 1440) -> list[dict]:
+    """search_news + the real-time law: only articles younger than
+    max_age_min, each row gaining 'age_min'. Articles whose clock cannot be
+    read are dropped — unknown age is not real-time."""
+    out = []
+    for a in search_news(query, display=display):
+        age = pub_age_min(a.get("pub") or "")
+        if age is None or age > max_age_min:
+            continue
+        out.append({**a, "age_min": round(age)})
+    return out
+
+
 def search_news(query: str, display: int = 5) -> list[dict]:
     """Freshest articles for a query: [{'title','link','pub','desc'}...] or []."""
     key = (query, display)
@@ -44,7 +70,10 @@ def search_news(query: str, display: int = 5) -> list[dict]:
             t = re.sub(r"</?b>|&quot;|&amp;", lambda m: {"&quot;": '"', "&amp;": "&"}.get(m.group(0), ""),
                        str(it.get("title") or ""))
             out.append({"title": t, "link": it.get("link"),
-                        "pub": str(it.get("pubDate") or "")[:22],
+                        # FULL RFC-822 date — the old [:22] cut chopped the
+                        # time+zone off, so pub_age_min could never read it
+                        # and the real-time filter dropped EVERY article
+                        "pub": str(it.get("pubDate") or "")[:40],
                         "desc": re.sub(r"</?b>", "", str(it.get("description") or ""))[:120]})
         _CACHE[key] = (time.time(), out)
         return out

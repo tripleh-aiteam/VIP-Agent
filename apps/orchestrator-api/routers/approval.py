@@ -15,10 +15,12 @@ _NOTE9 = {"t": 0.0, "v": None}
 _NEWS9 = {"t": 0.0, "by_code": {}}
 
 
-def _stamps_by_code(max_age_h: float = 3.0) -> dict:
+def _stamps_by_code(max_age_h: float = 1.0) -> dict:
     """The news intern's stamps for EVERY stock, one file read, cached 120s
     (boss 2026-09-03 18:2x: news joins the agent's judgement — per stock and
-    across the whole 20). {code: [rows newest-last]} limited to fresh rows."""
+    across the whole 20). {code: [rows newest-last]} limited to fresh rows.
+    REAL-TIME LAW (boss 2026-09-04 12:3x: 'remove old days or old time
+    news'): the display window is ONE hour — an old story is not shown."""
     import time as _t, json as _j
     from datetime import datetime as _dt
     if _t.time() - _NEWS9["t"] < 120 and _NEWS9["by_code"]:
