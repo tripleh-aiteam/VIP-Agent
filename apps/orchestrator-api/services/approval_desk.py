@@ -1892,7 +1892,52 @@ def verify_now(code: str, side: str = "BUY", day: str = "",
                     f"it stands at {pos:.0f}% of today's range - the top of the "
                     f"day. We do not chase. Not sending.", snap)
 
-    # ③ the two average lines
+    # ② GATE 2 - THE WEEKLY POSITION. Buy only at or under the lowest close of
+    # the past week (boss 2026-09-04: "we will check the weekly position; if it
+    # is lower or equal to the minimum price within the last week then we can
+    # buy, otherwise do not buy").
+    try:
+        from services.kiwoom_rules import _daily20 as _d20g, _vol5 as _v5g
+        _dd = _d20g(code, _d0)
+        _low5 = float(_dd[2] or 0)
+        snap["low5"] = _low5
+        if _low5 and px > _low5:
+            return (False,
+                    f"이번 주 최저가 ₩{_low5:,.0f}보다 위입니다 (지금 ₩{px:,.0f}) — "
+                    f"주간 최저가 이하에서만 삽니다. 보내지 않습니다.",
+                    f"it stands ABOVE the week's lowest close of {_low5:,.0f} "
+                    f"(now {px:,.0f}). We buy only at or under the weekly low. "
+                    f"Not sending.", snap)
+    except Exception:
+        pass
+
+    # ③ GATE 3 - THE VOLUME. Today's flow must be running at least at a normal
+    # week's pace by this hour (boss 2026-09-04: "if trading volume is higher
+    # than average within the week, or at least a normal number, then buy").
+    try:
+        _avg5 = _v5g(code, _d0)
+        if _avg5:
+            _cum = sum(float(b.get("vol") or 0) for b in bars)
+            try:
+                _cum = float(_vol_scale(code, _d0, int(_cum)) * _cum)
+            except Exception:
+                pass
+            _frac = len(bars) / 381.0
+            _exp = float(_avg5) * max(_frac, 0.02)
+            _pace = _cum / _exp if _exp else None
+            snap["vol_pace"] = round(_pace, 2) if _pace else None
+            if _pace is not None and _pace < 1.0:
+                return (False,
+                        f"거래량이 평소보다 적습니다 — 지금까지 {_cum:,.0f}주로 "
+                        f"주간 평균 페이스의 {_pace:.2f}배입니다 (1.0배 이상 필요). "
+                        f"보내지 않습니다.",
+                        f"volume is running THIN - {_cum:,.0f} shares so far, "
+                        f"{_pace:.2f}x the pace a normal week-average day would "
+                        f"set by now (1.0x required). Not sending.", snap)
+    except Exception:
+        pass
+
+    # ④ the two average lines
     try:
         from services.kiwoom_rules import _daily20
         d = _daily20(code, _d0)

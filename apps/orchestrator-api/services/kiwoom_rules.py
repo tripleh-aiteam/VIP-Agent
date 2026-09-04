@@ -268,6 +268,34 @@ def _us_mode_today() -> str:
 _D20_CACHE: dict = {}
 
 
+_VOL5_CACHE: dict = {}
+
+
+def _vol5(code: str, day: str) -> float | None:
+    """Average DAILY volume over the five sessions before `day` - the "average
+    within the week" gate 3 measures against (boss 2026-09-04)."""
+    key = (code, day)
+    hit = _VOL5_CACHE.get(key)
+    if hit is not None:
+        return hit
+    out = None
+    try:
+        from services.daily_pick import _conn
+        cn = _conn(); cu = cn.cursor()
+        cu.execute("""SELECT volume FROM raw_daily_prices
+                      WHERE ticker = %s AND date < %s AND volume IS NOT NULL
+                      ORDER BY date DESC LIMIT 5""",
+                   (code, f"{day[:4]}-{day[4:6]}-{day[6:8]}"))
+        vs = [float(r[0]) for r in cu.fetchall() if r[0]]
+        cn.close()
+        if len(vs) >= 3:
+            out = sum(vs) / len(vs)
+    except Exception:
+        out = None
+    _VOL5_CACHE[key] = out
+    return out
+
+
 def _gap_ref(code: str, day: str) -> float:
     """The price an overnight gap is measured FROM (boss 2026-09-03 evening:
     "we have to compare with the 9am price and one day before 20:00 price").
@@ -819,6 +847,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                          "prev_close": _gap_ref(code, d or _kd0()),
                          "low20": _daily20(code, d or _kd0())[1],
                          "low5": _daily20(code, d or _kd0())[2],
+                         "vol_day_avg": _vol5(code, d or _kd0()),
                          "ma20": _daily20(code, d or _kd0())[3],
                          "mayr": _daily20(code, d or _kd0())[4],
                          "open_vol_med": _open_vol_med(code),
@@ -1046,6 +1075,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          "prev_close": _gap_ref(c_code, d or _kd0()),
                          "low20": _daily20(c_code, d or _kd0())[1],
                          "low5": _daily20(c_code, d or _kd0())[2],
+                         "vol_day_avg": _vol5(c_code, d or _kd0()),
                          "ma20": _daily20(c_code, d or _kd0())[3],
                          "mayr": _daily20(c_code, d or _kd0())[4],
                          "open_vol_med": _open_vol_med(c_code),

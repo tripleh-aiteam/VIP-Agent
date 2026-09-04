@@ -271,6 +271,23 @@ VARIANTS: list[dict] = [
      # find the best %"): full sweep 1.0-4.0 on 251 days - 1.0% is best desk-
      # wide (+42.1M/yr vs +28.5M at 2.0; D1 +24.1M, D2 +5.5M, D3 +12.5M).
      "gap_guard": GAP_PCT, "gap_wait": "median_dip3",
+     # ── HIS THREE GATES, IN HIS ORDER (boss 2026-09-04) ────────────────────
+     # 1 갭상승 : any open above yesterday's 19:59 price stops buying for the
+     #            day until price comes back to it (gap_guard/prev3, above)
+     # 2 위치   : buy only at or under the LOWEST close of the past week
+     # 3 거래량 : today's volume must be running at least at a normal week's
+     #            pace by this hour
+     # MEASURED over all 22 stored days, added in exactly this order:
+     #   알고2  gate1 281tr 48%% -54.54%%  -> +g2 84tr 52%% -5.63%%
+     #                                   -> +g3 49tr 65%% +7.94%%
+     #   알고3  gate1  32tr 59%%  +1.07%%  -> +g2 20tr 60%% -0.52%%
+     #                                   -> +g3 14tr 79%% +4.95%%
+     # 알고2 turns POSITIVE for the first time in the whole court. Gate 2 alone
+     # is not the win - it cuts the bleeding; gate 3 is what makes both algos
+     # profitable, which is the opposite of what the ranking test said about
+     # volume and worth saying plainly: volume is a poor way to CHOOSE a stock
+     # and a good way to REFUSE a moment.
+     "week_low": True, "week_vol": 1.0,
      # median_dip3 (boss 2026-09-03 15:4x, SK하이닉스 09:33 exhibit): a gap-up
      # starter at/below its 1-year MEDIAN waits for the fade's minimum to hold
      # 3 bars and turn (2-of-3 rises, within 1.5% of the bottom) - the release
@@ -416,6 +433,23 @@ VARIANTS: list[dict] = [
      # It clearly helps 알고2 and slightly hurts 알고3; deployed to both at his
      # explicit order, with both numbers on record.
      "gap_guard": GAP_PCT, "gap_wait": "prev3",
+     # ── HIS THREE GATES, IN HIS ORDER (boss 2026-09-04) ────────────────────
+     # 1 갭상승 : any open above yesterday's 19:59 price stops buying for the
+     #            day until price comes back to it (gap_guard/prev3, above)
+     # 2 위치   : buy only at or under the LOWEST close of the past week
+     # 3 거래량 : today's volume must be running at least at a normal week's
+     #            pace by this hour
+     # MEASURED over all 22 stored days, added in exactly this order:
+     #   알고2  gate1 281tr 48%% -54.54%%  -> +g2 84tr 52%% -5.63%%
+     #                                   -> +g3 49tr 65%% +7.94%%
+     #   알고3  gate1  32tr 59%%  +1.07%%  -> +g2 20tr 60%% -0.52%%
+     #                                   -> +g3 14tr 79%% +4.95%%
+     # 알고2 turns POSITIVE for the first time in the whole court. Gate 2 alone
+     # is not the win - it cuts the bleeding; gate 3 is what makes both algos
+     # profitable, which is the opposite of what the ranking test said about
+     # volume and worth saying plainly: volume is a poor way to CHOOSE a stock
+     # and a good way to REFUSE a moment.
+     "week_low": True, "week_vol": 1.0,
      # THE PATIENT PAIR (boss 2026-09-03 evening: "even if they decreased -1%
      # do not sell and keep holding, because they are already decreased many %,
      # so -1 is not a big deal"). MEASURED over all 22 stored days first:
@@ -569,6 +603,23 @@ VARIANTS: list[dict] = [
      # It clearly helps 알고2 and slightly hurts 알고3; deployed to both at his
      # explicit order, with both numbers on record.
      "gap_guard": GAP_PCT, "gap_wait": "prev3",
+     # ── HIS THREE GATES, IN HIS ORDER (boss 2026-09-04) ────────────────────
+     # 1 갭상승 : any open above yesterday's 19:59 price stops buying for the
+     #            day until price comes back to it (gap_guard/prev3, above)
+     # 2 위치   : buy only at or under the LOWEST close of the past week
+     # 3 거래량 : today's volume must be running at least at a normal week's
+     #            pace by this hour
+     # MEASURED over all 22 stored days, added in exactly this order:
+     #   알고2  gate1 281tr 48%% -54.54%%  -> +g2 84tr 52%% -5.63%%
+     #                                   -> +g3 49tr 65%% +7.94%%
+     #   알고3  gate1  32tr 59%%  +1.07%%  -> +g2 20tr 60%% -0.52%%
+     #                                   -> +g3 14tr 79%% +4.95%%
+     # 알고2 turns POSITIVE for the first time in the whole court. Gate 2 alone
+     # is not the win - it cuts the bleeding; gate 3 is what makes both algos
+     # profitable, which is the opposite of what the ranking test said about
+     # volume and worth saying plainly: volume is a poor way to CHOOSE a stock
+     # and a good way to REFUSE a moment.
+     "week_low": True, "week_vol": 1.0,
      # THE PATIENT PAIR (boss 2026-09-03 evening: "even if they decreased -1%
      # do not sell and keep holding, because they are already decreased many %,
      # so -1 is not a big deal"). MEASURED over all 22 stored days first:
@@ -1930,6 +1981,30 @@ def _rebound_entry(s: dict, v: dict, i: int, ups: int, closes: list[float]) -> b
     return True
 
 
+def _vol_pace(s: dict, i: int):
+    """Today's volume SO FAR against the pace a normal week-average day would
+    set by this bar. 1.0 = exactly normal, 2.0 = twice the usual flow.
+
+    Comparing a raw morning total with a whole day's average would call every
+    09:10 thin, so the average is scaled by how much of the session has
+    actually elapsed - the only comparison that means the same thing at 09:10
+    and at 14:10 (boss 2026-09-04 gate 3)."""
+    avg = float(s.get("vol_day_avg") or 0)
+    vols = s.get("vols") or []
+    if not avg or not vols or i >= len(vols):
+        return None
+    cum = s.get("_cumv")
+    if cum is None:
+        acc, cum = 0.0, []
+        for x in vols:
+            acc += float(x or 0)
+            cum.append(acc)
+        s["_cumv"] = cum
+    frac = (i + 1) / float(len(vols))
+    expected = avg * frac
+    return (cum[i] / expected) if expected > 0 else None
+
+
 def run_desk(stks: list[dict], v: dict, evidence: bool = False,
              with_open: bool = False, fill_fn=None, events=None):
     """The rule over the WHOLE DESK with ONE hand PER STOCK (boss 2026-08-12: four
@@ -2369,6 +2444,23 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            # anyway): after a full exit NOTHING boards more
                            # than 1.5% above the post-exit low, whichever door
                            # asks. 제1조: a late confirmation is a chase.
+            elif (v.get("week_low") and s.get("low5") and c > s["low5"]):
+                pass       # GATE 2 - THE WEEKLY POSITION (boss 2026-09-04:
+                           # "we will check the WEEKLY position; if it is lower
+                           # or equal to the minimum price within the last week
+                           # then we can buy, otherwise do not buy"). low5 is
+                           # the lowest close of the past five sessions; we buy
+                           # only at or under it.
+            elif (v.get("week_vol") and s.get("vol_day_avg")
+                  and _vol_pace(s, i) is not None
+                  and _vol_pace(s, i) < float(v["week_vol"])):
+                pass       # GATE 3 - THE VOLUME (boss 2026-09-04: "if trading
+                           # volume is higher than average within the week, or
+                           # at least it should be a normal number of volume,
+                           # then we should buy, otherwise not"). vol_pace is
+                           # today's volume so far measured against the pace a
+                           # normal week-average day would set by this hour, so
+                           # 1.0 means exactly normal.
             elif (v.get("avg_gate") and (s.get("ma20") or s.get("mayr"))
                   and not ((s.get("ma20") is None or c <= s["ma20"])
                            and (s.get("mayr") is None or c <= s["mayr"]))):
