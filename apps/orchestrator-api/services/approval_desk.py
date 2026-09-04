@@ -1848,7 +1848,11 @@ def verify_now(code: str, side: str = "BUY", day: str = "",
 
     hi = max(b["high"] for b in bars)
     lo = min(b["low"] for b in bars)
-    op = bars[0]["open"]
+    try:
+        from services.kiwoom_rules import _open_official
+        op = float(_open_official(code, _d0, bars[0]["open"]))
+    except Exception:
+        op = bars[0]["open"]
     snap.update({"high": hi, "low": lo, "open": op})
 
     # ① 갭상승 — measured from yesterday's LAST price, after-hours included
@@ -1862,7 +1866,13 @@ def verify_now(code: str, side: str = "BUY", day: str = "",
         snap["gap"] = round(gap, 2)
         from services.proof_lab import GAP_PCT
         if gap >= GAP_PCT:
-            back = any(b["low"] <= ref for b in bars)
+            _tlo9 = min(b["low"] for b in bars)
+            try:
+                from services.kiwoom_rules import _low_official
+                _tlo9 = float(_low_official(code, _d0, _tlo9) or _tlo9)
+            except Exception:
+                pass
+            back = _tlo9 <= ref
             reds = 0
             done = False
             started = False
@@ -1910,13 +1920,40 @@ def verify_now(code: str, side: str = "BUY", day: str = "",
         _dd = _d20g(code, _d0)
         _low5 = float(_dd[2] or 0)
         snap["low5"] = _low5
-        if _low5 and px > _low5:
+        # MENU 3 FOLLOWS 알고3'S RULER (boss 2026-09-04). Gate 2 is no longer
+        # one window: the position is averaged across week / month / 3-month /
+        # 6-month and must sit in the bottom 35% of that blend. A stock cheap
+        # on ONE window is not cheap. Measured on 알고3, 22 sessions:
+        # +8.89% / 22 trades / 77% win, against +4.95% / 14 / 79% for the
+        # single weekly low it replaces.
+        from services.kiwoom_rules import _hz_stats as _hzs
+        _hz = _hzs(code, _d0) or {}
+        _ps, _det = [], []
+        for _h, _lab in (("w", "주"), ("m", "월"), ("q", "3개월"), ("h", "6개월")):
+            _lo, _hi = _hz.get(_h + "_low"), _hz.get(_h + "_hi")
+            if _lo and _hi and _hi > _lo:
+                _v = max(0.0, min(100.0, (px - _lo) / (_hi - _lo) * 100))
+                _ps.append(_v)
+                _det.append(f"{_lab} {_v:.0f}%")
+        if _ps:
+            _blend = sum(_ps) / len(_ps)
+            snap["pos_blend"] = round(_blend, 1)
+            snap["pos_detail"] = " · ".join(_det)
+            if _blend > 35.0:
+                return (False,
+                        f"위치가 높습니다 — 주·월·3개월·6개월 평균 위치 "
+                        f"{_blend:.0f}% ({' · '.join(_det)}). 하위 35% 이하에서만 "
+                        f"삽니다. 보내지 않습니다.",
+                        f"its position is high - blended across week / month / "
+                        f"3-month / 6-month it sits at {_blend:.0f}% "
+                        f"({' · '.join(_det)}). We buy only in the bottom 35%. "
+                        f"Not sending.", snap)
+        elif _low5 and px > _low5:
             return (False,
                     f"이번 주 최저가 ₩{_low5:,.0f}보다 위입니다 (지금 ₩{px:,.0f}) — "
-                    f"주간 최저가 이하에서만 삽니다. 보내지 않습니다.",
+                    f"보내지 않습니다.",
                     f"it stands ABOVE the week's lowest close of {_low5:,.0f} "
-                    f"(now {px:,.0f}). We buy only at or under the weekly low. "
-                    f"Not sending.", snap)
+                    f"(now {px:,.0f}). Not sending.", snap)
     except Exception:
         pass
 

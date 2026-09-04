@@ -620,6 +620,24 @@ VARIANTS: list[dict] = [
      # volume and worth saying plainly: volume is a poor way to CHOOSE a stock
      # and a good way to REFUSE a moment.
      "week_low": True, "week_vol": 1.0,
+     # GATE 2 FOR 알고3 IS A BLENDED POSITION, NOT ONE WINDOW (boss 2026-09-04:
+     # "we have 6 month, 3 month, 1 month and 1 week for choosing position -
+     # if weekly says do not buy but monthly says sell, whose answer is final?
+     # should we make an equation?"). Neither window decides: the position is
+     # averaged across all four horizons and we buy only in the bottom 35% of
+     # that blend. A stock cheap on ONE window is not cheap.
+     #
+     # MEASURED on 알고3 over 22 sessions, swept for stability:
+     #   blend <=20%   7tr 86%% +1.45%   <=25%  16tr 75%% +4.66%
+     #   blend <=30%  19tr 74%% +7.09%   <=35%  22tr 77%% +8.89%  <- deployed
+     #   blend <=40..60%  24tr 71%% +6.30%
+     #   week low exact (was live) 14tr 79%% +4.95%
+     # EVERY setting is profitable and the curve rises smoothly to 35 then
+     # plateaus - no cliff, unlike 알고2's version of the same test, which
+     # flipped sign between 25%% and 35%% and is therefore NOT deployed there.
+     # Against what was live: +8.89%% vs +4.95%%, 22 trades vs 14, same worst
+     # trade (-1.3%%). More money and more chances at the same risk.
+     "pos_mode": "hz_score", "pos_tol": 35,
      # THE PATIENT PAIR (boss 2026-09-03 evening: "even if they decreased -1%
      # do not sell and keep holding, because they are already decreased many %,
      # so -1 is not a big deal"). MEASURED over all 22 stored days first:
@@ -1981,6 +1999,80 @@ def _rebound_entry(s: dict, v: dict, i: int, ups: int, closes: list[float]) -> b
     return True
 
 
+def _pos_ok(s: dict, c: float, v: dict) -> bool:
+    """GATE 2, in whichever form is being tested. `pos_mode` picks the ruler:
+       week_low   price at or under the week's lowest close  (deployed)
+       week_tol   ... or within pos_tol% above it
+       week_avg   price at or under the week's average close
+       week_pct   price in the bottom pos_tol% of the week's high-low range
+       month_low  price at or under the 20-day low
+       month_avg  price at or under the 20-day average
+       mix        under the month average AND within pos_tol% of the week low
+    """
+    m = str(v.get("pos_mode") or "week_low")
+    tol = float(v.get("pos_tol") or 0)
+    lo5, hi5, av5 = s.get("low5"), s.get("high5"), s.get("avg5")
+    if m == "week_low":
+        return not lo5 or c <= lo5
+    if m == "week_tol":
+        return not lo5 or c <= lo5 * (1 + tol / 100.0)
+    if m == "week_avg":
+        return not av5 or c <= av5
+    if m == "week_pct":
+        if not (lo5 and hi5 and hi5 > lo5):
+            return True
+        return (c - lo5) / (hi5 - lo5) * 100 <= tol
+    if m == "month_low":
+        return not s.get("low20") or c <= s["low20"]
+    if m == "month_avg":
+        return not s.get("ma20") or c <= s["ma20"]
+    hz = s.get("hz") or {}
+    if m.startswith("hz_") and m != "hz_score":
+        # hz_<horizon>_<measure>[_tol] : horizon w|m|q|h, measure low|avg|pct
+        _, h, meas = m.split("_")[:3]
+        lo, hi, av = hz.get(h+"_low"), hz.get(h+"_hi"), hz.get(h+"_avg")
+        if meas == "low":
+            return (not lo) or c <= lo * (1 + tol / 100.0)
+        if meas == "avg":
+            return (not av) or c <= av
+        if meas == "pct":
+            if not (lo and hi and hi > lo):
+                return True
+            return (c - lo) / (hi - lo) * 100 <= tol
+    if m == "hz_score":
+        # THE EQUATION he asked about: average the percentile position across
+        # every horizon we have, and buy only in the bottom `tol`% of that
+        # blended position. One number that says "cheap on the whole picture",
+        # instead of one window deciding alone.
+        ps = []
+        for h in ("w", "m", "q", "h"):
+            lo, hi = hz.get(h+"_low"), hz.get(h+"_hi")
+            if lo and hi and hi > lo:
+                ps.append(max(0.0, min(100.0, (c - lo) / (hi - lo) * 100)))
+        return (sum(ps) / len(ps) <= tol) if ps else True
+    if m == "mix":
+        okm = (not s.get("ma20")) or c <= s["ma20"]
+        okw = (not lo5) or c <= lo5 * (1 + tol / 100.0)
+        return okm and okw
+    return True
+
+
+def _vol_spike(s: dict, i: int, mult: float) -> bool:
+    """Is THIS bar a volume surge? (boss 2026-09-04 research question: "even
+    though there is a 갭상승 and it is above the average, if volume increases
+    then buy - like SK하이닉스 today at 09:00, 09:50, 10:50, 12:00, 13:08,
+    13:13, 13:14 - would we gain more?")
+
+    A surge is this bar's volume against the average of the last 30 bars, so it
+    means the same thing all day. Used ONLY by the experiment below."""
+    vols = s.get("vols") or []
+    if i >= len(vols) or i < 5:
+        return False
+    win = [float(x or 0) for x in vols[max(0, i - 30):i]]
+    avg = (sum(win) / len(win)) if win else 0.0
+    return bool(avg > 0 and float(vols[i] or 0) >= avg * float(mult))
+
+
 def _vol_pace(s: dict, i: int):
     """Today's volume SO FAR against the pace a normal week-average day would
     set by this bar. 1.0 = exactly normal, 2.0 = twice the usual flow.
@@ -2444,7 +2536,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            # anyway): after a full exit NOTHING boards more
                            # than 1.5% above the post-exit low, whichever door
                            # asks. 제1조: a late confirmation is a chase.
-            elif (v.get("week_low") and s.get("low5") and c > s["low5"]):
+            elif (v.get("week_low") and not _pos_ok(s, c, v)
+                  and not (v.get("vol_override")
+                           and _vol_spike(s, i, v["vol_override"]))):
                 pass       # GATE 2 - THE WEEKLY POSITION (boss 2026-09-04:
                            # "we will check the WEEKLY position; if it is lower
                            # or equal to the minimum price within the last week
@@ -2574,6 +2668,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            # boarded the exhaustion 3 times into stops): a day
                            # already up spike_guard% takes no NEW entries
             elif (v.get("gap_guard") and s.get("prev_close") and closes[0]
+                  and not (v.get("vol_override")
+                           and _vol_spike(s, i, v["vol_override"]))
                   and ((s.get("open_px") or closes[0]) / s["prev_close"] - 1)
                       * 100 >= float(v["gap_guard"])
                   and not (gap_news_ok[si] and v.get("gap_wait") != "prev3")

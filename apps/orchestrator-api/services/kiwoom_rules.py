@@ -271,6 +271,74 @@ _D20_CACHE: dict = {}
 _VOL5_CACHE: dict = {}
 
 
+_WK_CACHE: dict = {}
+
+
+_HZ_CACHE: dict = {}
+HORIZONS = {"w": 5, "m": 20, "q": 60, "h": 120}      # week, month, 3 months, 6 months
+
+
+def _hz_stats(code: str, day: str) -> dict:
+    """Low / high / average of the CLOSES over each horizon before `day`
+    (boss 2026-09-04: "we have 6 month, 3 month, 1 month and 1 week for
+    choosing position - should we make an equation?"). One query, four windows.
+
+    Returned as {'w_low','w_avg','w_hi', 'm_low',... } so any ruler can be
+    tested without another database trip."""
+    key = (code, day)
+    hit = _HZ_CACHE.get(key)
+    if hit is not None:
+        return hit
+    out: dict = {}
+    try:
+        from services.daily_pick import _conn
+        cn = _conn(); cu = cn.cursor()
+        cu.execute("""SELECT close FROM raw_daily_prices
+                      WHERE ticker = %s AND date < %s AND close IS NOT NULL
+                      ORDER BY date DESC LIMIT 120""",
+                   (code, f"{day[:4]}-{day[4:6]}-{day[6:8]}"))
+        cl = [float(r[0]) for r in cu.fetchall()]
+        cn.close()
+        for k, n in HORIZONS.items():
+            w = cl[:n]
+            if len(w) >= max(3, n // 4):
+                out[k + "_low"] = min(w)
+                out[k + "_hi"] = max(w)
+                out[k + "_avg"] = sum(w) / len(w)
+    except Exception:
+        pass
+    _HZ_CACHE[key] = out
+    return out
+
+
+def _week_stats(code: str, day: str):
+    """(low5, high5, avg5) over the five sessions before `day` — everything a
+    'where is it in its week' test could want (boss 2026-09-04: "check with our
+    historical data which one is more meaningful and efficient to use")."""
+    key = (code, day)
+    hit = _WK_CACHE.get(key)
+    if hit is not None:
+        return hit
+    out = (None, None, None)
+    try:
+        from services.daily_pick import _conn
+        cn = _conn(); cu = cn.cursor()
+        cu.execute("""SELECT high, low, close FROM raw_daily_prices
+                      WHERE ticker = %s AND date < %s AND close IS NOT NULL
+                      ORDER BY date DESC LIMIT 5""",
+                   (code, f"{day[:4]}-{day[4:6]}-{day[6:8]}"))
+        rows = cu.fetchall(); cn.close()
+        if len(rows) >= 3:
+            cl = [float(r[2]) for r in rows]
+            hi = [float(r[0]) for r in rows if r[0]]
+            lo = [float(r[1]) for r in rows if r[1]]
+            out = (min(cl), max(hi) if hi else max(cl), sum(cl) / len(cl))
+    except Exception:
+        pass
+    _WK_CACHE[key] = out
+    return out
+
+
 def _vol5(code: str, day: str) -> float | None:
     """Average DAILY volume over the five sessions before `day` - the "average
     within the week" gate 3 measures against (boss 2026-09-04)."""
@@ -294,6 +362,55 @@ def _vol5(code: str, day: str) -> float | None:
         out = None
     _VOL5_CACHE[key] = out
     return out
+
+
+_OPEN_CACHE: dict = {}
+
+
+def _low_official(code: str, day: str, fallback=None):
+    """TODAY'S TRUE LOW so far - the same lesson as the open. Our tape starts
+    after the opening auction, so a dip in the first seconds is invisible to
+    it, and gate 1's "did it come back to yesterday's price" test would miss
+    exactly the moment it is looking for. The daily row carries the real low;
+    the tape is the fallback."""
+    try:
+        from services.naver_stock import daily_history
+        h = daily_history(code, days=1)
+        if h and h[0].get("low"):
+            v = float(h[0]["low"])
+            return min(v, float(fallback)) if fallback else v
+    except Exception:
+        pass
+    return fallback
+
+
+def _open_official(code: str, day: str, fallback=None):
+    """TODAY'S REAL OPENING PRICE, not the first bar our tape happened to catch.
+
+    Boss 2026-09-04, checking the gap table against Kiwoom. Our websocket tape
+    starts a moment after the opening auction, so its first bar is the price
+    AFTER the open - measured on six stocks it was high every single time, by
+    0.31% to 2.15%. Gate 1 divides that number by yesterday's close, so every
+    gap we computed was inflated: 한미반도체 opened DOWN 0.71% and our tape made
+    it look like a 2.15% gap UP, blocking a stock that never gapped and is
+    +8.1% today.
+
+    The official open comes from the daily row; the tape is only the fallback,
+    and it is now the thing we distrust rather than the thing we trust."""
+    key = (code, day)
+    hit = _OPEN_CACHE.get(key)
+    if hit is not None:
+        return hit or fallback
+    out = None
+    try:
+        from services.naver_stock import daily_history
+        h = daily_history(code, days=2)
+        if h and h[0].get("open"):
+            out = float(h[0]["open"])
+    except Exception:
+        out = None
+    _OPEN_CACHE[key] = out or 0
+    return out or fallback
 
 
 def _gap_ref(code: str, day: str) -> float:
@@ -835,7 +952,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                          # the TRUE opening print - the gap guard compares THIS
                          # to prev_close (boss 2026-08-27: NAVER +2.05% slipped
                          # under a first-minute-close comparison)
-                         "open_px": (tp["cs"][0].get("open")
+                         "open_px": _open_official(code, d or _kd0(), tp["cs"][0].get("open")) or (tp["cs"][0].get("open")
                                      if tp["cs"] else None),
                          "news_hits": (_news_times(code)
                                        if (d or _kd0()) == _kd0() else []),
@@ -847,6 +964,9 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                          "prev_close": _gap_ref(code, d or _kd0()),
                          "low20": _daily20(code, d or _kd0())[1],
                          "low5": _daily20(code, d or _kd0())[2],
+                         "high5": _week_stats(code, d or _kd0())[1],
+                         "hz": _hz_stats(code, d or _kd0()),
+                         "avg5": _week_stats(code, d or _kd0())[2],
                          "vol_day_avg": _vol5(code, d or _kd0()),
                          "ma20": _daily20(code, d or _kd0())[3],
                          "mayr": _daily20(code, d or _kd0())[4],
@@ -1062,7 +1182,8 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          "closes": [c["close"] for c in cs],
                          "highs": [c["high"] for c in cs],
                          "lows": [c["low"] for c in cs],
-                         "open_px": (cs[0].get("open") if cs else None),
+                         "open_px": (_open_official(c_code, d or _kd0(), cs[0].get("open"))
+                                     if cs else None),
                          "news_hits": (_news_times(c_code)
                                        if (d or _kd0()) == _kd0() else []),
                          "tick": krx_tick(cs[-1]["close"]) or 1, "seed": 1,
@@ -1075,6 +1196,9 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          "prev_close": _gap_ref(c_code, d or _kd0()),
                          "low20": _daily20(c_code, d or _kd0())[1],
                          "low5": _daily20(c_code, d or _kd0())[2],
+                         "high5": _week_stats(c_code, d or _kd0())[1],
+                         "hz": _hz_stats(c_code, d or _kd0()),
+                         "avg5": _week_stats(c_code, d or _kd0())[2],
                          "vol_day_avg": _vol5(c_code, d or _kd0()),
                          "ma20": _daily20(c_code, d or _kd0())[3],
                          "mayr": _daily20(c_code, d or _kd0())[4],
