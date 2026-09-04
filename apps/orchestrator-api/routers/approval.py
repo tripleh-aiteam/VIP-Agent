@@ -311,7 +311,12 @@ def feed(db: Session = Depends(get_db)):
         except Exception:
             _st9 = None
     _pend9 = st.get("pending") or []
-    return {"ok": True, "market_open": mkt, "rooms": rooms,
+    _pulse9 = None
+    try:
+        _pulse9 = ad._market_pulse()      # 🌐 SOX + KOSPI weather (cached 5min)
+    except Exception:
+        pass
+    return {"ok": True, "market_open": mkt, "rooms": rooms, "pulse": _pulse9,
             "pending": _pend9,
             # the agent speaks every 3 minutes even with nothing to propose
             "note": _watch_note(_pend9, len(_held9), rooms),

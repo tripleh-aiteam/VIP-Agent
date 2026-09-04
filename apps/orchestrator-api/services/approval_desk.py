@@ -148,6 +148,38 @@ def desk_codes() -> list[tuple[str, str, float | None]]:
     return out[:10]
 
 
+_PULSE9 = {"t": 0.0, "v": None}
+
+
+def _market_pulse() -> dict:
+    """🌐 THE MARKET'S OWN WEATHER (boss 2026-09-04 09:3x: 'SOX, US
+    semiconductors and KOSPI — if they increase the Korean market also
+    increases; include them as MAIN factors before the checklist'). SOX from
+    the overnight file (the engine's storm habit already trades on it — corr
+    0.64 with 하이닉스/삼성 mornings), KOSPI live. Cached 5 min."""
+    if time.time() - _PULSE9["t"] < 300 and _PULSE9["v"]:
+        return _PULSE9["v"]
+    out = {"sox": None, "nasdaq": None, "kospi": None, "kospi_px": None}
+    try:
+        from services.overnight import fetch as _ofetch
+        for r in (_ofetch() or {}).get("rows", []):
+            if r.get("sym") == "^SOX":
+                out["sox"] = r.get("chg_pct")
+            elif r.get("sym") == "^IXIC":
+                out["nasdaq"] = r.get("chg_pct")
+    except Exception:
+        pass
+    try:
+        from services.decision_agent import _market_indicators
+        k = (_market_indicators() or {}).get("kospi") or {}
+        out["kospi"] = k.get("pct")
+        out["kospi_px"] = k.get("price")
+    except Exception:
+        pass
+    _PULSE9["t"], _PULSE9["v"] = time.time(), out
+    return out
+
+
 def _vol_at(code: str, hhmm: str):
     """Trading volume AT a moment, from today's Kiwoom tape (boss 2026-09-03
     20:0x: 'if we buy at 14:09 it should be THAT time's trading volume').
@@ -327,7 +359,9 @@ def _enrich_log_rows(st: dict) -> None:
                     # English mode shows English (boss 2026-09-04 09:1x)
                     or not any(it.get("en") for it in l["check_items"])
                     # the old ugly '160100M won' values rebuild into ₩160.1B
-                    or any("M won" in str(it.get("ven") or "") for it in l["check_items"])):
+                    or any("M won" in str(it.get("ven") or "") for it in l["check_items"])
+                    # rows saved before the 🌐 market items rebuild once
+                    or not any(it.get("g") == "market" for it in l["check_items"])):
                 # time-stamped at the row's own clock (volume of THAT minute)
                 l["check_items"] = _check_items(code, str(l.get("at") or l.get("hhmm") or "")[:5] or None)
             if l.get("score") is None:
@@ -654,6 +688,24 @@ def _check_items(code: str, hhmm: str | None = None) -> list[dict]:
     checklist must be real-time and time-based so buy/sell/hold differ'):
     that moment's tape volume and today's volume change lead the list."""
     out0: list[dict] = []
+    # 🌐 the market weather leads the inspection (boss 2026-09-04 09:3x)
+    try:
+        _pl0 = _market_pulse()
+        if _pl0.get("sox") is not None:
+            _s0 = float(_pl0["sox"])
+            out0.append({"k": "🌐 SOX(미 반도체) 밤사이", "en": "US chip index (SOX) overnight",
+                         "v": f"{_s0:+.1f}%", "ven": f"{_s0:+.1f}%",
+                         "s": max(0, min(100, round(50 + _s0 * 15))), "g": "market",
+                         "bad": _s0 <= -1.5})
+        if _pl0.get("kospi") is not None:
+            _k0 = float(_pl0["kospi"])
+            out0.append({"k": "🌐 코스피 오늘", "en": "KOSPI today",
+                         "v": f"{_pl0.get('kospi_px') or ''} ({_k0:+.2f}%)",
+                         "ven": f"{_pl0.get('kospi_px') or ''} ({_k0:+.2f}%)",
+                         "s": max(0, min(100, round(50 + _k0 * 25))), "g": "market",
+                         "bad": _k0 <= -0.5})
+    except Exception:
+        pass
     if hhmm:
         try:
             mv, mult, cum = _vol_at(code, hhmm)
@@ -2062,8 +2114,41 @@ def _why_buy(code: str, name: str, hold: dict):
     else:
         _ck = "📋 100 체크리스트 전 항목을 검사했습니다 — 오늘 점수는 집계 중입니다."
         _ce = "📋 We checked ALL 100 checklist items — today's score is still computing."
-    R.insert(1, _ck)
-    E.insert(1, _ce)
+    # 🌐 THE MARKET WEATHER LEADS (boss 2026-09-04 09:3x: "SOX, US
+    # semiconductors and KOSPI — if they increase the Korean market also
+    # increases; main factors BEFORE the checklist"): SOX overnight + live
+    # KOSPI, verdict included, right under the ✅ line.
+    try:
+        _pl = _market_pulse()
+        _sx, _nq, _kp, _kpx = _pl.get("sox"), _pl.get("nasdaq"), _pl.get("kospi"), _pl.get("kospi_px")
+        if _sx is not None or _kp is not None:
+            _pk, _pe = [], []
+            if _sx is not None:
+                _pk.append(f"미 반도체지수(SOX) 지난밤 {_sx:+.1f}%")
+                _pe.append(f"US chip index (SOX) overnight {_sx:+.1f}%")
+            if _nq is not None:
+                _pk.append(f"나스닥 {_nq:+.1f}%")
+                _pe.append(f"NASDAQ {_nq:+.1f}%")
+            if _kp is not None:
+                _pk.append(f"코스피 지금 {_kpx or ''} ({_kp:+.2f}%)")
+                _pe.append(f"KOSPI now {_kpx or ''} ({_kp:+.2f}%)")
+            _good_wx = ((_sx or 0) >= 1.5) or ((_kp or 0) >= 0.5)
+            _bad_wx = ((_sx or 0) <= -1.5) or ((_kp or 0) <= -0.5)
+            _vk = (" — 시장이 오르는 날이라 상승 확률에 유리합니다." if _good_wx and not _bad_wx
+                   else " — 시장이 무거운 날이라 신중하게 봅니다." if _bad_wx
+                   else " — 시장은 보통 수준입니다.")
+            _ve = (" — a rising market day, the odds favour an increase." if _good_wx and not _bad_wx
+                   else " — a heavy market day, we stay careful." if _bad_wx
+                   else " — the market is about normal.")
+            R.insert(1, "🌐 시장 흐름 — " + " · ".join(_pk) + _vk)
+            E.insert(1, "🌐 Market weather — " + " · ".join(_pe) + _ve)
+            _wx_on = True
+        else:
+            _wx_on = False
+    except Exception:
+        _wx_on = False
+    R.insert(2 if _wx_on else 1, _ck)
+    E.insert(2 if _wx_on else 1, _ce)
     # THE NUMBERS MUST COUNT (boss 2026-09-04: the reason is read top to
     # bottom, so its numbering has to be sequential and in impact order). The
     # numbered lines are written by several independent blocks; whichever ones

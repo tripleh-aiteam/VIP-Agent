@@ -31,6 +31,8 @@ type Feed = { ok: boolean; market_open: boolean; rooms: Room[]; pending: Sug[];
               held: { code: string; name: string; qty: number; price: number; at: string;
                       sug_at?: string }[];
               log: LogRow[]; stats?: Stats | null;
+              pulse?: { sox?: number | null; nasdaq?: number | null;
+                        kospi?: number | null; kospi_px?: string | null } | null;
               note?: { id: number; hhmm: string; kind: string; n: number;
                        lines: string[]; lines_en: string[] } | null };
 type Step = { icon: string; t: string; d: string; t_en?: string; d_en?: string };
@@ -331,6 +333,31 @@ export default function ApprovePage() {
         {t("에이전트가 100 체크리스트·1년 역사 데이터·호가창·거래량·뉴스를 실시간으로 검사하다가 기회가 오면 매수/매도 팝업으로 이유·가격·수량까지 제안합니다. 승인을 눌러야만 실행됩니다 — 절대 혼자 사고팔지 않습니다.", "The agent live-checks the 100-item checklist, 1-year history, the order book, volume and news; when a chance appears it proposes BUY/SELL popups with reasons, price and share count. Nothing executes until you press Approve — it never trades alone.")}
         {feed && <span style={{ marginLeft: 8 }}>{feed.market_open ? t("🟢 장중", "🟢 market open") : t("🌙 장 마감 — 제안은 장중에만 나옵니다", "🌙 market closed — proposals come only in market hours")}</span>}
       </div>
+
+      {/* ─ 🌐 MARKET WEATHER STRIP (boss 2026-09-04 09:3x: SOX + KOSPI as
+          main factors, visible on the board) ─ */}
+      {feed?.pulse && (feed.pulse.sox != null || feed.pulse.kospi != null) && (() => {
+        const P = feed.pulse!;
+        const chip = (label: string, v?: number | null, extra?: string) => v == null ? null : (
+          <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 12, fontWeight: 800,
+                         background: v >= 0.5 ? "rgba(229,57,53,0.12)" : v <= -0.5 ? "rgba(30,136,229,0.12)" : "rgba(128,128,128,0.12)",
+                         color: v >= 0.5 ? "#c62828" : v <= -0.5 ? "#1565c0" : "inherit" }}>
+            {label} {extra ? `${extra} ` : ""}{v >= 0 ? "+" : ""}{v.toFixed(2)}%</span>);
+        const good = (P.sox ?? 0) >= 1.5 || (P.kospi ?? 0) >= 0.5;
+        const bad = (P.sox ?? 0) <= -1.5 || (P.kospi ?? 0) <= -0.5;
+        return (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap",
+                        margin: "0 0 10px" }}>
+            <b style={{ fontSize: 12.5 }}>🌐 {t("시장 흐름", "Market weather")}</b>
+            {chip(t("SOX(미 반도체)", "SOX (US chips)"), P.sox)}
+            {chip(t("나스닥", "NASDAQ"), P.nasdaq)}
+            {chip("KOSPI", P.kospi, P.kospi_px || "")}
+            <span style={{ fontSize: 11.5, opacity: 0.75 }}>
+              {good && !bad ? t("→ 시장이 오르는 날 — 상승 확률에 유리", "→ rising market day — odds favour an increase")
+               : bad ? t("→ 시장이 무거운 날 — 신중하게", "→ heavy market day — stay careful")
+               : t("→ 보통 수준", "→ about normal")}</span>
+          </div>);
+      })()}
 
       {/* ─ AFTER THE BELL THE AGENT RESTS (boss 2026-09-03 19:3x: "after
           15:20 the agent should not work — it should say market is closed and
