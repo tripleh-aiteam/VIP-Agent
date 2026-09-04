@@ -119,6 +119,65 @@ def _market_move_lines(rooms: list):
             [head_en, "📰 No standout good news — a flow-driven rise; we buy only by the rules."] + ([live_en] if live_en else []))
 
 
+def _news_offers(rooms: list | None) -> list:
+    """NEWS THE ROOM CAN ACT ON (boss 2026-09-04: "if we have a good news it
+    should send with a button - would you like to buy? if bad news, would you
+    like to sell?").
+
+    The watch note already read the news; it just had nowhere to put the
+    conclusion. It now names the stock and offers the one action that news
+    implies: a 호재 on something we do NOT own becomes a BUY offer, a
+    위험/악재 on something we DO own becomes a SELL offer.
+
+    The gate verdict rides along and is shown on the button. A blocked stock is
+    still offered, because this is HIS decision and the news is his reason -
+    but it says plainly that the rules would not have bought it, so a click is
+    never made in the dark."""
+    from services.approval_desk import _load, can_propose, _gates_pass
+    if not can_propose():
+        return []
+    st = _load()
+    held = {h.get("code"): h for h in (st.get("held") or [])}
+    asked = st.get("asked") or {}
+    px_of = {str(r.get("code")): r.get("price") for r in (rooms or [])}
+    nm_of = {str(r.get("code")): r.get("name") for r in (rooms or [])}
+    out = []
+    for code, lot in held.items():
+        n = _news_of(str(code))
+        if n and n["stamp"] in ("위험", "악재"):
+            out.append({"code": str(code), "name": lot.get("name") or nm_of.get(str(code)),
+                        "side": "SELL", "stamp": n["stamp"], "title": n["title"],
+                        "qty": int(lot.get("qty") or 0), "price": px_of.get(str(code)),
+                        "gates_ok": None,
+                        "ko": f"⚠️ 보유 중인 {lot.get('name')}에 나쁜 뉴스가 떴습니다 — 파시겠습니까?",
+                        "en": f"⚠️ Bad news on {lot.get('name')}, which we hold - would you like to SELL?"})
+            break
+    for code in [str(r.get("code")) for r in (rooms or [])]:
+        if code in held or asked.get(code):
+            continue
+        n = _news_of(code)
+        if not (n and n["stamp"] == "호재"):
+            continue
+        px = px_of.get(code)
+        if not px:
+            continue
+        ok = False
+        try:
+            ok = bool(_gates_pass(code))
+        except Exception:
+            pass
+        out.append({"code": code, "name": nm_of.get(code) or code, "side": "BUY",
+                    "stamp": n["stamp"], "title": n["title"],
+                    "qty": max(1, int(10_000_000 // float(px))), "price": px,
+                    "gates_ok": ok,
+                    "ko": (f"📈 {nm_of.get(code)}에 좋은 뉴스가 있습니다 — 사시겠습니까?"
+                           + ("" if ok else " (참고: 지금은 규칙상 매수 금지 상태입니다)")),
+                    "en": (f"📈 Good news on {nm_of.get(code)} - would you like to BUY?"
+                           + ("" if ok else " (note: the rules would NOT buy it right now)"))})
+        break
+    return out
+
+
 def _watch_note(pending: list, n_held: int = 0, rooms: list | None = None) -> dict | None:
     """THE AGENT SAYS SOMETHING EVERY 3 MINUTES, EVEN WHEN IT HAS NOTHING TO
     PROPOSE (boss 2026-09-03: "from 13:00 there is no popup message so I am
@@ -190,7 +249,8 @@ def _watch_note(pending: list, n_held: int = 0, rooms: list | None = None) -> di
         pass
     import datetime as _dt
     _NOTE9["t"] = _t.time()
-    _NOTE9["v"] = {"id": int(_t.time()), "hhmm": _dt.datetime.now().strftime("%H:%M"),
+    _NOTE9["v"] = {"offers": _news_offers(rooms),
+                   "id": int(_t.time()), "hhmm": _dt.datetime.now().strftime("%H:%M"),
                    "kind": "watch", "n": len(rows),
                    "lines": lines_ko, "lines_en": lines_en}
     return _NOTE9["v"]
@@ -322,6 +382,21 @@ def feed(db: Session = Depends(get_db)):
         _pulse9 = ad._market_pulse()      # 🌐 SOX + KOSPI weather (cached 5min)
     except Exception:
         pass
+    # every held lot carries its LIVE price even when its stock has no room —
+    # without it the holding reason lost its ①②③ lines (boss 2026-09-04 10:1x:
+    # the Kia case showed only ④⑤)
+    try:
+        _pxmap9 = {r.get("code"): r.get("price") for r in rooms}
+        for h in _held9:
+            _pv9 = _pxmap9.get(h.get("code"))
+            if _pv9 is None:
+                try:
+                    _pv9, _c9x, _t9x, _s9x = fast_price(h.get("code"))
+                except Exception:
+                    _pv9 = None
+            h["live"] = _pv9
+    except Exception:
+        pass
     return {"ok": True, "market_open": mkt, "rooms": rooms, "pulse": _pulse9,
             "pending": _pend9,
             # the agent speaks every 3 minutes even with nothing to propose
@@ -380,6 +455,44 @@ def approve(sid: int, qty: int = Query(0), price: float = Query(0.0),
     decision log records which."""
     from services import approval_desk as ad
     return ad.decide(db, sid, True, qty=qty or None, price=price or None)
+
+
+@router.post("/news-order")
+def news_order(code: str = Query(...), side: str = Query(...),
+               db: Session = Depends(get_db)):
+    """The news button. It does NOT invent a private order path: it builds the
+    same suggestion a popup would carry and hands it to the same decide(), so
+    the fill, the holding, the history row and the accounting are identical to
+    an approved popup - and it is recorded as HIS decision, made on the news."""
+    from services import approval_desk as ad
+    side = "SELL" if str(side).upper() == "SELL" else "BUY"
+    st = ad._load()
+    lot = next((h for h in (st.get("held") or []) if h.get("code") == code), None)
+    if side == "SELL" and not lot:
+        return {"ok": False, "error": "we do not hold this stock"}
+    if side == "BUY" and lot:
+        return {"ok": False, "error": "already holding this stock"}
+    n = _news_of(code) or {}
+    try:
+        from services.paper_desk import fast_price
+        px = float((fast_price(code) or [None])[0] or 0)
+    except Exception:
+        px = 0.0
+    if not px:
+        return {"ok": False, "error": "no live price"}
+    qty = int(lot.get("qty")) if side == "SELL" else max(1, int(10_000_000 // px))
+    nm = (lot or {}).get("name") or code
+    ko = [("📰 뉴스 판단 — 사장님이 뉴스를 보고 직접 결정하셨습니다."
+           if side == "BUY" else "📰 나쁜 뉴스 — 사장님이 정리하기로 결정하셨습니다."),
+          f"제목: \"{n.get('title') or '-'}\"",
+          "🛒 시장가로 즉시 체결합니다." if side == "BUY" else "🛒 시장가로 전량 정리합니다."]
+    en = [("📰 News call - the boss decided this himself, on the news."
+           if side == "BUY" else "📰 Bad news - the boss decided to close it."),
+          f"headline: \"{n.get('title') or '-'}\"",
+          "🛒 Market order, fills immediately." if side == "BUY" else "🛒 Market order, closing the whole lot."]
+    sug = ad._mk_sug(st, code, nm, side, ko, px, qty, None, reasons_en=en)
+    ad._save(st)
+    return ad.decide(db, sug["id"], True)      # no price -> MARKET, so it fills
 
 
 @router.post("/reject/{sid}")

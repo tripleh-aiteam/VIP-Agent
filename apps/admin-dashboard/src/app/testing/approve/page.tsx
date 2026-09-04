@@ -29,12 +29,16 @@ type Stats = { trips: number; wins: number; losses: number; win_pct: number;
                worst?: { name: string; pct: number } | null };
 type Feed = { ok: boolean; market_open: boolean; rooms: Room[]; pending: Sug[];
               held: { code: string; name: string; qty: number; price: number; at: string;
-                      sug_at?: string }[];
+                      sug_at?: string; live?: number | null }[];
               log: LogRow[]; stats?: Stats | null;
               pulse?: { sox?: number | null; nasdaq?: number | null;
                         kospi?: number | null; kospi_px?: string | null } | null;
               note?: { id: number; hhmm: string; kind: string; n: number;
-                       lines: string[]; lines_en: string[] } | null };
+                       lines: string[]; lines_en: string[];
+                       offers?: { code: string; name: string; side: "BUY" | "SELL";
+                                  stamp: string; title: string; qty: number;
+                                  price?: number | null; gates_ok?: boolean | null;
+                                  ko: string; en: string }[] } | null };
 type Step = { icon: string; t: string; d: string; t_en?: string; d_en?: string };
 
 const W = (n?: number | null) => (n == null ? "-" : "₩" + Math.round(n).toLocaleString());
@@ -704,11 +708,12 @@ export default function ApprovePage() {
                 <th>{t("종목", "Stock")}</th><th>{t("수량", "Qty")}</th><th>{t("매수가", "Entry")}</th><th>{t("현재가", "Now")}</th><th>{t("평가", "P&L")}</th><th>{t("제안 시각", "Suggested at")}</th><th>{t("승인 시각", "Approved at")}</th></tr></thead>
               <tbody>{feed!.held.map((h, i) => {
                 const room = feed!.rooms.find((r) => r.code === h.code);
-                const pnl = room?.pnl;
+                const pnl = room?.pnl ?? (h.live && h.price
+                  ? Math.round((h.live / h.price - 1) * 10000) / 100 : null);
                 return (<tr key={i} style={{ borderTop: "1px solid rgba(128,128,128,0.2)" }}>
                   <td style={{ padding: "4px 0" }}><b>{h.name}</b></td>
                   <td>{(h.qty ?? 0).toLocaleString()}{t("주", "")}</td><td>{W(h.price)}</td>
-                  <td>{W(room?.price)}</td>
+                  <td>{W(h.live ?? room?.price)}</td>
                   <td style={{ color: (pnl ?? 0) >= 0 ? "#e53935" : "#1e88e5", fontWeight: 700 }}>
                     {pnl != null ? `${pnl >= 0 ? "+" : ""}${pnl}%` : "-"}</td>
                   {/* when the AGENT proposed it vs when the human clicked (boss
@@ -869,7 +874,7 @@ export default function ApprovePage() {
               <table style={{ width: "100%", fontSize: 12.5, borderCollapse: "collapse" }}>
                 <tbody>{holds.map((h, i) => {
                   const room = feed!.rooms.find((r) => r.code === h.code);
-                  const pnl = room?.pnl;
+                  const pnl = room?.pnl ?? (h.live && h.price ? Math.round((h.live / h.price - 1) * 10000) / 100 : null);
                   // THE SAVED POPUP REASONS, ONE CLICK AWAY (boss 2026-09-03
                   // 16:3x: "save each one we bought, dealt and without dealt —
                   // if I click any stock it should show these reasons")
@@ -901,7 +906,7 @@ export default function ApprovePage() {
                       // the yearly AND monthly position, ② the zone verdict,
                       // ③ patience when the rise pauses but -1% is not hit,
                       // ④ the server's AI news check (qwen news intern).
-                      const live = room?.price ?? null;
+                      const live = h.live ?? room?.price ?? null;
                       const trig = h.price * 0.99;
                       const chg9 = room?.chg ?? null;
                       const bEnt = [...(brain?.six || []), ...(brain?.universe || [])]
@@ -946,8 +951,8 @@ export default function ApprovePage() {
                           holdKo.push(`③ 내려가고는 있지만 아직 -1% 선(${W(trig)})에 닿지 않았습니다 — 서두르지 않고 기다립니다.`);
                           holdEn.push(`③ It is decreasing but has NOT yet reached the -1% line (${W(trig)}) — we stay patient, no hurry to sell.`);
                         } else if ((pnl ?? 0) > -1) {
-                          holdKo.push(`③ -1% 매도선은 ${W(trig)} — 아직 ${W(Math.max(0, live - trig))} 위에 있습니다 → 보유합니다.`);
-                          holdEn.push(`③ The -1% sell line is ${W(trig)} — price sits ${W(Math.max(0, live - trig))} above it → we hold.`);
+                          holdKo.push(`③ 아직 -1% 하락이 없습니다 — 매도선은 ${W(trig)}인데 현재가가 ${W(Math.max(0, live - trig))} 위에 있어 매도 조건에 닿지 않았습니다 → 계속 보유합니다.`);
+                          holdEn.push(`③ There is NO -1% decrease — the sell line is ${W(trig)} and price sits ${W(Math.max(0, live - trig))} above it, so the sell condition is not touched → we keep holding.`);
                         } else {
                           holdKo.push(`③ -1% 선(${W(trig)}) 아래입니다 — 매도 제안이 곧 팝업으로 옵니다.`);
                           holdEn.push(`③ Below the -1% line (${W(trig)}) — a SELL proposal is coming as a popup.`);
@@ -1426,6 +1431,49 @@ export default function ApprovePage() {
                 <div key={i} style={{ fontSize: 12.5, lineHeight: 1.45 }}>
                   {t(ln, (feed.note!.lines_en || [])[i] || ln)}</div>))}
             </div>
+            {/* NEWS THE ROOM CAN ACT ON (boss 2026-09-04: "if we have good news
+                it should send with a button — would you like to buy? if bad
+                news, would you like to sell?"). One click goes through the
+                same decide() an approved popup uses, so the fill and the
+                history row are identical; the gate verdict is printed on the
+                button so a click is never made in the dark. */}
+            {(feed.note.offers || []).map((o) => (
+              <div key={o.code + o.side} style={{ marginTop: 9, paddingTop: 9,
+                     borderTop: "1px dashed rgba(128,128,128,0.4)" }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, lineHeight: 1.45 }}>
+                  {t(o.ko, o.en)}</div>
+                <div style={{ fontSize: 11, opacity: 0.7, margin: "3px 0 7px" }}>
+                  「{o.title}」</div>
+                <button disabled={busy === -1}
+                  onClick={() => {
+                    setBusy(-1);
+                    setToast(t("👆 뉴스 판단 — 시장가로 주문합니다…", "👆 News call — ordering at market…"));
+                    fetch(`${base}/approval/news-order?code=${o.code}&side=${o.side}`, { method: "POST" })
+                      .then((r) => r.json())
+                      .then((d) => { setToast(d?.ok
+                          ? t(`✅ ${o.side === "BUY" ? "매수" : "매도"} 체결 ${W(d.fill)}`,
+                              `✅ ${o.side} filled ${W(d.fill)}`)
+                          : `⚠️ ${d?.error || t("실패", "failed")}`);
+                        setNoteHid((v) => [...v, feed.note!.id]);
+                        setTimeout(() => setToast(null), 3500); pull(); })
+                      .catch(() => setToast(t("⚠️ 요청 실패", "⚠️ request failed")))
+                      .finally(() => setBusy(null));
+                  }}
+                  style={{ width: "100%", padding: "10px 0", borderRadius: 8, border: "none",
+                           fontWeight: 900, fontSize: 14, cursor: "pointer", color: "#fff",
+                           background: o.side === "BUY" ? "#c62828" : "#1565c0" }}>
+                  {o.side === "BUY"
+                    ? t(`📈 네, 매수합니다 — ${o.qty.toLocaleString()}주 시장가`,
+                        `📈 Yes, BUY — ${o.qty.toLocaleString()} sh at market`)
+                    : t(`⚠️ 네, 매도합니다 — ${o.qty.toLocaleString()}주 전량`,
+                        `⚠️ Yes, SELL — all ${o.qty.toLocaleString()} sh`)}
+                </button>
+                {o.side === "BUY" && o.gates_ok === false && (
+                  <div style={{ fontSize: 10.5, marginTop: 4, color: "#c62828", fontWeight: 700 }}>
+                    {t("⚠️ 규칙상으로는 지금 매수 금지입니다 — 뉴스로 판단하시는 경우에만 누르세요.",
+                       "⚠️ The rules would NOT buy this right now — press only if the news is your reason.")}
+                  </div>)}
+              </div>))}
             <button onClick={() => setNoteHid((v) => [...v, feed.note!.id])}
               style={{ marginTop: 10, width: "100%", padding: "8px 0", borderRadius: 8,
                        fontWeight: 800, fontSize: 13, border: "2px solid #6b7684",
