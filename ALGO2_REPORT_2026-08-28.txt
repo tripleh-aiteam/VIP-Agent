@@ -1,0 +1,97 @@
+VIP DESK — CLOSING + LAW-CHANGE REPORT, Friday 2026-08-28
+알고리즘2 only, both menus, as ordered.
+(Prepared for davrronbekmalikov96@gmail.com — Gmail connection expired,
+so this file holds the report until it can be sent.)
+
+=== 1. 알고2 SCOREBOARD (today, replayed under the NEW laws) ===
+
+MENU 1 (six stocks):
+  17 finished round trips
+  승률 (piece count, your rule): 57% (20W/15L)
+  판당 (whole trips, after fee): 18%
+  Money: -1,119,921 KRW
+
+MENU 2 (Top-10 checklist desk):
+  37 finished round trips
+  승률 (piece count): 67% (56W/27L)
+  판당 (whole trips): 27%
+  Money: -3,972,280 KRW
+
+Honest verdict: a falling, whipsaw day. Most trips bought a turn that
+never ran and paid the -1% stop. The winners: 두산에너빌리티 10:02
+(+2.29%, +1.46M — caught by the new bottom-hold door), 삼성전기 09:20
+(+1.52%), 한화에어로 09:16 (+1.53%), 한미반도체 09:13 (+1.35%),
+한전기술 10:51 (+1.01%), SK텔레콤 14:19 (+0.38%).
+
+=== 2. MENU 1 — ALL 17 TRIPS (buy -> sell, net %, won) ===
+삼성전자   15:16->15:30  -0.42%      -1,094
+한화오션   15:14->15:30  -0.34%      -2,125
+SK하이닉스 14:25->15:18  -1.24%     -20,870
+SK텔레콤   14:19->15:30  +0.38%    +279,306
+SK텔레콤   13:36->14:14  -1.25%     -18,395
+삼성전자   12:54->14:12  -1.38%      -3,598
+SK하이닉스 12:48->14:20  -1.24%    -104,419   << your 12:46 re-entry, now firing
+SK텔레콤   10:55->13:21  -1.24%     -18,432
+한화오션   10:35->14:24  -1.34%    -297,658
+삼성전자   10:21->10:45  -1.28%      -3,354
+두산에너빌 10:02->15:30  +2.29%  +1,463,577   << bottom-hold door catch
+한화오션   09:31->10:27  -1.25%    -416,212
+삼성전자   09:25->10:14  -1.05%     -74,889
+SK텔레콤   09:15->10:48  -1.23%     -92,477
+SK하이닉스 09:07->12:43  +0.09%     +11,809
+두산에너빌 09:02->09:59  -1.16%  -1,176,214
+한화오션   09:02->09:16  -1.43%    -644,876
+
+=== 3. MENU 2 — 37 trips, highlights ===
+All menu-1 trades plus the Top-10 desk. Green: 두산에너빌 +1.46M,
+한미반도체 +280K, 한화에어로 +120K, 삼성전기 09:20 +108K, LIG 13:40 +70K,
+삼성바이오 +68K, 한전기술 10:51 +61K, SK스퀘어 14:25 +15K.
+Red: LIG 10:19 -1.44M, 두산 09:02 -1.18M, 삼성전기 10:17 -366K,
+HD현대 3 stops -1.27M combined, SK하이닉스 09:32 -327K, others ~-1.2% each.
+
+HD현대중공업 now shows FOUR episodes (09:02, 09:33, 10:34, 15:10) —
+the 10:31 and 15:06 chances you caught as missed are now traded.
+
+=== 4. WHAT CHANGED TONIGHT (all live for Monday, every algo, every menu) ===
+a) WIN% LAW (your definition): every sell piece = one count, judged
+   against its at-the-moment cost; trips ride along as "판당 X%".
+   The 100%-on-a-losing-day bug is dead (root cause: yesterday's
+   cost-accounting fix leaked into the row math; fully repaired,
+   entries/percents/money all recomputed true).
+b) FEE-LINE GATE: no mid-market sell may fill inside base+0.23% —
+   the 삼성SDI 14:13 +0.02% piece can never happen again. Bell sells
+   keep their small +% and count as wins (no more unfair ⚠).
+c) 3-RED RE-ENTRY UNBLOCKED: the oscillation fence was silently eating
+   the re-entry law (a stock recovering from its own stop always has a
+   tight range). Your law "at the 3rd rise we buy, price does not care"
+   now outranks the fence — SK하이닉스 12:48 fires.
+d) BOTTOM-HOLD DOOR everywhere: 3 bars holding above the trough (no new
+   low; equal closes are a pause, not a break) = the fall ended -> buy,
+   but never >1.5% above the bottom (no chasing late confirmations).
+e) BUYING-ZONE FREE PASS: in the bottom fifth of the yearly range the
+   chop/sharpness tests stand aside — a stopped fall alone opens the
+   door ("again decreasing probability is very low").
+f) RE-ENTRY KEEPS ITS SEAT (menu 2): a stock the desk already traded
+   today re-enters through the 3-red law even if it slipped off the
+   intraday Top-10 (the HD현대 10:31/15:06 case).
+g) THE GUARD (your idea): every row is now re-audited automatically —
+   calculation vs actual fills, share balance, stop-line breaches
+   (>-2.7% pieces), fee-line sells, top-zone buys, buying-zone sells.
+   Any violation puts a small red ? on the row; hover shows the charges.
+   Tonight all 알고2 rows pass clean.
+
+=== 5. 삼성전자 PROOF BACKTEST (your request) ===
+Old board today:  09:29 -1.35%, 10:21 -1.28%  => -2.63%
+New laws today:   09:17 -0.77%, 12:54 -1.38%, 15:16 -0.04% => -2.19%
+Honest answer: better by +0.44pp, but NOT positive — 삼성전자 fell all
+day and no entry law turns a falling stock green. The real proof is the
+251-day year court, which runs tonight; results in the morning report.
+
+=== 6. STANDING CAVEAT (on the record) ===
+Tonight's doors were deployed at your order before year measurement.
+Today's one-day backtest of the full package: menu 1 improved ~+1.0M,
+menu 2 worsened ~-0.9M — a wash on a falling day. The year court
+verdict comes in the morning report, and anything the year rejects is
+yours to keep or remove.
+
+— The desk (Claude), 2026-08-28 night

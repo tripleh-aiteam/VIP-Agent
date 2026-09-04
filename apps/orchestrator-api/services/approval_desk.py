@@ -181,14 +181,14 @@ def _market_pulse() -> dict:
     return out
 
 
-def _vol_at(code: str, hhmm: str):
-    """Trading volume AT a moment, from today's Kiwoom tape (boss 2026-09-03
-    20:0x: 'if we buy at 14:09 it should be THAT time's trading volume').
-    Returns (minute_vol, mult_vs_avg_minute, cum_vol) or (None, None, None)."""
+def _vol_at(code: str, hhmm: str, day8: str | None = None):
+    """Trading volume AT a moment, from THAT DAY's Kiwoom tape (boss 2026-09-03
+    20:0x + 09-04 10:0x: yesterday's 11:30 buy must read yesterday's tape, not
+    today's). Returns (minute_vol, mult_vs_avg_minute, cum_vol)."""
     try:
         import json as _j
         from services.kiwoom_tape import _day as _kd
-        p = _FILE.parent / "kiwoom_tape" / f"{code}_{_kd()}.jsonl"
+        p = _FILE.parent / "kiwoom_tape" / f"{code}_{day8 or _kd()}.jsonl"
         if not p.exists():
             return None, None, None
         per_min: dict = {}
@@ -364,7 +364,12 @@ def _enrich_log_rows(st: dict) -> None:
                     # rows saved before the 🌐 market items rebuild once
                     or not any(it.get("g") == "market" for it in l["check_items"])):
                 # time-stamped at the row's own clock (volume of THAT minute)
-                l["check_items"] = _check_items(code, str(l.get("at") or l.get("hhmm") or "")[:5] or None)
+                _d8r = None
+                try:
+                    _d8r = time.strftime("%Y%m%d", time.gmtime(float(l.get("ts")) + 9 * 3600)) if l.get("ts") else None
+                except Exception:
+                    pass
+                l["check_items"] = _check_items(code, str(l.get("at") or l.get("hhmm") or "")[:5] or None, _d8r)
             if l.get("score") is None:
                 l["score"] = _score(code)
             sc = l.get("score")
@@ -385,7 +390,12 @@ def _enrich_log_rows(st: dict) -> None:
                 head_ko = (l.get("reasons") or [""])[0]
                 head_en = (l.get("reasons_en") or [head_ko])[0]
                 try:
-                    R, E = _why_buy(code, name, {"buy_t": l.get("at")})
+                    _d8w = None
+                    try:
+                        _d8w = time.strftime("%Y%m%d", time.gmtime(float(l.get("ts")) + 9 * 3600)) if l.get("ts") else None
+                    except Exception:
+                        pass
+                    R, E = _why_buy(code, name, {"buy_t": l.get("at"), "day8": _d8w})
                 except Exception:
                     R, E = [], []
                 # _why_buy already leads with its own 📋 checklist statement
@@ -681,7 +691,7 @@ def _fold_lots(st) -> bool:
     return changed
 
 
-def _check_items(code: str, hhmm: str | None = None) -> list[dict]:
+def _check_items(code: str, hhmm: str | None = None, day8: str | None = None) -> list[dict]:
     """The machine-measured 100-checklist items for one stock, saved WITH every
     proposal (boss 2026-09-03 17:0x: 'the ⑤ checklist line should be clickable
     — if I click it should show all checking cases of the 100 checklist').
@@ -709,7 +719,7 @@ def _check_items(code: str, hhmm: str | None = None) -> list[dict]:
         pass
     if hhmm:
         try:
-            mv, mult, cum = _vol_at(code, hhmm)
+            mv, mult, cum = _vol_at(code, hhmm, day8)
             if mv is not None:
                 out0.append({"k": f"⏱ 그 시각({hhmm}) 거래량", "en": f"volume at {hhmm}",
                              "v": (f"{mv:,}주 · 평균 분당의 {mult:.1f}배" if mult else f"{mv:,}주"),
@@ -2089,7 +2099,7 @@ def _why_buy(code: str, name: str, hold: dict):
     # up, a good buying reason"):
     try:
         _bt5 = bt or _hhmm()
-        _mv5, _mult5, _cum5 = _vol_at(code, _bt5)
+        _mv5, _mult5, _cum5 = _vol_at(code, _bt5, (hold or {}).get("day8"))
         _r5, _tv5 = _vol_ratio(code)
         if _mv5 is not None:
             _chg5 = f" ({(_r5 - 1) * 100:+.0f}%)" if _r5 else ""
