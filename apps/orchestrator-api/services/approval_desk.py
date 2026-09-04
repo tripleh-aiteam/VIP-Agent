@@ -160,6 +160,30 @@ def desk_codes() -> list[tuple[str, str, float | None]]:
 
 _PULSE9 = {"t": 0.0, "v": None}
 
+# 반도체 관련주만 SOX를 듣는다 (boss 2026-09-04 10:3x: "SOX should be only
+# semiconductor-related stocks — SK하이닉스, 삼성전자, 삼성전기 and others;
+# remove it from unrelated things"). Named codes + the name itself.
+_SEMI_CODES = {
+    "000660",  # SK하이닉스
+    "005930",  # 삼성전자
+    "009150",  # 삼성전기 (부품/기판 — 반도체 생태계)
+    "042700",  # 한미반도체 (장비)
+    "402340",  # SK스퀘어 (하이닉스 지주)
+    "000990",  # DB하이텍 (파운드리)
+    "058470",  # 리노공업 (테스트 소켓)
+    "240810",  # 원익IPS (장비)
+    "403870",  # HPSP (장비)
+    "357780",  # 솔브레인 (소재)
+    "036930",  # 주성엔지니어링 (장비)
+    "095340",  # ISC (테스트 소켓)
+    "140860",  # 파크시스템스 (계측)
+    "039030",  # 이오테크닉스 (레이저 장비)
+}
+
+
+def _is_semi(code: str, name: str = "") -> bool:
+    return str(code) in _SEMI_CODES or "반도체" in str(name or "")
+
 
 def _market_pulse() -> dict:
     """🌐 THE MARKET'S OWN WEATHER (boss 2026-09-04 09:3x: 'SOX, US
@@ -169,7 +193,8 @@ def _market_pulse() -> dict:
     0.64 with 하이닉스/삼성 mornings), KOSPI live. Cached 5 min."""
     if time.time() - _PULSE9["t"] < 300 and _PULSE9["v"]:
         return _PULSE9["v"]
-    out = {"sox": None, "nasdaq": None, "kospi": None, "kospi_px": None}
+    out = {"sox": None, "nasdaq": None, "kospi": None, "kospi_px": None,
+           "nvda": None, "micron": None, "tokyo": None}
     try:
         from services.overnight import fetch as _ofetch
         for r in (_ofetch() or {}).get("rows", []):
@@ -177,6 +202,12 @@ def _market_pulse() -> dict:
                 out["sox"] = r.get("chg_pct")
             elif r.get("sym") == "^IXIC":
                 out["nasdaq"] = r.get("chg_pct")
+            elif r.get("sym") == "NVDA":
+                out["nvda"] = r.get("chg_pct")
+            elif r.get("sym") == "MU":
+                out["micron"] = r.get("chg_pct")
+            elif r.get("sym") == "8035.T":
+                out["tokyo"] = r.get("chg_pct")
     except Exception:
         pass
     try:
@@ -755,6 +786,15 @@ def _check_items(code: str, hhmm: str | None = None, day8: str | None = None) ->
                          "v": f"{_s0:+.1f}%", "ven": f"{_s0:+.1f}%",
                          "s": max(0, min(100, round(50 + _s0 * 15))), "g": "market",
                          "bad": _s0 <= -1.5})
+        for _ck, _cko, _cen, _cwh in (("nvda", "🌐 엔비디아 밤사이", "NVIDIA overnight", 12),
+                                      ("micron", "🌐 마이크론 밤사이", "Micron overnight", 12),
+                                      ("tokyo", "🌐 도쿄일렉트론 오늘", "Tokyo Electron today", 12)):
+            _cv = _pl0.get(_ck)
+            if _cv is not None:
+                _cv = float(_cv)
+                out0.append({"k": _cko, "en": _cen, "v": f"{_cv:+.1f}%", "ven": f"{_cv:+.1f}%",
+                             "s": max(0, min(100, round(50 + _cv * _cwh))), "g": "market",
+                             "bad": _cv <= -2.0})
         if _pl0.get("kospi") is not None:
             _k0 = float(_pl0["kospi"])
             out0.append({"k": "🌐 코스피 오늘", "en": "KOSPI today",
@@ -2220,6 +2260,17 @@ def _why_buy(code: str, name: str, hold: dict):
             if _nq is not None:
                 _pk.append(f"나스닥 {_nq:+.1f}%")
                 _pe.append(f"NASDAQ {_nq:+.1f}%")
+            # the individual chip names, each with its OWN clock: NVIDIA and
+            # Micron closed in New York last night, Tokyo Electron is trading
+            # TODAY alongside us - calling them all "overnight" would be wrong
+            for _k9, _lk, _le, _wh, _whe in (
+                    ("nvda", "엔비디아", "NVIDIA", "지난밤", "overnight"),
+                    ("micron", "마이크론", "Micron", "지난밤", "overnight"),
+                    ("tokyo", "도쿄일렉트론", "Tokyo Electron", "오늘", "today")):
+                _v9 = _pl.get(_k9)
+                if _v9 is not None:
+                    _pk.append(f"{_lk} {_wh} {float(_v9):+.1f}%")
+                    _pe.append(f"{_le} {_whe} {float(_v9):+.1f}%")
             if _kp is not None:
                 _pk.append(f"코스피 지금 {_kpx or ''} ({_kp:+.2f}%)")
                 _pe.append(f"KOSPI now {_kpx or ''} ({_kp:+.2f}%)")

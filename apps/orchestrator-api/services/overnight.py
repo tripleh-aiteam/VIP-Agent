@@ -21,6 +21,15 @@ SYMBOLS = [
     ("^IXIC", "NASDAQ", "미국 기술주"),
     ("^SOX", "SOX(반도체)", "반도체 - SK하이닉스·삼성전자 예고편"),
     ("KRW=X", "원/달러", "환율"),
+    # THE CHIP NAMES THEMSELVES, NOT ONLY THE INDEX (boss 2026-09-04: "please
+    # add other semiconductor related prices also, like NVIDIA, Micron
+    # Technology, and there is a Japanese one also"). SOX is an average; these
+    # are the three that actually move 하이닉스/삼성 sentiment - the AI-demand
+    # bellwether, the memory maker that competes with them directly, and Japan's
+    # chip-equipment giant, whose orders lead their capex.
+    ("NVDA", "엔비디아", "AI 수요 - 하이닉스 HBM 예고편"),
+    ("MU", "마이크론", "메모리 직접 경쟁사 - 삼성·하이닉스와 같은 사이클"),
+    ("8035.T", "도쿄일렉트론", "일본 반도체 장비 - 오늘 아시아 장에서 같이 움직임"),
 ]
 
 
