@@ -362,7 +362,9 @@ def _enrich_log_rows(st: dict) -> None:
                     # the old ugly '160100M won' values rebuild into ₩160.1B
                     or any("M won" in str(it.get("ven") or "") for it in l["check_items"])
                     # rows saved before the 🌐 market items rebuild once
-                    or not any(it.get("g") == "market" for it in l["check_items"])):
+                    or not any(it.get("g") == "market" for it in l["check_items"])
+                    # v3: day-correct volume + rank-only-when-it-helps (09-04 10:0x)
+                    or l.get("_rv") != 3):
                 # time-stamped at the row's own clock (volume of THAT minute)
                 _d8r = None
                 try:
@@ -375,6 +377,7 @@ def _enrich_log_rows(st: dict) -> None:
             sc = l.get("score")
             sc_ko = f" — 오늘 {sc}점." if sc is not None else "."
             sc_en = f" — today {sc} pts." if sc is not None else "."
+            l["_rv"] = 3
             if l.get("side") == "BUY" and (
                     len(l.get("reasons") or []) <= 2
                     or sum(1 for x in l.get("reasons") or [] if "📋" in str(x)) > 1
@@ -2145,17 +2148,18 @@ def _why_buy(code: str, name: str, hold: dict):
     # have checked the 100 checklist in the buying case, then second…"): it
     # slots right under the ✅ verdict — the short verdict keeps first place
     # (his 09:1x law), the inspection statement with the SCORE comes second.
-    if score is not None and rank is not None:
+    # THE RANK ONLY WHEN IT HELPS (boss 2026-09-04 10:0x, the Kia case:
+    # "'rank 14 of 20' creates confusion — why buy a low rank? Just say we
+    # checked all the checklist, enough"): score+rank print only for a
+    # top-5 / strong-score stock; otherwise the plain statement stands.
+    if score is not None and rank is not None and (rank <= 5 or (score or 0) >= 50):
         _ck = (f"📋 100 체크리스트 전 항목을 검사했습니다 — {score}점 · {tot}종목 중 {rank}등 "
-               f"(점수가 높을수록 좋은 종목 · 전체 검사 내역은 아래 클릭).")
+               f"(전체 검사 내역은 아래 클릭).")
         _ce = (f"📋 We checked ALL 100 checklist items — {score} pts · rank {rank} of {tot} "
-               f"(higher score = better stock · click below for the full inspection).")
-    elif score is not None:
-        _ck = f"📋 100 체크리스트 전 항목을 검사했습니다 — 오늘 {score}점 (전체 검사 내역은 아래 클릭)."
-        _ce = f"📋 We checked ALL 100 checklist items — today {score} pts (click below for the full inspection)."
+               f"(click below for the full inspection).")
     else:
-        _ck = "📋 100 체크리스트 전 항목을 검사했습니다 — 오늘 점수는 집계 중입니다."
-        _ce = "📋 We checked ALL 100 checklist items — today's score is still computing."
+        _ck = "📋 100 체크리스트 전 항목을 검사했습니다 — 통과 기준을 충족했습니다 (전체 검사 내역은 아래 클릭)."
+        _ce = "📋 We checked ALL 100 checklist items — the passing conditions were met (click below for the full inspection)."
     # 🌐 THE MARKET WEATHER LEADS (boss 2026-09-04 09:3x: "SOX, US
     # semiconductors and KOSPI — if they increase the Korean market also
     # increases; main factors BEFORE the checklist"): SOX overnight + live

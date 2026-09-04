@@ -232,6 +232,18 @@ export default function ApprovePage() {
       .finally(() => setBusy(null));
   }, [base, pull]);
 
+  // 📰 the source link rides ON the news line itself (boss 2026-09-04 10:0x:
+  // "in the first line of news there is no source link given")
+  const newsLinkFrom = (items?: ChkItem[]) =>
+    items?.find((it) => it.g === "news" && it.link)?.link || null;
+  const rzLine = (x: string, link: string | null, key: number) => (
+    <div key={key}>· {x}
+      {link && x.includes("📰") && (
+        <a href={link} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
+           style={{ marginLeft: 5, fontWeight: 800, color: "#1565c0" }}>
+          📎 {t("기사", "source")}</a>)}
+    </div>);
+
   // 📋 THE FULL CHECKLIST, ONE CLICK UNDER THE ⑤ LINE (boss 2026-09-03 17:0x:
   // "Checklist 60.6 pts should be clickable — if I click it should show all
   // checking cases of the 100 checklist"): every proposal saves its measured
@@ -969,8 +981,8 @@ export default function ApprovePage() {
                                       background: "rgba(229,57,53,0.06)", padding: "6px 9px",
                                       fontSize: 12, lineHeight: 1.55, marginBottom: 6 }}>
                           <b style={{ color: "#c62828" }}>🔴 {t(`매수 이유 (${h.at})`, `Why we bought (${h.at})`)}</b>
-                          {(buyRow ? (ko9 ? buyRow.reasons : (buyRow.reasons_en || buyRow.reasons)) : []).map((x, k2) => (
-                            <div key={k2}>· {x}</div>))}
+                          {(buyRow ? (ko9 ? buyRow.reasons : (buyRow.reasons_en || buyRow.reasons)) : []).map((x, k2) =>
+                            rzLine(x, newsLinkFrom(buyRow?.check_items), k2))}
                           {!buyRow && <div style={{ opacity: 0.6 }}>
                             {t("저장된 이유가 없습니다 (이 매수는 팝업 없이 기록되었습니다).", "No saved reasons (this buy was recorded without a popup).")}</div>}
                           {chkList(`hb${i}`, buyRow?.check_items)}
@@ -1067,7 +1079,7 @@ export default function ApprovePage() {
                             <b style={{ color: "#c62828" }}>
                               🔴 {t("매수 이유", "Why we bought")}
                               {b9 ? ` (${b9.at})` : ""}</b>
-                            {rz(b9 || undefined).map((x, k2) => <div key={k2}>· {x}</div>)}
+                            {rz(b9 || undefined).map((x, k2) => rzLine(x, newsLinkFrom(b9?.check_items), k2))}
                             {!b9 && <div style={{ opacity: 0.6 }}>
                               {t("저장된 매수 이유가 없습니다.", "No saved buy reasons.")}</div>}
                             {chkList(`cb${i}_${kb}`, b9?.check_items)}
@@ -1080,7 +1092,7 @@ export default function ApprovePage() {
                                         marginBottom: k3 < sellRows.length - 1 ? 6 : 0 }}>
                             <b style={{ color: "#1565c0" }}>
                               🔵 {t(`매도 이유 (${s9.at})`, `Why we sold (${s9.at})`)}</b>
-                            {rz(s9).map((x, k2) => <div key={k2}>· {x}</div>)}
+                            {rz(s9).map((x, k2) => rzLine(x, newsLinkFrom(s9.check_items), k2))}
                             {s9.conv_note && <div style={{ opacity: 0.7 }}>· {s9.conv_note}</div>}
                             {chkList(`cs${i}_${k3}`, s9.check_items)}
                           </div>))}
@@ -1330,6 +1342,10 @@ export default function ApprovePage() {
                   <li key={i2} style={{ fontSize: popBig ? 13.2 : 11.6, margin: popBig ? "5px 0" : "3px 0",
                                         lineHeight: popBig ? 1.55 : 1.42 }}>
                     {head && <b style={{ color: "#12161b" }}>{head}</b>}{tail}
+                    {x.includes("📰") && newsLinkFrom(p.check_items) && (
+                      <a href={newsLinkFrom(p.check_items)!} target="_blank" rel="noreferrer"
+                         style={{ marginLeft: 5, fontWeight: 800, color: "#1565c0" }}>
+                        📎 {t("기사", "source")}</a>)}
                   </li>);
               })}
             </ul>
