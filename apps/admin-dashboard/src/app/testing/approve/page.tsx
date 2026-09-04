@@ -119,6 +119,7 @@ export default function ApprovePage() {
   const [fStock, setFStock] = useState("");
   const [fDec, setFDec] = useState("");
   const [fDeal, setFDeal] = useState("");
+  const [fDay, setFDay] = useState("");   // 📅 trading-list day (default: today)
   const [guOpen, setGuOpen] = useState<string | null>(null);   // opened give-up detail row (stable code|time key)
   const [histOpen, setHistOpen] = useState(true);              // 📜 history fold (boss: closeable)
   const [histDay, setHistDay] = useState("");                  // 📅 which day's record (compare days)
@@ -415,7 +416,25 @@ export default function ApprovePage() {
             {t("15:20 이후에는 검사도 제안도 하지 않습니다. 아래 매매 기록에서 오늘과 지난 날들의 결과를 비교해 보세요 — 다음 장이 열리면 자동으로 다시 일합니다.",
                "After 15:20 the agent neither checks nor proposes. Review today's and previous days' results in the trading history below — it goes back to work automatically at the next open.")}
           </div>
+          {/* the boss looks for the WHY here after the bell (2026-09-04
+              17:2x: "still there is not like menu") — a real button, not a
+              small link he can miss */}
+          <a href="/testing/whynot" style={{ display: "inline-block", marginTop: 10,
+               padding: "8px 14px", borderRadius: 9, background: "#6a1b9a",
+               color: "#fff", fontWeight: 800, fontSize: 13, textDecoration: "none" }}>
+            🚧 {t("오늘 왜 안 샀는지 보기 — 관문 증명 (에이전트의 기억)",
+                  "See WHY it did not buy today — gate proof (the agent's memory)")}
+          </a>
         </div>)}
+
+      {/* the same door during market hours, beside the working blocks */}
+      {feed?.market_open !== false && (
+        <a href="/testing/whynot" style={{ display: "inline-block", margin: "2px 0 10px",
+             padding: "6px 12px", borderRadius: 9, background: "rgba(106,27,154,0.12)",
+             color: "#6a1b9a", fontWeight: 800, fontSize: 12.5, textDecoration: "none",
+             border: "1.5px solid #6a1b9a" }}>
+          🚧 {t("아직 왜 안 사나 — 종목별 관문 증명 열기", "Why Not Buying Yet — open the per-stock gate proof")}
+        </a>)}
 
       {/* ─ 20 AGENT BLOCKS, ALL STEPPING AT ONCE (market hours only) ─ */}
       {feed?.market_open !== false && brain?.ok && !brain.computing && (() => {
@@ -1157,10 +1176,21 @@ export default function ApprovePage() {
             color: "inherit" };
           const names = Array.from(new Map((feed!.log || [])
             .map((l) => [l.code, l.name])).entries());
+          // ONE DAY AT A TIME (boss 2026-09-04 17:2x paste: today's rows and
+          // yesterday's evening close sat in one jumbled list) — the list
+          // opens on TODAY; other days by the dropdown, like the history
+          const kstT9 = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+          const days9 = Array.from(new Set([kstT9, ...(feed!.log || [])
+            .map((l) => l.day || "").filter(Boolean)])).sort().reverse();
           return (
             <div style={{ display: "flex", gap: 7, flexWrap: "wrap", margin: "7px 0 2px",
                           alignItems: "center" }}>
               <span style={{ fontSize: 11.5, opacity: 0.6 }}>{t("필터", "Filter")}</span>
+              <select style={sel} value={days9.includes(fDay) ? fDay : kstT9}
+                      onChange={(e) => setFDay(e.target.value)}>
+                {days9.map((d) => <option key={d} value={d}>
+                  {d === kstT9 ? t(`오늘 (${d})`, `today (${d})`) : d}</option>)}
+              </select>
               <select style={sel} value={fStock} onChange={(e) => setFStock(e.target.value)}>
                 <option value="">{t("전체 종목", "All stocks")}</option>
                 {names.map(([c, n]) => <option key={c} value={c}>{n}</option>)}
@@ -1187,12 +1217,17 @@ export default function ApprovePage() {
           : <table style={{ width: "100%", fontSize: 12.5, marginTop: 6, borderCollapse: "collapse" }}>
               <thead><tr style={{ opacity: 0.6, textAlign: "left" }}>
                 <th>{t("시각", "Time")}</th><th>{t("구분", "Side")}</th><th>{t("종목", "Stock")}</th><th>{t("수량", "Qty")}</th><th>{t("제안가", "Proposed")}</th><th>{t("결정", "Decision")}</th><th>{t("체결 여부", "Dealt?")}</th><th>{t("체결가", "Fill")}</th></tr></thead>
-              <tbody>{feed!.log.filter((l) => (
+              <tbody>{(() => {
+                const kstT8 = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+                const dayF = fDay || kstT8;
+                return [...feed!.log].reverse().filter((l) => (
+                  (l.day || kstT8) === dayF &&
                   (fStock === "" || l.code === fStock) &&
                   (fDec === "" || (fDec === "ok" ? l.decision === "승인" : l.decision !== "승인")) &&
                   (fDeal === "" || (fDeal === "y" ? !!(l.dealt === true || l.fill)
                                                   : !(l.dealt === true || l.fill)))
-                )).slice(0, 25).map((l, i) => {
+                )).slice(0, 40);
+              })().map((l, i) => {
                 // THE GIVE-UP LAW, per stock (boss 2026-09-03 11:5x: "remove the
                 // give-up table; inside trading history make give-up cases
                 // clickable and show the limitation, like SK하이닉스 2000") —
