@@ -2783,10 +2783,17 @@ def init_scheduler():
                         extra={"action": "tape.afterhours.fail"})
     _scheduler.add_job(
         _after_hours_capture,
-        # 20:05, not 18:05 (boss 2026-09-04): KRX 시간외 ends at 18:00 but NXT
-        # trades to 20:00, and the 19:59 price he checks on Kiwoom is the NXT
-        # one. Capturing at 18:05 stored the wrong venue's last print.
-        CronTrigger(day_of_week="mon-fri", hour=20, minute=5, timezone=_KST_TZ),
+        # EVERY 10 MINUTES THROUGH THE AFTER-HOURS SESSION, 15:40-20:10
+        # (boss 2026-09-04). Three reasons it is not a single shot at 20:05:
+        # KRX 시간외 ends at 18:00 but NXT trades to 20:00, so the last price of
+        # the day is late; a single call that fails leaves us with NOTHING and
+        # yesterday's price is unrecoverable - I checked Kiwoom's minute chart
+        # (stops 15:35), Kiwoom's quote (no after-hours field), and four Naver
+        # endpoints, and none of them serve a PAST day's after-hours price; and
+        # each write overwrites the same key, so the last successful read of the
+        # evening is what stands, whenever it happened to land.
+        CronTrigger(day_of_week="mon-fri", hour="15-20", minute="0,10,20,30,40,50",
+                    timezone=_KST_TZ),
         id="after-hours-capture",
         replace_existing=True, max_instances=1, coalesce=True,
     )
