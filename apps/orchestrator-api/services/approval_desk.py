@@ -70,6 +70,7 @@ def _save_scan(st: dict, seen_ids: set, seen_held: set | None = None) -> None:
     popup that was answered - always wins over what the scan remembered."""
     cur = _load()
     if not cur:
+        st.pop("_desk_closed", None)
         _save(st)
         return
     # 1. asked marks merge, and a mark made during the scan wins
@@ -91,8 +92,11 @@ def _save_scan(st: dict, seen_ids: set, seen_held: set | None = None) -> None:
         st["held"] = [h for h in (st.get("held") or [])
                       if (h.get("code") not in seen_held) or (h.get("code") in live)]
     have = {h.get("code") for h in (st.get("held") or [])}
+    # a lot the scanner itself closed this pass (desk went flat — see
+    # _reconcile_positions) must NOT come back from the disk copy
+    closed9 = set(st.pop("_desk_closed", None) or [])
     for h in (cur.get("held") or []):
-        if h.get("code") not in have:
+        if h.get("code") not in have and h.get("code") not in closed9:
             st.setdefault("held", []).append(h)
     # 4. keep every log row either side wrote
     seen_log = {l.get("id") for l in (st.get("log") or [])}
@@ -439,7 +443,8 @@ def _enrich_log_rows(st: dict) -> None:
                     # rows saved before the 🌐 market items rebuild once
                     or not any(it.get("g") == "market" for it in l["check_items"])
                     # v3: day-correct volume + rank-only-when-it-helps (09-04 10:0x)
-                    or l.get("_rv") != 4):
+                    # v5: SOX/chip weather only on semiconductor names (09-04 10:3x)
+                    or l.get("_rv") != 5):
                 # time-stamped at the row's own clock (volume of THAT minute)
                 _d8r = None
                 try:
@@ -452,7 +457,7 @@ def _enrich_log_rows(st: dict) -> None:
             sc = l.get("score")
             sc_ko = f" — 오늘 {sc}점." if sc is not None else "."
             sc_en = f" — today {sc} pts." if sc is not None else "."
-            l["_rv"] = 4
+            l["_rv"] = 5
             if l.get("side") == "BUY" and (
                     len(l.get("reasons") or []) <= 2
                     or sum(1 for x in l.get("reasons") or [] if "📋" in str(x)) > 1
@@ -460,6 +465,10 @@ def _enrich_log_rows(st: dict) -> None:
                     or not any("⑥" in str(x) for x in l.get("reasons") or [])
                     # rows still naming 알고3 rebuild with the engine-free wording
                     or any("알고3" in str(x) for x in l.get("reasons") or [])
+                    # non-semi rows that still quote SOX/chip names rebuild with
+                    # the scoped market weather (boss 09-04 10:3x)
+                    or (not _is_semi(code, name)
+                        and any("SOX" in str(x) for x in l.get("reasons") or []))
                     # rows with the rejected 'not the selling zone' phrasing
                     # rebuild into the positive low-place wording (09:1x)
                     or (any("매도구간 아님" in str(x) for x in l.get("reasons") or [])
@@ -654,7 +663,17 @@ def _reconcile_positions(db, st) -> bool:
             keep.append(h)
             continue
         fill, when, src = float(row[0]), str(row[1] or _hhmm()), str(row[2] or "")
+        # the close must SURVIVE the disk merge (caught 2026-09-04 11:24: the
+        # merge's re-add loop brought every closed lot straight back from disk,
+        # so this ran again each scan — the same 4 sells were appended 50 times
+        # each and flooded the whole history out of the 200-row log)
+        st.setdefault("_desk_closed", []).append(code)
         base = _lot_basis(h)
+        if any(str(l.get("code")) == code and l.get("side") == "SELL"
+               and str(l.get("at")) == when and l.get("fill") == fill
+               and l.get("via") == "desk" for l in st.get("log") or []):
+            changed = True          # drop the lot, the row already exists
+            continue
         st.setdefault("log", []).append(
             {"id": int(time.time() * 1000) % 10**9, "ts": time.time(),
              "hhmm": when, "code": code, "name": h.get("name"),
@@ -780,21 +799,30 @@ def _check_items(code: str, hhmm: str | None = None, day8: str | None = None) ->
     # 🌐 the market weather leads the inspection (boss 2026-09-04 09:3x)
     try:
         _pl0 = _market_pulse()
-        if _pl0.get("sox") is not None:
-            _s0 = float(_pl0["sox"])
-            out0.append({"k": "🌐 SOX(미 반도체) 밤사이", "en": "US chip index (SOX) overnight",
-                         "v": f"{_s0:+.1f}%", "ven": f"{_s0:+.1f}%",
-                         "s": max(0, min(100, round(50 + _s0 * 15))), "g": "market",
-                         "bad": _s0 <= -1.5})
-        for _ck, _cko, _cen, _cwh in (("nvda", "🌐 엔비디아 밤사이", "NVIDIA overnight", 12),
-                                      ("micron", "🌐 마이크론 밤사이", "Micron overnight", 12),
-                                      ("tokyo", "🌐 도쿄일렉트론 오늘", "Tokyo Electron today", 12)):
-            _cv = _pl0.get(_ck)
-            if _cv is not None:
-                _cv = float(_cv)
-                out0.append({"k": _cko, "en": _cen, "v": f"{_cv:+.1f}%", "ven": f"{_cv:+.1f}%",
-                             "s": max(0, min(100, round(50 + _cv * _cwh))), "g": "market",
-                             "bad": _cv <= -2.0})
+        # SOX/NVIDIA/Micron/Tokyo Electron are CHIP weather — only
+        # semiconductor-related stocks list them (boss 2026-09-04 10:3x)
+        if _is_semi(code):
+            if _pl0.get("sox") is not None:
+                _s0 = float(_pl0["sox"])
+                out0.append({"k": "🌐 SOX(미 반도체) 밤사이", "en": "US chip index (SOX) overnight",
+                             "v": f"{_s0:+.1f}%", "ven": f"{_s0:+.1f}%",
+                             "s": max(0, min(100, round(50 + _s0 * 15))), "g": "market",
+                             "bad": _s0 <= -1.5})
+            for _ck, _cko, _cen, _cwh in (("nvda", "🌐 엔비디아 밤사이", "NVIDIA overnight", 12),
+                                          ("micron", "🌐 마이크론 밤사이", "Micron overnight", 12),
+                                          ("tokyo", "🌐 도쿄일렉트론 오늘", "Tokyo Electron today", 12)):
+                _cv = _pl0.get(_ck)
+                if _cv is not None:
+                    _cv = float(_cv)
+                    out0.append({"k": _cko, "en": _cen, "v": f"{_cv:+.1f}%", "ven": f"{_cv:+.1f}%",
+                                 "s": max(0, min(100, round(50 + _cv * _cwh))), "g": "market",
+                                 "bad": _cv <= -2.0})
+        elif _pl0.get("nasdaq") is not None:
+            _n0 = float(_pl0["nasdaq"])
+            out0.append({"k": "🌐 나스닥 밤사이", "en": "NASDAQ overnight",
+                         "v": f"{_n0:+.1f}%", "ven": f"{_n0:+.1f}%",
+                         "s": max(0, min(100, round(50 + _n0 * 15))), "g": "market",
+                         "bad": _n0 <= -1.0})
         if _pl0.get("kospi") is not None:
             _k0 = float(_pl0["kospi"])
             out0.append({"k": "🌐 코스피 오늘", "en": "KOSPI today",
@@ -2252,7 +2280,14 @@ def _why_buy(code: str, name: str, hold: dict):
     try:
         _pl = _market_pulse()
         _sx, _nq, _kp, _kpx = _pl.get("sox"), _pl.get("nasdaq"), _pl.get("kospi"), _pl.get("kospi_px")
-        if _sx is not None or _kp is not None:
+        # SOX and the chip names speak ONLY to semiconductor-related stocks
+        # (boss 2026-09-04 10:3x: "SOX should be only semiconductor-related
+        # stocks like SK하이닉스, 삼성전자, 삼성전기 — remove it from
+        # unrelated things"). Everyone else reads NASDAQ + KOSPI.
+        _semi9 = _is_semi(code, name)
+        if not _semi9:
+            _sx = None
+        if _sx is not None or _nq is not None or _kp is not None:
             _pk, _pe = [], []
             if _sx is not None:
                 _pk.append(f"미 반도체지수(SOX) 지난밤 {_sx:+.1f}%")
@@ -2263,19 +2298,20 @@ def _why_buy(code: str, name: str, hold: dict):
             # the individual chip names, each with its OWN clock: NVIDIA and
             # Micron closed in New York last night, Tokyo Electron is trading
             # TODAY alongside us - calling them all "overnight" would be wrong
-            for _k9, _lk, _le, _wh, _whe in (
-                    ("nvda", "엔비디아", "NVIDIA", "지난밤", "overnight"),
-                    ("micron", "마이크론", "Micron", "지난밤", "overnight"),
-                    ("tokyo", "도쿄일렉트론", "Tokyo Electron", "오늘", "today")):
-                _v9 = _pl.get(_k9)
-                if _v9 is not None:
-                    _pk.append(f"{_lk} {_wh} {float(_v9):+.1f}%")
-                    _pe.append(f"{_le} {_whe} {float(_v9):+.1f}%")
+            if _semi9:
+                for _k9, _lk, _le, _wh, _whe in (
+                        ("nvda", "엔비디아", "NVIDIA", "지난밤", "overnight"),
+                        ("micron", "마이크론", "Micron", "지난밤", "overnight"),
+                        ("tokyo", "도쿄일렉트론", "Tokyo Electron", "오늘", "today")):
+                    _v9 = _pl.get(_k9)
+                    if _v9 is not None:
+                        _pk.append(f"{_lk} {_wh} {float(_v9):+.1f}%")
+                        _pe.append(f"{_le} {_whe} {float(_v9):+.1f}%")
             if _kp is not None:
                 _pk.append(f"코스피 지금 {_kpx or ''} ({_kp:+.2f}%)")
                 _pe.append(f"KOSPI now {_kpx or ''} ({_kp:+.2f}%)")
-            _good_wx = ((_sx or 0) >= 1.5) or ((_kp or 0) >= 0.5)
-            _bad_wx = ((_sx or 0) <= -1.5) or ((_kp or 0) <= -0.5)
+            _good_wx = ((_sx or 0) >= 1.5) or ((_nq or 0) >= 1.0) or ((_kp or 0) >= 0.5)
+            _bad_wx = ((_sx or 0) <= -1.5) or ((_nq or 0) <= -1.0) or ((_kp or 0) <= -0.5)
             _vk = (" — 시장이 오르는 날이라 상승 확률에 유리합니다." if _good_wx and not _bad_wx
                    else " — 시장이 무거운 날이라 신중하게 봅니다." if _bad_wx
                    else " — 시장은 보통 수준입니다.")
