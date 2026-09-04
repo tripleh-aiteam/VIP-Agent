@@ -2783,7 +2783,10 @@ def init_scheduler():
                         extra={"action": "tape.afterhours.fail"})
     _scheduler.add_job(
         _after_hours_capture,
-        CronTrigger(day_of_week="mon-fri", hour=18, minute=5, timezone=_KST_TZ),
+        # 20:05, not 18:05 (boss 2026-09-04): KRX 시간외 ends at 18:00 but NXT
+        # trades to 20:00, and the 19:59 price he checks on Kiwoom is the NXT
+        # one. Capturing at 18:05 stored the wrong venue's last print.
+        CronTrigger(day_of_week="mon-fri", hour=20, minute=5, timezone=_KST_TZ),
         id="after-hours-capture",
         replace_existing=True, max_instances=1, coalesce=True,
     )

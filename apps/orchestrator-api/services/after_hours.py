@@ -45,8 +45,23 @@ def fetch(code: str) -> dict | None:
     except Exception:
         return None
     info = d.get("overMarketPriceInfo") or {}
-    px = _num(info.get("overPrice"))
     close = _num(d.get("closePrice"))
+    # THE LAST PRICE OF THE DAY IS THE NXT CLOSE, NOT THE 18:00 KRX PRINT
+    # (boss 2026-09-04, checking HD현대중공업 against Kiwoom: "yesterday's
+    # closing price at 19:59 was 429,500" while we had stored 432,500).
+    # Korea has TWO venues now: KRX's 시간외 단일가 ends at 18:00, but NXT
+    # keeps trading to 20:00 - and his 19:59 quote is the NXT one. We were
+    # capturing the earlier venue and calling it the day's last price, which
+    # made every gap we measured slightly too small.
+    px = None
+    try:
+        from services.naver_stock import realtime_quote as _rq
+        q = _rq(code) or {}
+        px = _num(q.get("nxt_price"))
+    except Exception:
+        px = None
+    if not px:
+        px = _num(info.get("overPrice"))      # KRX 시간외, if NXT is silent
     if not px:
         return None
     return {"px": px, "close": close,
