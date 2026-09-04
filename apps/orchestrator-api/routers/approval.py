@@ -1143,6 +1143,51 @@ def _brain_compute():
                        f"back DOWN to yesterday's close, the fall stops, and "
                        f"three red candles confirm." if gbad else "")})
         _m = r.get("mid")
+        # ② GATE 2 — THE BLENDED POSITION (boss 2026-09-04: "6 month + 3 month
+        # + 1 month + 1 week / 4"). Each window says where today's price sits
+        # between its own low and high; the four are averaged into ONE number so
+        # no window has to win an argument with another. Bottom 35% = cheap.
+        _pb9 = _pd9 = _pde9 = None
+        try:
+            from services.kiwoom_rules import _hz_stats as _hzs9
+            _hz9 = _hzs9(code, _kd()) or {}
+            _px9 = float((r.get("live_total") or r.get("live_adj") or 0)) or None
+            if not _px9:
+                from services.paper_desk import fast_price as _fp9
+                _px9 = float((_fp9(code) or [None])[0] or 0) or None
+            _pp9, _pl9, _pe9 = [], [], []
+            for _k9, _n9, _ne9 in (("w", "주", "week"), ("m", "월", "month"),
+                                   ("q", "3개월", "3mth"), ("h", "6개월", "6mth")):
+                _lo9, _hi9 = _hz9.get(_k9 + "_low"), _hz9.get(_k9 + "_hi")
+                if _px9 and _lo9 and _hi9 and _hi9 > _lo9:
+                    _v9 = max(0.0, min(100.0, (_px9 - _lo9) / (_hi9 - _lo9) * 100))
+                    _pp9.append(_v9)
+                    # the three prices, so the refusal can be checked (boss
+                    # 2026-09-04: "show the lowest, highest and current price")
+                    _pl9.append(f"{_n9} ₩{_lo9:,.0f}~₩{_hi9:,.0f} 중 {_v9:.0f}%")
+                    # ENGLISH GETS ENGLISH LABELS (the same fault caught on the
+                    # gate names on 09-04: an English sentence printing 주/월/
+                    # 3개월 is not an English sentence)
+                    _pe9.append(f"{_ne9} ₩{_lo9:,.0f}~₩{_hi9:,.0f} at {_v9:.0f}%")
+            if _pp9:
+                _pb9 = sum(_pp9) / len(_pp9)
+                _pd9 = " · ".join(_pl9)
+                _pde9 = " · ".join(_pe9)
+        except Exception:
+            pass
+        _pbad9 = bool(_pb9 is not None and _pb9 > 35.0)
+        gates.append({
+            "k": "위치(주·월·3개월·6개월)", "en": "blended position",
+            "v": (f"{_pb9:.0f}%" if _pb9 is not None else "대기/wait"),
+            "bad": _pbad9,
+            "short": "위치가 높음 → 대기", "short_en": "position too high → WAIT",
+            "why": (f"📍 위치가 높습니다 — 지금 ₩{_px9:,.0f}. {_pd9}. "
+                    f"네 구간을 더해 4로 나누면 {_pb9:.0f}%이고, 35% 이하일 때만 "
+                    f"삽니다 → 더 내려오기를 기다립니다." if _pbad9 else ""),
+            "why_en": (f"📍 Its position is high - now ₩{_px9:,.0f}. {_pde9}. "
+                       f"Adding the four and dividing by 4 gives {_pb9:.0f}%, "
+                       f"and we buy only at 35% or less → we wait for it to come "
+                       f"down." if _pbad9 else "")})
         gates.append({
             "k": "1개월 평균", "en": "vs 1-month avg",
             "v": f"{_m:+.2f}%" if _m is not None else "-",

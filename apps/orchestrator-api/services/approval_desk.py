@@ -2223,6 +2223,46 @@ def _why_buy(code: str, name: str, hold: dict):
     # top-5 worse (+0.752%/day -> +0.520%), so it INFORMS the reader here, it
     # does not decide the pick.
     _nowt = _hhmm()
+    # ① GATE 2 IN THE BUYING STORY TOO (boss 2026-09-04: "add these
+    # explanations as gate 2... I want to see how you implement it to the
+    # buying / non-buying case"). The NOT-buying verdict already prints the
+    # blend; a buy must show the SAME arithmetic, or the two halves of the desk
+    # would explain the same decision differently.
+    try:
+        from services.kiwoom_rules import _hz_stats as _hzb
+        from services.paper_desk import fast_price as _fpb
+        from services.kiwoom_tape import _day as _kdb
+        _pxb = float((_fpb(code) or [None])[0] or 0)
+        _hzb9 = _hzb(code, _kdb()) or {}
+        _ppb, _rowsk, _rowse = [], [], []
+        for _kb, _nb, _nbe in (("w", "1주", "1 week"), ("m", "1개월", "1 month"),
+                               ("q", "3개월", "3 months"), ("h", "6개월", "6 months")):
+            _lob, _hib = _hzb9.get(_kb + "_low"), _hzb9.get(_kb + "_hi")
+            if _pxb and _lob and _hib and _hib > _lob:
+                _vb = max(0.0, min(100.0, (_pxb - _lob) / (_hib - _lob) * 100))
+                _ppb.append(_vb)
+                # THE THREE PRICES, NOT JUST THE PERCENT (boss 2026-09-04:
+                # "when you show gate 2 you should show the lowest, highest and
+                # current price for 6 month, 3 month, 1 month, 1 week")
+                _rowsk.append(f"     · {_nb} 최저 ₩{_lob:,.0f} ~ 최고 ₩{_hib:,.0f} "
+                              f"→ 지금 ₩{_pxb:,.0f} = {_vb:.0f}%")
+                _rowse.append(f"     · {_nbe}: low ₩{_lob:,.0f} ~ high ₩{_hib:,.0f} "
+                              f"→ now ₩{_pxb:,.0f} = {_vb:.0f}%")
+        if _ppb:
+            _blb = sum(_ppb) / len(_ppb)
+            R.append(f"① 위치 — 네 구간 평균 {_blb:.0f}% (35% 이하가 매수 자리). "
+                     f"각 구간의 최저~최고 사이에서 지금 가격의 위치입니다:")
+            R.extend(_rowsk)
+            R.append(f"     → ({' + '.join('%.0f' % x for x in _ppb)}) ÷ 4 = "
+                     f"{_blb:.0f}%")
+            E.append(f"① POSITION — {_blb:.0f}% averaged across four windows "
+                     f"(35% or less is where we buy). Where today's price sits "
+                     f"between each window's low and high:")
+            E.extend(_rowse)
+            E.append(f"     → ({' + '.join('%.0f' % x for x in _ppb)}) ÷ 4 = "
+                     f"{_blb:.0f}%")
+    except Exception:
+        pass
     if mid is not None and midy is not None:
         R.append(f"① 위치 — 1개월 평균 대비 {mid:+.2f}%, 1년 평균 대비 {midy:+.2f}%. "
                  f"{'두 평균선 아래' if (mid < 0 and midy < 0) else '평균선 부근'}이라 "
