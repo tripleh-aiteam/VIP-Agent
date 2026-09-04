@@ -347,6 +347,7 @@ export default function ApprovePage() {
         <a href="/testing" style={{ color: "inherit" }}>{t("← 모의투자 메뉴", "← Paper Trading menu")}</a>
         <a href="/testing/live" style={{ color: "#00838f" }}>{t("📡 메뉴1 실시간 키움", "📡 Menu 1 Live Kiwoom")}</a>
         <a href="/testing/reco" style={{ color: "#e65100" }}>{t("🎯 메뉴2 추천 (자동)", "🎯 Menu 2 Reco (auto)")}</a>
+        <a href="/testing/whynot" style={{ color: "#6a1b9a" }}>{t("🚧 아직 왜 안 사나", "🚧 Why Not Buying Yet")}</a>
         <b style={{ color: "#2e7d32" }}>{t("🖥 메뉴3 실시간 모니터링", "🖥 Menu 3 Real Time Monitoring")}</b>
       </div>
       <h1 style={{ fontSize: 22, fontWeight: 800 }}>{t("🖥 실시간 모니터링", "🖥 Real Time Monitoring")}

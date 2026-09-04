@@ -73,6 +73,24 @@ export default function TestingIndex() {
           </div>
         </div>
 
+        {/* ---- 🚧 Why Not Buying Yet — the gate-proof menu (boss 2026-09-04:
+             "we have gates so we have few chances — during this time we need
+             proof why no popup is coming out") ---- */}
+        <div className="rounded-2xl border-2 p-5" style={{ borderColor: "#6a1b9a", background: "rgba(106,27,154,0.04)" }}>
+          <div className="text-[18px] font-extrabold" style={{ color: "#6a1b9a" }}>
+            🚧 {t("아직 왜 안 사나 — 관문 증명", "Why Not Buying Yet — proof of the gates")}
+          </div>
+          <p className="mt-2 text-[13px] leading-relaxed text-[var(--text-secondary)]">
+            {t("팝업이 안 오는 시간에도 에이전트는 일하고 있습니다. 종목마다 5개 관문(①갭상승 ②바닥 확인 ③거래량 ④나쁜 뉴스 ⑤100 체크리스트 점수)을 실제 숫자로 판정해, 어느 관문에서 왜 멈춰 있는지 증명합니다. 종목 클릭 = 관문별 설명 + 항목별 점수·가중치 표.",
+               "Even while no popup comes, the agent is working. Each stock is judged through 5 gates (① gap-up ② bottom check ③ volume ④ bad news ⑤ 100-checklist score) with real numbers, proving which gate it is stopped at and why. Click a stock = per-gate explanation + the item-by-item score/weight table.")}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link prefetch={true} href="/testing/whynot" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: "#6a1b9a" }}>
+              {t("관문 증명 열기", "Open the gate proof")}
+            </Link>
+          </div>
+        </div>
+
         {/* 🎭 Demo Theater card removed at the boss's order (2026-08-27:
             "remove Demo Theater - only keep Live Order Room in menu 1, 2").
             The real-trade 🎞 replay lives inside each menu's Order Room. */}

@@ -443,6 +443,265 @@ def gate_chart(code: str, tf: int = 1):
     return out
 
 
+_WHYNOT9 = {"t": 0.0, "v": None}
+
+
+@router.get("/whynot")
+def whynot(db: Session = Depends(get_db)):
+    """WHY NOT BUYING YET — the proof menu (boss 2026-09-04 13:0x: "we have
+    gates, so we have few chances — during this time we need PROOF why no
+    popup is coming out. Create this menu; if we click SK hynix it should
+    explain each gate with actual numbers").
+
+    For every stock on the board, the gate cascade in the boss's order:
+      ① 갭상승      — opened above yesterday's price and hasn't come back
+      ② 바닥 확인    — back at yesterday's price but still falling (no bottom)
+      ③ 거래량      — very few tradings vs the 20-day average
+      ④ 나쁜 뉴스    — a danger story pressing the price
+      ⑤ 100 체크리스트 — the score with its item weights (the three factors
+                        above EXCLUDED, so nothing is counted twice)
+    The FIRST failing gate is the reason there is no popup; every line
+    carries the real numbers it was judged on. Cached 30s."""
+    import time as _t
+    if _t.time() - _WHYNOT9["t"] < 30 and _WHYNOT9["v"]:
+        return _WHYNOT9["v"]
+    from services import approval_desk as ad
+    try:
+        from services.kiwoom_tape import market_open, _day as _kd9
+        mkt = market_open()
+        day = _kd9()
+    except Exception:
+        mkt, day = True, ""
+    st = ad._load() or {}
+    held_codes = {str(h.get("code")) for h in st.get("held") or []}
+    pend_codes = {str(p.get("code")) for p in st.get("pending") or []}
+    # the same 20 the agent board watches
+    stocks: list[tuple[str, str]] = []
+    try:
+        b9 = _BRAIN_CACHE.get("data") or {}
+        stocks = [(str(u["code"]), str(u["name"])) for u in (b9.get("universe") or [])]
+        brain_by = {str(u["code"]): u for u in (b9.get("universe") or [])}
+    except Exception:
+        brain_by = {}
+    try:
+        from services.checklist_reco import _ranking
+        rows9 = (_ranking() or {}).get("rows") or []
+        rank_by = {str(r.get("code")): (i + 1, r.get("score"))
+                   for i, r in enumerate(rows9)}
+        tot9 = len(rows9)
+    except Exception:
+        rows9, rank_by, tot9 = [], {}, 0
+    if len(stocks) < 20:
+        # the brain cache can be empty (cold start / after the bell) — pad
+        # from the rooms, then from the checklist's own scored universe, so
+        # this menu always shows the full 20 the boss watches
+        have = {c for c, _n in stocks}
+        for c, n, _s in ad.desk_codes():
+            if c not in have:
+                stocks.append((c, n))
+                have.add(c)
+        for r0 in rows9:
+            c0 = str(r0.get("code"))
+            if c0 not in have and len(stocks) < 20:
+                stocks.append((c0, str(r0.get("name") or c0)))
+                have.add(c0)
+    stocks = stocks[:20]
+    from services.checklist_advice import _fresh_stamps
+    try:
+        from services.stock_resolver import display_name_en as _dne
+    except Exception:
+        _dne = None
+    out_rows = []
+    for code, name in stocks:
+        nm_en = None
+        try:
+            nm_en = _dne(code) if _dne else None
+        except Exception:
+            pass
+        nm_en = nm_en or name
+        r = {"code": code, "name": name, "name_en": nm_en,
+             "held": code in held_codes, "pending": code in pend_codes,
+             "gates": [], "stopped_at": None}
+        # ---- the numbers every gate reads ----
+        yc = op = px = None
+        last3: list[float] = []
+        try:
+            from services.kiwoom_rules import _gap_ref
+            yc = float(_gap_ref(code, day) or 0) or None
+        except Exception:
+            pass
+        try:
+            from routers.paper_desk import live_tape
+            d9 = live_tape(code=code, period=60, tick=5, bars=400)
+            bars = d9.get("bars") or []
+            if bars:
+                op = float(bars[0].get("open") or 0) or None
+                px = float(bars[-1].get("close") or 0) or None
+                last3 = [float(b.get("close") or 0) for b in bars[-3:]]
+        except Exception:
+            pass
+        if px is None:
+            try:
+                from services.paper_desk import fast_price
+                _p9, _c9, _t9, _s9 = fast_price(code)
+                px = float(_p9) if _p9 else None
+            except Exception:
+                pass
+        gap = round((op / yc - 1) * 100, 2) if (op and yc) else None
+        now9 = round((px / yc - 1) * 100, 2) if (px and yc) else None
+        r.update({"yc": yc, "op": op, "px": px, "gap_pct": gap, "now_vs_yc": now9})
+        W = lambda v: f"₩{v:,.0f}" if v else "?"
+
+        def _gate(n, key, passed, ko, en, link=None):
+            g = {"n": n, "key": key, "passed": bool(passed), "ko": ko, "en": en}
+            if link:
+                g["link"] = link
+            r["gates"].append(g)
+            if not passed and r["stopped_at"] is None:
+                r["stopped_at"] = n
+
+        # ① 갭상승
+        if gap is not None and gap >= 0.3:
+            back = now9 is not None and now9 <= 0.15
+            if back:
+                _gate(1, "gap", True,
+                      f"갭상승(+{gap}%)으로 출발했지만 지금은 어제 가격(₩{yc:,.0f}) 부근까지 "
+                      f"내려왔습니다 — 현재 {W(px)} ({now9:+.2f}%). 1관문 통과.",
+                      f"Opened with a gap-up (+{gap}%) but has come back to yesterday's "
+                      f"price ({W(yc)}) — now {W(px)} ({now9:+.2f}%). Gate 1 passed.")
+            else:
+                _gate(1, "gap", False,
+                      f"갭상승으로 출발 — 시가 {W(op)} (어제 종가 {W(yc)}보다 +{gap}%), "
+                      f"지금도 {W(px)} ({now9:+.2f}%)로 아직 어제 가격으로 내려오지 않았습니다. "
+                      f"갭상승 종목은 어제 가격 부근까지 내려와야만 삽니다 — 비싸게 출발한 값은 쫓지 않습니다.",
+                      f"Started with a GAP-UP — opened {W(op)} (+{gap}% above yesterday's "
+                      f"close {W(yc)}) and is still {W(px)} ({now9:+.2f}%) above it. "
+                      f"A gapped stock is bought only after it comes back near yesterday's "
+                      f"price — we do not chase an expensive open.")
+        else:
+            _gate(1, "gap", True,
+                  f"갭상승 없이 출발 (시가 {W(op)}, 어제 종가 {W(yc)} 대비 "
+                  f"{(gap if gap is not None else 0):+.2f}%). 1관문 통과.",
+                  f"No gap-up at the open ({W(op)}, {(gap if gap is not None else 0):+.2f}% "
+                  f"vs yesterday's close {W(yc)}). Gate 1 passed.")
+        # ② 바닥 확인 — still falling?
+        falling = (len(last3) == 3 and last3[2] < last3[0] and last3[2] <= last3[1])
+        tr_txt = " → ".join(f"₩{v:,.0f}" for v in last3) if len(last3) == 3 else "?"
+        if falling:
+            _gate(2, "bottom", False,
+                  f"아직 내려가는 중입니다 — 최근 3분: {tr_txt}. 떨어지는 칼은 잡지 않습니다: "
+                  f"하락이 멈추고 바닥이 버텨야 2관문 통과입니다.",
+                  f"Still FALLING — last 3 minutes: {tr_txt}. We do not catch a falling "
+                  f"knife: the drop must stop and the bottom must hold to pass gate 2.")
+        else:
+            _gate(2, "bottom", True,
+                  f"하락이 멈췄습니다 — 최근 3분: {tr_txt}. 2관문 통과.",
+                  f"The fall has stopped — last 3 minutes: {tr_txt}. Gate 2 passed.")
+        # ③ 거래량
+        try:
+            r9v, tv9 = ad._vol_ratio(code)
+        except Exception:
+            r9v, tv9 = None, None
+        if r9v is not None and r9v < 0.6:
+            _gate(3, "volume", False,
+                  f"거래가 매우 적습니다 — 오늘 {int(tv9 or 0):,}주, 20일 평균의 {r9v:.1f}배 "
+                  f"({(r9v - 1) * 100:+.0f}%). 거래가 적으면 원하는 가격에 사고팔기 어렵습니다.",
+                  f"Very FEW tradings — {int(tv9 or 0):,} shares today, {r9v:.1f}× the "
+                  f"20-day average ({(r9v - 1) * 100:+.0f}%). Thin trading makes it hard "
+                  f"to buy or sell at the price we want.")
+        else:
+            _gate(3, "volume", True,
+                  (f"거래량 충분 — 오늘 {int(tv9 or 0):,}주, 20일 평균의 {r9v:.1f}배. 3관문 통과."
+                   if r9v is not None else "거래량 자료 수집 중 — 막는 근거 없음. 3관문 통과."),
+                  (f"Enough volume — {int(tv9 or 0):,} shares today, {r9v:.1f}× the "
+                   f"20-day average. Gate 3 passed." if r9v is not None
+                   else "Volume data still collecting — nothing blocking. Gate 3 passed."))
+        # ④ 나쁜 뉴스 (the veto's own 3h net)
+        _sts = _fresh_stamps(code, limit=3, max_age_min=180)
+        _bad = [s for s in _sts if str(s.get("stamp")) in ("위험", "악재")]
+        if _bad:
+            _b0 = _bad[-1]
+            _hm = str(_b0.get("ts") or "")[11:16]
+            _gate(4, "news", False,
+                  f"가격을 누르는 나쁜 뉴스가 있습니다 ({_hm}): \"{str(_b0.get('title'))[:44]}\" — "
+                  f"나쁜 뉴스가 살아있는 동안은 사지 않습니다.",
+                  f"There is BAD news pressing the price ({_hm}): "
+                  f"\"{str(_b0.get('title'))[:44]}\" — we do not buy while a danger story "
+                  f"is alive.", link=_b0.get("link"))
+        else:
+            _gate(4, "news", True,
+                  "최근 3시간 안에 이 종목을 누르는 나쁜 뉴스가 없습니다. 4관문 통과.",
+                  "No bad news pressing this stock in the last 3 hours. Gate 4 passed.")
+        # ⑤ 100 체크리스트 — score with weights, the three factors above excluded
+        rk, sc = rank_by.get(code, (None, None))
+        r["score"], r["rank"], r["tot"] = sc, rk, tot9
+        items9 = []
+        try:
+            _src9 = (brain_by.get(code) or {}).get("items") or []
+            if not _src9:
+                # brain cache cold — measure the items directly, the same
+                # bilingual inspection the popups carry
+                _src9 = ad._check_items(code) or []
+            for it in _src9:
+                k9 = str(it.get("k") or "")
+                if (it.get("g") in ("news", "market") or "거래량" in k9
+                        or "갭" in k9):
+                    continue        # the gates above (and the weather) — not counted twice
+                items9.append({"k": it.get("k"), "en": it.get("en"),
+                               "v": it.get("v"), "ven": it.get("ven"),
+                               "s": it.get("s")})
+        except Exception:
+            pass
+        r["items"] = items9
+        bar_ok = rk is not None and sc is not None and (rk <= 5 or (sc or 0) >= 50)
+        if sc is None:
+            _gate(5, "score", True,
+                  "오늘 점수 집계 중 — 점수가 나오면 이 칸이 채워집니다.",
+                  "Today's score still computing — this line fills when it lands.")
+        elif bar_ok:
+            _gate(5, "score", True,
+                  f"100 체크리스트 {sc}점 · {tot9}종목 중 {rk}등 — 선발 기준(상위 5 또는 50점)을 "
+                  f"넘었습니다. 5관문 통과.",
+                  f"100-checklist score {sc} pts · rank {rk} of {tot9} — above the "
+                  f"picking bar (top-5 or ≥50 pts). Gate 5 passed.")
+        else:
+            _lw = sorted([i for i in items9 if i.get("s") is not None],
+                         key=lambda i: i["s"])[:3]
+            _lw_ko = ", ".join(f"{i['k']} {i['v']} ({i['s']}점)" for i in _lw)
+            _lw_en = ", ".join(f"{i.get('en') or i['k']} {i.get('ven') or i['v']} ({i['s']} pts)" for i in _lw)
+            _tail_ko = (f" 갭·거래량·뉴스를 뺀 나머지 항목 중 가장 약한 곳: {_lw_ko}."
+                        if _lw else "")
+            _tail_en = (f" Weakest items excluding gap/volume/news: {_lw_en}."
+                        if _lw else "")
+            _gate(5, "score", False,
+                  f"100 체크리스트 점수가 낮습니다 — {sc}점, {tot9}종목 중 {rk}등 "
+                  f"(선발 기준: 상위 5 또는 50점 이상).{_tail_ko} "
+                  f"전체 항목별 점수는 아래 표에 있습니다.",
+                  f"The 100-checklist score is LOW — {sc} pts, rank {rk} of {tot9} "
+                  f"(picking bar: top-5 or ≥50 pts).{_tail_en} The full item-by-item "
+                  f"weights are in the table below.")
+        # the verdict line
+        if r["held"]:
+            r["verdict_ko"] = "이미 보유 중 — 종목당 한 손 법칙으로 추가 매수는 없습니다."
+            r["verdict_en"] = "Already HOLDING — the one-hand-per-stock law allows no second buy."
+        elif r["pending"]:
+            r["verdict_ko"] = "지금 매수 제안 팝업이 나가 있습니다 — 팝업을 확인하세요."
+            r["verdict_en"] = "A BUY proposal popup is OUT right now — check the popup."
+        elif r["stopped_at"]:
+            _g0 = next(g for g in r["gates"] if g["n"] == r["stopped_at"])
+            r["verdict_ko"] = f"{r['stopped_at']}관문에서 멈춤 — " + _g0["ko"].split(" — ")[0]
+            r["verdict_en"] = f"Stopped at gate {r['stopped_at']} — " + _g0["en"].split(" — ")[0]
+        else:
+            r["verdict_ko"] = ("모든 관문 통과 — 매수 신호(바닥 반등 확인)를 기다리는 중입니다. "
+                               "신호가 켜지면 곧 팝업이 옵니다.")
+            r["verdict_en"] = ("ALL gates passed — waiting for the entry signal (bottom "
+                               "rebound confirmation). The popup comes the moment it fires.")
+        out_rows.append(r)
+    res = {"ok": True, "market_open": mkt, "rows": out_rows}
+    _WHYNOT9["t"], _WHYNOT9["v"] = _t.time(), res
+    return res
+
+
 @router.get("/chart/{code}")
 def chart(code: str, mode: str = "min"):
     """Room charts (boss 2026-09-02: 'if we click any stock room we can load
@@ -630,7 +889,11 @@ def _brain_compute():
             cs = _bars_for(code, 5, 60)
             if not (pc and cs and cs[0].get("open")):
                 return None, None
-            g = 100.0 * (float(cs[0]["open"]) / float(pc) - 1)
+            # the OFFICIAL open, not our tape's first bar - the tape starts
+            # after the opening auction and reads high every time
+            from services.kiwoom_rules import _open_official
+            _op9 = _open_official(code, _kd(), cs[0].get("open"))
+            g = 100.0 * (float(_op9) / float(pc) - 1)
             from services.proof_lab import GAP_PCT
             if g < GAP_PCT:
                 return g, False
@@ -645,6 +908,13 @@ def _brain_compute():
             # three rises count through a small blue exactly as the blues law
             # does everywhere else.
             back = False
+            try:
+                from services.kiwoom_rules import _low_official
+                _ol9 = _low_official(code, _kd(), None)
+                if _ol9 and float(_ol9) <= float(pc):
+                    back = True
+            except Exception:
+                pass
             reds = 0
             for b in cs:
                 lo = float(b.get("low") or b.get("close") or 0)

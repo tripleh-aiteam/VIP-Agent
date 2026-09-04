@@ -7194,9 +7194,12 @@ def _run_agent_impl(
             and any(v in _tn0 for v in ("열어", "열기", "이동", "가자", "open", "go to",
                                         "take me", "띄워"))):
         _nav0 = None
-        if any(k in _tn0 for k in ("메뉴3", "메뉴 3", "menu 3", "menu3",
-                                   "실시간 모니터링", "real time monitoring",
-                                   "realtime monitoring", "approval desk", "세미오토")):
+        if any(k in _tn0 for k in ("why not buying", "whynot", "왜 안 사", "왜 안사",
+                                   "관문 증명", "gate proof")):
+            _nav0 = ("/testing/whynot", "아직 왜 안 사나 (관문 증명)", "Why Not Buying Yet (gate proof)")
+        elif any(k in _tn0 for k in ("메뉴3", "메뉴 3", "menu 3", "menu3",
+                                     "실시간 모니터링", "real time monitoring",
+                                     "realtime monitoring", "approval desk", "세미오토")):
             _nav0 = ("/testing/approve", "실시간 모니터링", "Real Time Monitoring")
         elif any(k in _tn0 for k in ("메뉴2", "메뉴 2", "menu 2", "menu2", "reco desk",
                                      "추천 데스크", "체크리스트 데스크", "checklist desk")):
