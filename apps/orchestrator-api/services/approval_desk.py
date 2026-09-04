@@ -34,7 +34,8 @@ SIX = [("000660", "SK하이닉스"), ("005930", "삼성전자"), ("035420", "NAV
 # double-firing inside one scan is all that is needed.
 _BUY_COOLDOWN = 45.0
 _SELL_COOLDOWN = 45.0
-_EXPIRE = 600.0               # a popup no one answers dies after 10 min
+_EXPIRE = 600.0
+_HOLD_N = 3      # consecutive checks a condition must hold before we ask               # a popup no one answers dies after 10 min
 
 
 def _load() -> dict:
@@ -986,7 +987,14 @@ def scan(db) -> dict:
     _keep9, _drop9 = [], []
     for _p9 in (st.get("pending") or []):
         _c9, _sd9 = str(_p9.get("code")), str(_p9.get("side"))
-        if _sd9 == "BUY" and not _gates_pass(_c9):
+        # AND IT IS NOT WITHDRAWN ON ONE BAD TICK EITHER. A question already on
+        # his screen may only be taken back once the reason has been gone for
+        # the same three checks it took to earn the popup - otherwise the card
+        # vanishes under his cursor while he is still reading it.
+        _mk9 = st.setdefault("miss", {})
+        if _sd9 == "BUY":
+            _mk9[_c9] = 0 if _gates_pass(_c9) else int(_mk9.get(_c9) or 0) + 1
+        if _sd9 == "BUY" and int(_mk9.get(_c9) or 0) >= _HOLD_N:
             # A POPUP LIVES ONLY WHILE ITS OWN REASON DOES - and its reason is
             # the GATES, not 알고3's entry shape (boss 2026-09-03 15:3x: six
             # popups appeared and were all swept away seconds later, then came
@@ -1103,6 +1111,7 @@ def scan(db) -> dict:
             st.setdefault("why_skip", {})[code] = (
                 "lane=" + (_ln9 or "?") + (" -> popup" if _ln9 == "BUY" else ""))
             if _ln9 != "BUY":
+                st.setdefault("streak", {})[code] = 0
                 continue
             try:
                 from services.checklist_advice import _fresh_stamps
@@ -1159,6 +1168,7 @@ def scan(db) -> dict:
             # and refuses if they no longer hold.
             _vok9, _vk9, _ve9, _vs9 = verify_now(code, "BUY")
             if not _vok9:
+                st.setdefault("streak", {})[code] = 0
                 st.setdefault("why_skip", {})[code] = "guard refused: " + (_ve9 or "")[:70]
                 st.setdefault("log", []).append(
                     {"id": int(time.time() * 1000) % 10**9, "ts": time.time(),
@@ -1176,6 +1186,21 @@ def scan(db) -> dict:
                      "reasons_en": ["🛡 Stopped by the check run at the moment "
                                     "of sending - " + _ve9]})
                 st["log"] = st["log"][-200:]
+                continue
+            # A POPUP MEANS A CHANCE THAT HELD, NOT A FLICKER (boss 2026-09-04:
+            # "agent suggested to buy 기아 and I approved using market price,
+            # but after 2 seconds it is again asking... if it is a very good
+            # chance then show, otherwise for a small reason no show up").
+            # 기아 today: raised 09:36, withdrawn, raised 09:47, withdrawn,
+            # raised again - the gates sat on a boundary and the verdict
+            # flipped on every recompute, so the desk kept asking and un-asking
+            # the same question. A condition that cannot survive three
+            # consecutive checks is not an opportunity, it is noise.
+            _sk9 = st.setdefault("streak", {})
+            _sk9[code] = int(_sk9.get(code) or 0) + 1
+            if _sk9[code] < _HOLD_N:
+                st.setdefault("why_skip", {})[code] = (
+                    "held %d/%d checks - waiting for it to settle" % (_sk9[code], _HOLD_N))
                 continue
             _sg9 = _mk_sug(st, code, name, "BUY", reasons, _bp, int(_bq), score,
                            reasons_en=reasons_en)
