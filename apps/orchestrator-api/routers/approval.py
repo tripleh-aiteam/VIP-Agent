@@ -461,7 +461,18 @@ def whynot(db: Session = Depends(get_db)):
       ⑤ 100 체크리스트 — the score with its item weights (the three factors
                         above EXCLUDED, so nothing is counted twice)
     The FIRST failing gate is the reason there is no popup; every line
-    carries the real numbers it was judged on. Cached 30s."""
+    carries the real numbers it was judged on. Cached 30s.
+
+    THE AGENT REMEMBERS (boss 2026-09-04 16:1x: "now the menu is not shown
+    because the market is closed — make sure our agent remembers the
+    why-not-buying reasons; imagine if this morning we started our rule,
+    which ones would not buy — put it"): while the market is open every
+    computation is saved as today's snapshot (data/whynot_snap.json); after
+    the bell the menu serves that memory. If the day has no snapshot at all
+    (server started after close — like the day this shipped), the verdicts
+    are RECONSTRUCTED from the day's own tape: the gap at the open, whether
+    the price ever came back to yesterday's line (and at what time), the
+    day's volume, the day's news, the day's score."""
     import time as _t
     if _t.time() - _WHYNOT9["t"] < 30 and _WHYNOT9["v"]:
         return _WHYNOT9["v"]
@@ -472,6 +483,23 @@ def whynot(db: Session = Depends(get_db)):
         day = _kd9()
     except Exception:
         mkt, day = True, ""
+    # ---- the memory: after the bell, serve today's saved verdicts ----
+    import json as _j
+    from pathlib import Path as _P
+    _snapf = _P(__file__).resolve().parent.parent / "data" / "whynot_snap.json"
+    if not mkt:
+        try:
+            snaps = _j.loads(_snapf.read_text(encoding="utf-8"))
+        except Exception:
+            snaps = {}
+        hit = snaps.get(day) or (snaps.get(max(snaps)) if snaps else None)
+        if hit and hit.get("rows"):
+            res = {"ok": True, "market_open": False, "remembered": True,
+                   "as_of": hit.get("at"), "day": hit.get("day") or day,
+                   "rows": hit["rows"]}
+            _WHYNOT9["t"], _WHYNOT9["v"] = _t.time(), res
+            return res
+        # no memory of today — fall through and RECONSTRUCT from the tape
     st = ad._load() or {}
     held_codes = {str(h.get("code")) for h in st.get("held") or []}
     pend_codes = {str(p.get("code")) for p in st.get("pending") or []}
@@ -530,6 +558,7 @@ def whynot(db: Session = Depends(get_db)):
             yc = float(_gap_ref(code, day) or 0) or None
         except Exception:
             pass
+        touch_at = None                    # when the day first came back to yesterday's line
         try:
             from routers.paper_desk import live_tape
             d9 = live_tape(code=code, period=60, tick=5, bars=400)
@@ -538,6 +567,11 @@ def whynot(db: Session = Depends(get_db)):
                 op = float(bars[0].get("open") or 0) or None
                 px = float(bars[-1].get("close") or 0) or None
                 last3 = [float(b.get("close") or 0) for b in bars[-3:]]
+                if yc:
+                    for b in bars:
+                        if float(b.get("low") or 1e18) <= yc * 1.0015:
+                            touch_at = str(b.get("hhmm") or "")[:5]
+                            break
         except Exception:
             pass
         if px is None:
@@ -563,7 +597,24 @@ def whynot(db: Session = Depends(get_db)):
         # ① 갭상승
         if gap is not None and gap >= 0.3:
             back = now9 is not None and now9 <= 0.15
-            if back:
+            if not mkt:
+                # the remembered day: did it EVER come back to yesterday's line?
+                if touch_at:
+                    _gate(1, "gap", True,
+                          f"갭상승(+{gap}%)으로 출발했지만 {touch_at}에 어제 가격(₩{yc:,.0f}) "
+                          f"부근까지 내려왔습니다 — 그 순간 1관문이 열렸습니다.",
+                          f"Opened with a gap-up (+{gap}%) but came back near yesterday's "
+                          f"price ({W(yc)}) at {touch_at} — gate 1 opened at that moment.")
+                else:
+                    _gate(1, "gap", False,
+                          f"갭상승으로 출발 — 시가 {W(op)} (어제 종가 {W(yc)}보다 +{gap}%), "
+                          f"그리고 온종일 어제 가격으로 내려오지 않았습니다 (마감 {W(px)}, "
+                          f"{now9:+.2f}%). 비싸게 출발한 값을 쫓지 않아서 오늘 사지 않았습니다.",
+                          f"Started with a GAP-UP — opened {W(op)} (+{gap}% above "
+                          f"yesterday's close {W(yc)}) and NEVER came back to yesterday's "
+                          f"price all day (closed {W(px)}, {now9:+.2f}%). We do not chase "
+                          f"an expensive open — that is why it was not bought today.")
+            elif back:
                 _gate(1, "gap", True,
                       f"갭상승(+{gap}%)으로 출발했지만 지금은 어제 가격(₩{yc:,.0f}) 부근까지 "
                       f"내려왔습니다 — 현재 {W(px)} ({now9:+.2f}%). 1관문 통과.",
@@ -616,8 +667,9 @@ def whynot(db: Session = Depends(get_db)):
                   (f"Enough volume — {int(tv9 or 0):,} shares today, {r9v:.1f}× the "
                    f"20-day average. Gate 3 passed." if r9v is not None
                    else "Volume data still collecting — nothing blocking. Gate 3 passed."))
-        # ④ 나쁜 뉴스 (the veto's own 3h net)
-        _sts = _fresh_stamps(code, limit=3, max_age_min=180)
+        # ④ 나쁜 뉴스 (the veto's own 3h net; the remembered day reads the
+        # WHOLE trading day's stamps, each line carrying its own clock)
+        _sts = _fresh_stamps(code, limit=3, max_age_min=180 if mkt else 600)
         _bad = [s for s in _sts if str(s.get("stamp")) in ("위험", "악재")]
         if _bad:
             _b0 = _bad[-1]
@@ -691,13 +743,36 @@ def whynot(db: Session = Depends(get_db)):
             _g0 = next(g for g in r["gates"] if g["n"] == r["stopped_at"])
             r["verdict_ko"] = f"{r['stopped_at']}관문에서 멈춤 — " + _g0["ko"].split(" — ")[0]
             r["verdict_en"] = f"Stopped at gate {r['stopped_at']} — " + _g0["en"].split(" — ")[0]
+        elif not mkt:
+            r["verdict_ko"] = ("오늘 관문은 모두 열렸지만 매수 신호(바닥 반등 확인)가 "
+                               "켜지지 않아 사지 않았습니다.")
+            r["verdict_en"] = ("All gates opened today, but the entry signal (bottom "
+                               "rebound confirmation) never fired — so it was not bought.")
         else:
             r["verdict_ko"] = ("모든 관문 통과 — 매수 신호(바닥 반등 확인)를 기다리는 중입니다. "
                                "신호가 켜지면 곧 팝업이 옵니다.")
             r["verdict_en"] = ("ALL gates passed — waiting for the entry signal (bottom "
                                "rebound confirmation). The popup comes the moment it fires.")
         out_rows.append(r)
+    _hh9 = _t.strftime("%H:%M", _t.gmtime(_t.time() + 9 * 3600))
     res = {"ok": True, "market_open": mkt, "rows": out_rows}
+    if not mkt:
+        res["remembered"] = True
+        res["as_of"] = _hh9
+        res["day"] = day
+        res["reconstructed"] = True     # rebuilt from the day's own tape
+    # ---- remember today (open: every pass; closed: the reconstruction) ----
+    try:
+        try:
+            snaps = _j.loads(_snapf.read_text(encoding="utf-8"))
+        except Exception:
+            snaps = {}
+        snaps[day] = {"day": day, "at": _hh9, "rows": out_rows}
+        for k in sorted(snaps)[:-5]:    # keep the last 5 trading days
+            snaps.pop(k, None)
+        _snapf.write_text(_j.dumps(snaps, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
     _WHYNOT9["t"], _WHYNOT9["v"] = _t.time(), res
     return res
 

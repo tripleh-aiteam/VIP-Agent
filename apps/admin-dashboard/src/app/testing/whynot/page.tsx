@@ -22,7 +22,9 @@ type Row = { code: string; name: string; name_en?: string;
              gates: Gate[]; stopped_at?: number | null;
              score?: number | null; rank?: number | null; tot?: number;
              items?: Item[]; verdict_ko: string; verdict_en: string };
-type Payload = { ok: boolean; market_open: boolean; rows: Row[] };
+type Payload = { ok: boolean; market_open: boolean; rows: Row[];
+                 remembered?: boolean; reconstructed?: boolean;
+                 as_of?: string; day?: string };
 
 const W = (n?: number | null) => (n == null ? "-" : "₩" + Math.round(n).toLocaleString());
 
@@ -72,7 +74,10 @@ export default function WhyNotPage() {
         <div style={{ fontSize: 13, fontWeight: 800, color: "#c62828",
                       border: "1px solid rgba(198,40,40,0.4)", borderRadius: 8,
                       padding: "8px 12px", marginBottom: 10 }}>
-          ⛔ {t("장 마감 — 관문 판정은 다음 장에서 다시 시작합니다.",
+          ⛔ {data.remembered
+            ? t(`장 마감 — 아래는 에이전트가 기억하는 오늘(${data.day || ""})의 판정입니다 (${data.as_of || ""} 기준${data.reconstructed ? ", 오늘 아침부터 규칙을 돌렸다면의 재구성" : ""}). 각 종목이 오늘 왜 안 샀는지 그대로 남아 있습니다.`,
+                `MARKET CLOSED — below is the agent's MEMORY of today (${data.day || ""}), as of ${data.as_of || ""}${data.reconstructed ? ", reconstructed as if the rule had run from this morning" : ""}. Why each stock was not bought today stays on record.`)
+            : t("장 마감 — 관문 판정은 다음 장에서 다시 시작합니다.",
                 "MARKET CLOSED — the gate verdicts resume next session.")}
         </div>)}
 
