@@ -7365,6 +7365,124 @@ def _run_agent_impl(
         except Exception:
             pass
 
+    # === 🧭 MENU-3 ADVICE LANE — ONE VOICE (boss 2026-09-04 18:4x: "when it
+    # advises it should talk with the Algo-3 rule (the currently running
+    # rule); each question is answering differently; buying / selling /
+    # holding / not-buying reasons must be the SAME as inside our Agent —
+    # Menu 3 and the chatbot must be same format, same meaning. And do NOT
+    # talk about machine learning"). Every 살까/어때/추천/bare-stock question
+    # is answered from the SAME /approval/whynot verdicts the Menu 3 board
+    # shows — verbatim gate texts, no second opinion, no ML, with the source
+    # and the chart named.
+    if (not confirmed_tool and not attachment_ids and transcript and len(transcript) <= 120
+            and not _re.search(r"줘|해\s*줘|주문|[0-9]+\s*주|얼마|현재가|가격만|price of|history"
+                               r"|최고가|최저가|시가|종가|볼륨|주가 알려", transcript, _re.IGNORECASE)):
+        _adv = bool(_re.search(
+            r"살까|살\s*까|살가|사까|사야|사도|매수|팔까|팔가|팔아야|매도|어때|어떄|추천"
+            r"|전망|분석|판단|보류|살만|사면|팔면|언제\s*사|언제\s*팔|사는\s*게|사는게"
+            r"|파는\s*게|파는게|\bbuy\b|\bsell\b|worth|how about|should i|when to buy"
+            r"|when to sell|hold\??",
+            transcript, _re.IGNORECASE))
+        _bare = bool(_re.search(r"^[\w가-힣·&]+\s*[은는]?\s*\?*$", transcript.strip())
+                     and len(transcript.strip()) <= 20)
+        if _adv or _bare:
+            try:
+                from services.stock_resolver import resolve_one
+                _ac, _an = resolve_one(transcript)
+                if not _ac and _adv:            # "그럼 살까?" → inherit the stock
+                    for _h in reversed(history or []):
+                        _ac, _an = resolve_one(str(_h.get("content") or _h.get("text") or ""))
+                        if _ac:
+                            break
+                if _ac:
+                    from routers.approval import whynot as _wn9
+                    _wd = _wn9(db)
+                    _row = next((x for x in (_wd.get("rows") or [])
+                                 if str(x.get("code")) == str(_ac)), None)
+                    L9: list[str] = []
+                    _koq = lang == "ko"
+                    if _row:
+                        _nm9 = _row["name"] if _koq else (_row.get("name_en") or _row["name"])
+                        L9.append(f"🧭 {_nm9} ({_ac}) — " + ("메뉴 3 에이전트의 판정 (지금 돌아가는 규칙 그대로)"
+                                  if _koq else "the Menu 3 agent's verdict (the currently running rule)"))
+                        _px9, _ny9 = _row.get("px"), _row.get("now_vs_yc")
+                        _l1 = (f"현재가 ₩{_px9:,.0f}" if _koq else f"Price ₩{_px9:,.0f}") if _px9 else ""
+                        if _l1 and _ny9 is not None:
+                            _l1 += (f" (어제 종가 대비 {_ny9:+.2f}%)" if _koq
+                                    else f" ({_ny9:+.2f}% vs yesterday's close)")
+                        if _row.get("score") is not None:
+                            _l1 += (f" · 100 체크리스트 {_row['score']}점" if _koq
+                                    else f" · 100-checklist {_row['score']} pts")
+                        if _l1:
+                            L9.append(_l1)
+                        # ── the same verdict + gate story Menu 3 shows ──
+                        _held9x = _row.get("held")
+                        if (not _held9x and _re.search(r"팔까|팔가|팔아|매도|\bsell\b",
+                                                       transcript, _re.IGNORECASE)):
+                            L9.append("이 종목은 지금 메뉴 3 보유가 없습니다 — 팔 것이 없습니다. 아래는 매수 관점의 판정입니다."
+                                      if _koq else
+                                      "Menu 3 holds no position in this stock — nothing to sell. Below is the BUY-side verdict.")
+                        L9.append(("판정: " if _koq else "Verdict: ")
+                                  + (_row["verdict_ko"] if _koq else _row["verdict_en"]))
+                        if _held9x:
+                            # 🟢 the HOLDING reason with the -1% line, like the board
+                            try:
+                                from services import approval_desk as _ad9
+                                _lot9 = next((h for h in (_ad9._load() or {}).get("held") or []
+                                              if str(h.get("code")) == str(_ac)), None)
+                                if _lot9 and _lot9.get("price") and _px9:
+                                    _bp9 = float(_lot9["price"])
+                                    _pl9 = (_px9 / _bp9 - 1) * 100
+                                    _tr9 = _bp9 * 0.99
+                                    L9.append((f"① 매수가 ₩{_bp9:,.0f} ({_lot9.get('at')}) → 현재 ₩{_px9:,.0f} = {_pl9:+.2f}%"
+                                               if _koq else
+                                               f"① Bought ₩{_bp9:,.0f} ({_lot9.get('at')}) → now ₩{_px9:,.0f} = {_pl9:+.2f}%"))
+                                    if str(_ac) in ("000660", "005930"):
+                                        L9.append("② 회장님의 인내 규칙 — 삼성전자·SK하이닉스는 -1%에도 팔지 않고 보유합니다."
+                                                  if _koq else
+                                                  "② The patience rule — Samsung/SK hynix are held even through -1%.")
+                                    elif _pl9 <= -1.0:
+                                        L9.append(f"② -1% 선(₩{_tr9:,.0f})에 닿았습니다 — 규칙상 매도 제안이 팝업으로 갑니다."
+                                                  if _koq else
+                                                  f"② The -1% line (₩{_tr9:,.0f}) is hit — by the rule a SELL proposal goes out as a popup.")
+                                    else:
+                                        L9.append(f"② 매도선(-1%)은 ₩{_tr9:,.0f} — 아직 닿지 않았습니다 → 규칙상 계속 보유합니다."
+                                                  if _koq else
+                                                  f"② The sell line (-1%) is ₩{_tr9:,.0f} — not touched yet → we keep holding by the rule.")
+                            except Exception:
+                                pass
+                        else:
+                            L9.append("관문 검사 (막힌 관문까지만 설명합니다):" if _koq
+                                      else "Gate inspection (explained only up to the blocked gate):")
+                            for _g9 in _row.get("gates") or []:
+                                L9.append(("✅ " if _g9["passed"] else "⛔ ")
+                                          + f"{_g9['n']}. " + (_g9["ko"] if _koq else _g9["en"]))
+                                if _g9.get("link"):
+                                    L9.append(f"   📎 {_g9['link']}")
+                            if _row.get("stopped_at") and len(_row.get("gates") or []) < 5:
+                                _rem9 = 5 - len(_row.get("gates") or [])
+                                L9.append(f"(나머지 {_rem9}개 관문은 이 관문을 통과한 뒤에 검사합니다)"
+                                          if _koq else
+                                          f"(the remaining {_rem9} gate(s) are checked only after this one is passed)")
+                        L9.append("")
+                        L9.append("📎 출처: 메뉴 3 '아직 왜 안 사나' 관문 증명 + 실시간 모니터링 — 챗봇과 보드가 같은 데이터, 같은 규칙으로 말합니다."
+                                  if _koq else
+                                  "📎 Source: Menu 3's 'Why Not Buying Yet' gate proof + Real Time Monitoring — the chatbot and the board speak from the same data and the same rule.")
+                        L9.append("📈 차트: 메뉴 3에서 종목 카드를 클릭하면 분·월·년 차트와 관문 차트가 열립니다."
+                                  if _koq else
+                                  "📈 Chart: click the stock's card on Menu 3 for the minute/month/year and gate charts.")
+                    else:
+                        L9.append((f"🧭 {_an} ({_ac}) — 메뉴 3 감시 20종목에 없습니다. 관문 판정은 감시 종목에만 적용되어, "
+                                   f"이 종목은 매수/매도 제안 대상이 아닙니다. 감시 종목 편입을 원하시면 말씀해 주세요."
+                                   if _koq else
+                                   f"🧭 {_an} ({_ac}) — not on Menu 3's 20 watched stocks. The gate verdicts apply only to "
+                                   f"the watched board, so it gets no buy/sell proposals. Say the word to add it."))
+                    return {"intent": "menu3_advice", "language": lang,
+                            "reply": "\n".join(L9), "action": None, "speak": True,
+                            "transcript": transcript, "tool_used": "menu3_whynot"}
+            except Exception:
+                pass
+
     # === LLM TASK — translate/summarize/rewrite requests are normal-LLM work; the text
     # they contain must never fire the trading engines. Runs before every stock intent.
     if (not confirmed_tool and not attachment_ids and transcript
