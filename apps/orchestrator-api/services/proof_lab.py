@@ -27,6 +27,14 @@ MIN_DECIDED = 10
 # The rules under test. entry = consecutive rising candles. exit is either a count of
 # consecutive falling candles, or a take-profit with a stop — both net of the fee, which
 # is what "small gain after fee" has to mean to be worth anything.
+# THE 갭상승 LINE, WRITTEN ONCE (boss 2026-09-04: "please decrease the
+# threshold to 1%... and implement this in all stocks"). It used to be typed
+# 1.5 in five separate places - the two engines, the Menu 3 gate and the
+# send-time guard - which is precisely how two surfaces end up disagreeing
+# about whether the same stock gapped. One name now, read by all of them.
+GAP_PCT = 1.0
+
+
 VARIANTS: list[dict] = [
     {"id": "3u3d", "entry": 3, "kind": "candle", "a": 3},
     # ── THE BOSS'S HYBRID (2026-08-06, deployed at his decision): the same six candle
@@ -245,7 +253,7 @@ VARIANTS: list[dict] = [
      # threshold 1.0 (boss 2026-08-27 evening: "check all historical data,
      # find the best %"): full sweep 1.0-4.0 on 251 days - 1.0% is best desk-
      # wide (+42.1M/yr vs +28.5M at 2.0; D1 +24.1M, D2 +5.5M, D3 +12.5M).
-     "gap_guard": 1.5, "gap_wait": "median_dip3",
+     "gap_guard": GAP_PCT, "gap_wait": "median_dip3",
      # median_dip3 (boss 2026-09-03 15:4x, SK하이닉스 09:33 exhibit): a gap-up
      # starter at/below its 1-year MEDIAN waits for the fade's minimum to hold
      # 3 bars and turn (2-of-3 rises, within 1.5% of the bottom) - the release
@@ -390,7 +398,7 @@ VARIANTS: list[dict] = [
      #   알고3   36 trips / 64% /   +8.64%  ->   35 / 63% /   +7.41%  (-1.23%)
      # It clearly helps 알고2 and slightly hurts 알고3; deployed to both at his
      # explicit order, with both numbers on record.
-     "gap_guard": 1.5, "gap_wait": "prev3",
+     "gap_guard": GAP_PCT, "gap_wait": "prev3",
      # THE PATIENT PAIR (boss 2026-09-03 evening: "even if they decreased -1%
      # do not sell and keep holding, because they are already decreased many %,
      # so -1 is not a big deal"). MEASURED over all 22 stored days first:
@@ -543,7 +551,7 @@ VARIANTS: list[dict] = [
      #   알고3   36 trips / 64% /   +8.64%  ->   35 / 63% /   +7.41%  (-1.23%)
      # It clearly helps 알고2 and slightly hurts 알고3; deployed to both at his
      # explicit order, with both numbers on record.
-     "gap_guard": 1.5, "gap_wait": "prev3",
+     "gap_guard": GAP_PCT, "gap_wait": "prev3",
      # THE PATIENT PAIR (boss 2026-09-03 evening: "even if they decreased -1%
      # do not sell and keep holding, because they are already decreased many %,
      # so -1 is not a big deal"). MEASURED over all 22 stored days first:
