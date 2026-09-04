@@ -761,38 +761,66 @@ def whynot(db: Session = Depends(get_db)):
         except Exception:
             pass
         r["items"] = items9
-        bar_ok = rk is not None and sc is not None and (rk <= 5 or (sc or 0) >= 50)
-        if sc is None:
-            _gate(5, "score", True,
-                  "오늘 점수 집계 중 — 점수가 나오면 이 칸이 채워집니다.",
-                  "Today's score still computing — this line fills when it lands.")
-        elif bar_ok:
-            _gate(5, "score", True,
-                  f"100 체크리스트 {sc}점 · {tot9}종목 중 {rk}등 — 선발 기준(상위 5 또는 50점)을 "
-                  f"넘었습니다. 5관문 통과.",
-                  f"100-checklist score {sc} pts · rank {rk} of {tot9} — above the "
-                  f"picking bar (top-5 or ≥50 pts). Gate 5 passed.")
-        else:
-            # the weakest places = where the most WEIGHTED points were lost
-            _lw = sorted([i for i in items9 if i.get("s") is not None],
-                         key=lambda i: -((100 - float(i["s"])) * float(i.get("w") or 1)))[:3]
-            _lw_ko = ", ".join(f"{i['k']} {i['v']} ({i['s']}점"
-                               + (f"·가중 {i['w']}%" if i.get("w") is not None else "") + ")"
-                               for i in _lw)
-            _lw_en = ", ".join(f"{i.get('en') or i['k']} {i.get('ven') or i['v']} ({i['s']} pts"
-                               + (f" · weight {i['w']}%" if i.get("w") is not None else "") + ")"
-                               for i in _lw)
-            _tail_ko = (f" 갭·거래량·뉴스를 뺀 나머지 항목 중 가장 약한 곳: {_lw_ko}."
-                        if _lw else "")
-            _tail_en = (f" Weakest items excluding gap/volume/news: {_lw_en}."
-                        if _lw else "")
-            _gate(5, "score", False,
-                  f"100 체크리스트 점수가 낮습니다 — {sc}점, {tot9}종목 중 {rk}등 "
-                  f"(선발 기준: 상위 5 또는 50점 이상).{_tail_ko} "
-                  f"전체 항목별 점수는 아래 표에 있습니다.",
-                  f"The 100-checklist score is LOW — {sc} pts, rank {rk} of {tot9} "
-                  f"(picking bar: top-5 or ≥50 pts).{_tail_en} The full item-by-item "
-                  f"weights are in the table below.")
+        out_rows.append(r)
+    # ── GATE 5 IS A COMPETITION, NOT A BAR (boss 2026-09-04 18:2x: "if it
+    # passed the 4 gates it should not stop buying — out of the 14 beside
+    # the six fixed, suggest the best 5 by score; if a score is low we do
+    # not take it and choose the other cases"). So gate 5 needs ALL the
+    # stocks judged first: the 4-gate passers compete on score, the top 5
+    # are chosen, the rest are told exactly whom they lost to. The six
+    # fixed are outside the competition — they trade on their gates alone.
+    _SIX9 = {"000660", "005930", "035420", "017670", "042660", "034020"}
+    _pass4 = [x for x in out_rows if x["stopped_at"] is None
+              and not x["held"] and not x["pending"] and x["code"] not in _SIX9]
+    _pass4.sort(key=lambda x: -(x.get("score") or 0))
+    _chosen5 = [x["code"] for x in _pass4[:5]]
+    _chosen_names = ", ".join((x["name"] for x in _pass4[:5])) or "-"
+    for r in out_rows:
+        sc, rk5 = r.get("score"), None
+        if r["code"] in [x["code"] for x in _pass4]:
+            rk5 = next(i + 1 for i, x in enumerate(_pass4) if x["code"] == r["code"])
+        if r["stopped_at"] is None and not r["held"] and not r["pending"]:
+            if r["code"] in _SIX9:
+                r["gates"].append({"n": 5, "key": "score", "passed": True,
+                    "ko": (f"고정 6종목입니다 — 점수 경쟁과 무관하게 관문이 열리면 항상 "
+                           f"매수 제안이 옵니다 (오늘 점수 {sc if sc is not None else '집계 중'}점, 참고용). 5관문 통과."),
+                    "en": (f"One of the six FIXED stocks — proposed whenever its gates "
+                           f"open, outside the score competition (today's score "
+                           f"{sc if sc is not None else 'computing'}, for reference). Gate 5 passed.")})
+            elif sc is None:
+                r["gates"].append({"n": 5, "key": "score", "passed": True,
+                    "ko": "오늘 점수 집계 중 — 점수가 나오면 5종목 경쟁에 들어갑니다.",
+                    "en": "Today's score still computing — it joins the best-five race when it lands."})
+            elif r["code"] in _chosen5:
+                r["gates"].append({"n": 5, "key": "score", "passed": True,
+                    "ko": (f"오늘 4관문을 모두 통과한 {len(_pass4)}종목 중 점수 {sc}점으로 "
+                           f"{rk5}등 — 최고 5종목 안에 들었습니다. 매수 제안 대상입니다. 5관문 통과."),
+                    "en": (f"Among today's {len(_pass4)} four-gate passers its score "
+                           f"{sc} ranks #{rk5} — inside the best five. It gets the "
+                           f"proposal. Gate 5 passed.")})
+            else:
+                # lost the seat on score — name the weakest weighted places
+                _lw = sorted([i for i in (r.get("items") or []) if i.get("s") is not None],
+                             key=lambda i: -((100 - float(i["s"])) * float(i.get("w") or 1)))[:3]
+                _lw_ko = ", ".join(f"{i['k']} {i['v']} ({i['s']}점"
+                                   + (f"·가중 {i['w']}%" if i.get("w") is not None else "") + ")"
+                                   for i in _lw)
+                _lw_en = ", ".join(f"{i.get('en') or i['k']} {i.get('ven') or i['v']} ({i['s']} pts"
+                                   + (f" · weight {i['w']}%" if i.get("w") is not None else "") + ")"
+                                   for i in _lw)
+                r["gates"].append({"n": 5, "key": "score", "passed": False,
+                    "ko": (f"4관문은 모두 통과했지만, 통과한 {len(_pass4)}종목 중 점수 {sc}점 "
+                           f"{rk5}등 — 오늘의 최고 5종목({_chosen_names})에 밀렸습니다. "
+                           f"점수가 낮으면 잡지 않고 더 좋은 종목을 고릅니다."
+                           + (f" 가장 약한 곳: {_lw_ko}." if _lw_ko else "")
+                           + " 전체 항목별 점수는 아래 표에 있습니다."),
+                    "en": (f"All 4 gates passed — but among the {len(_pass4)} passers its "
+                           f"score {sc} ranks #{rk5}, outside today's best five "
+                           f"({_chosen_names}). A low score is not taken; we choose the "
+                           f"better cases."
+                           + (f" Weakest places: {_lw_en}." if _lw_en else "")
+                           + " The full item-by-item weights are in the table below.")})
+                r["stopped_at"] = 5
         # the cascade stopped before gate 5 → the checklist table would be
         # an explanation past the blocked gate; it stays hidden (same law)
         if r["stopped_at"] is not None and r["stopped_at"] < 5:
@@ -818,7 +846,6 @@ def whynot(db: Session = Depends(get_db)):
                                "신호가 켜지면 곧 팝업이 옵니다.")
             r["verdict_en"] = ("ALL gates passed — waiting for the entry signal (bottom "
                                "rebound confirmation). The popup comes the moment it fires.")
-        out_rows.append(r)
     _hh9 = _t.strftime("%H:%M", _t.gmtime(_t.time() + 9 * 3600))
     res = {"ok": True, "market_open": mkt, "rows": out_rows}
     if not mkt:
@@ -1283,8 +1310,9 @@ def _brain_compute():
             out["six"].append(entry)
         else:
             out["universe"].append(entry)
-            if not blocked and len(five) < 5:
-                five.append(entry["name"]); entry["chosen"] = True
+    # (the best-five selection moved below, where owned/answered stocks are
+    # known — boss 2026-09-04 18:2x: a held or already-answered stock must
+    # not use up one of today's five seats)
     out["five"] = five
     # the six keep the boss's order
     out["six"].sort(key=lambda e: SIX.index(e["code"]))
@@ -1391,6 +1419,22 @@ def _brain_compute():
         _ourown = {h.get("code") for h in (_st9.get("held") or [])}
     except Exception:
         pass
+    # THE BEST FIVE BY SCORE (boss 2026-09-04 18:2x: "if it passed the 4
+    # gates it should not stop buying — out of the 14 beside the six fixed,
+    # suggest the best 5 by score; if a score is low we do not take it and
+    # choose the other cases"): the score is no longer an absolute bar. Every
+    # rotating stock whose gates are ALL open competes, the top 5 by
+    # checklist score get the popups, the rest wait as 'better cases chosen'.
+    # The six fixed keep their own law — always proposed when their gates
+    # open. A stock we own or already answered gives up its seat.
+    _elig5 = [e for e in out["universe"]
+              if e.get("pass") and e["code"] not in _own
+              and e["code"] not in _answered and e["code"] not in _ourown]
+    _elig5.sort(key=lambda e: -(e.get("score") or 0))
+    _top5 = {e["code"] for e in _elig5[:5]}
+    for e in _elig5:
+        e["chosen"] = e["code"] in _top5
+    out["five"] = [e["name"] for e in _elig5[:5]]
     for e in out["six"] + out["universe"]:
         o = _own.get(e["code"])
         if o:
@@ -1402,6 +1446,18 @@ def _brain_compute():
             e["lane"] = "NOBUY"
             e["lane_why"] = e.get("no_buy")
             e["lane_why_en"] = e.get("no_buy_en")
+        elif e["code"] not in SIX and e["code"] not in _top5:
+            # gates all open, but today's five seats went to higher scores
+            _rk5 = next((i + 1 for i, x in enumerate(_elig5)
+                         if x["code"] == e["code"]), None)
+            e["lane"] = "NOBUY"
+            e["lane_why"] = (f"모든 관문 통과 — 하지만 오늘 통과 종목 {len(_elig5)}개 중 "
+                             f"점수 {e.get('score')}점({_rk5}등)이라 최고 5종목에 밀렸습니다. "
+                             f"점수가 낮으면 잡지 않고 더 좋은 종목을 고릅니다.")
+            e["lane_why_en"] = (f"all gates open — but among today's {len(_elig5)} "
+                                f"passers its score {e.get('score')} ranks #{_rk5}, "
+                                f"outside the best five. A low score is not taken; "
+                                f"we choose the better cases.")
         else:
             # ONE CONDITION FOR BOTH (boss 2026-09-03 14:3x: "make it BUY", and
             # "삼성전자 keeps saying BUY but the popup is not coming"). The board
