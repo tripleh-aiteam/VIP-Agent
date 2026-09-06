@@ -1972,6 +1972,26 @@ def verify_now(code: str, side: str = "BUY", day: str = "",
             _exp = float(_avg5) * max(_frac, 0.02)
             _pace = _cum / _exp if _exp else None
             snap["vol_pace"] = round(_pace, 2) if _pace else None
+            # THE MINUTE WE ARE ABOUT TO BUY IN LEADS (boss 2026-09-07: "main
+            # priority should be that minute volume"). The day can read normal
+            # on a session that was busy at 09:00 and dead now, so the CURRENT
+            # bar must also be trading at 1.2x its own recent average. Same
+            # test 알고3 runs, so the board and the engine cannot disagree.
+            _now9 = None
+            if len(bars) >= 6:
+                _w9 = [float(b.get("vol") or 0) for b in bars[-31:-1]]
+                _a9 = (sum(_w9) / len(_w9)) if _w9 else 0.0
+                if _a9 > 0:
+                    _now9 = float(bars[-1].get("vol") or 0) / _a9
+                    snap["vol_now"] = round(_now9, 2)
+            if _now9 is not None and _now9 < 1.2:
+                return (False,
+                        f"지금 이 분봉의 거래량이 약합니다 — 최근 30분 평균의 "
+                        f"{_now9:.2f}배입니다 (1.20배 이상 필요). 사는 그 순간에 "
+                        f"거래가 붙어야 합니다. 보내지 않습니다.",
+                        f"the volume in THIS minute is weak - {_now9:.2f}x its own "
+                        f"30-minute average (1.20x required). The moment we buy "
+                        f"must have real flow behind it. Not sending.", snap)
             if _pace is not None and _pace < 1.0:
                 return (False,
                         f"거래량이 평소보다 적습니다 — 지금까지 {_cum:,.0f}주로 "

@@ -638,6 +638,24 @@ VARIANTS: list[dict] = [
      # Against what was live: +8.89%% vs +4.95%%, 22 trades vs 14, same worst
      # trade (-1.3%%). More money and more chances at the same risk.
      "pos_mode": "hz_score", "pos_tol": 35,
+     # GATE 3 LEADS WITH THE MINUTE WE ACTUALLY BUY IN (boss 2026-09-07: "do we
+     # consider only today's, or the CURRENT time, that is the buying time? ...
+     # main priority should be that minute volume").
+     # He is right that they are different questions. The day pace can read
+     # "normal" on a session that was busy at 09:00 and dead by the minute we
+     # board. So the bar we buy on must ALSO be trading at 1.2x its own recent
+     # average, and the day must still be running at a normal week pace behind
+     # it - the minute decides, the day confirms.
+     # MEASURED on 알고3 over 22 sessions:
+     #   minute>=1.2 · pace>=1.0    7tr 100%% +5.86%%  (+0.837%%/trade) <- deployed
+     #   minute>=1.0 · pace>=1.0   11tr  91%% +5.49%%  (+0.499%%/trade)
+     #   minute>=1.5 · pace>=1.0    5tr 100%% +4.75%%
+     #   minute alone >=1.0        14tr  71%% +2.64%%   - the minute ALONE is worse
+     #   day pace alone (was live) 22tr  73%% +7.11%%   - more total, worse trades
+     # STATED PLAINLY: 100%% on SEVEN trades is not a 100%% law - expect nearer
+     # 80%% once more days exist, and expect roughly one trade every three days.
+     # The minute alone is worse than the day alone; it is the PAIR that works.
+     "vol_mode": "both", "vol_now_min": 1.2,
      # THE PATIENT PAIR (boss 2026-09-03 evening: "even if they decreased -1%
      # do not sell and keep holding, because they are already decreased many %,
      # so -1 is not a big deal"). MEASURED over all 22 stored days first:
@@ -2057,6 +2075,45 @@ def _pos_ok(s: dict, c: float, v: dict) -> bool:
     return True
 
 
+def _vol_ok(s: dict, i: int, v: dict) -> bool:
+    """Gate 3, in whichever form is being tested.
+       pace  today's volume so far vs a normal week-average day by this hour
+       now   THIS bar vs the average of the last 30 bars
+       both  both must pass
+       any   either one passing is enough
+    """
+    need = float(v.get("week_vol") or 1.0)
+    m = str(v.get("vol_mode") or "pace")
+    pace = _vol_pace(s, i) if s.get("vol_day_avg") else None
+    now = _vol_now(s, i)
+    okp = (pace is None) or (pace >= need)
+    okn = (now is None) or (now >= float(v.get("vol_now_min") or need))
+    if m == "now":
+        return okn
+    if m == "both":
+        return okp and okn
+    if m == "any":
+        return okp or okn
+    return okp
+
+
+def _vol_now(s: dict, i: int, win: int = 30):
+    """THE VOLUME AT THIS MINUTE, not the day's total (boss 2026-09-07: "do you
+    think we consider only today's, or the CURRENT time, that is the buying
+    time? If gate 2 passed then we look at the current volume").
+
+    His point is fair: a day can be busy at 09:00 and dead by the time we
+    actually buy, and the cumulative pace would still read 'normal'. This is
+    the bar we are buying on, measured against the average of the previous
+    `win` bars - so 1.0 means this minute is trading at its recent normal."""
+    vols = s.get("vols") or []
+    if i >= len(vols) or i < 5:
+        return None
+    w = [float(x or 0) for x in vols[max(0, i - win):i]]
+    avg = (sum(w) / len(w)) if w else 0.0
+    return (float(vols[i] or 0) / avg) if avg > 0 else None
+
+
 def _vol_spike(s: dict, i: int, mult: float) -> bool:
     """Is THIS bar a volume surge? (boss 2026-09-04 research question: "even
     though there is a 갭상승 and it is above the average, if volume increases
@@ -2545,9 +2602,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            # then we can buy, otherwise do not buy"). low5 is
                            # the lowest close of the past five sessions; we buy
                            # only at or under it.
-            elif (v.get("week_vol") and s.get("vol_day_avg")
-                  and _vol_pace(s, i) is not None
-                  and _vol_pace(s, i) < float(v["week_vol"])):
+            elif (v.get("week_vol") and not _vol_ok(s, i, v)):
                 pass       # GATE 3 - THE VOLUME (boss 2026-09-04: "if trading
                            # volume is higher than average within the week, or
                            # at least it should be a normal number of volume,
