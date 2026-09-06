@@ -7196,7 +7196,10 @@ def _run_agent_impl(
         _nav0 = None
         if any(k in _tn0 for k in ("why not buying", "whynot", "왜 안 사", "왜 안사",
                                    "관문 증명", "gate proof")):
-            _nav0 = ("/testing/whynot", "아직 왜 안 사나 (관문 증명)", "Why Not Buying Yet (gate proof)")
+            # the gate proof lives INSIDE Menu 3 (boss 2026-09-07: "do not
+            # make separate") — deep-link opens the section on that page
+            _nav0 = ("/testing/approve#whynot", "메뉴 3 안의 관문 증명 (아직 왜 안 사나)",
+                     "the gate proof inside Menu 3 (Why Not Buying Yet)")
         elif any(k in _tn0 for k in ("메뉴3", "메뉴 3", "menu 3", "menu3",
                                      "실시간 모니터링", "real time monitoring",
                                      "realtime monitoring", "approval desk", "세미오토")):

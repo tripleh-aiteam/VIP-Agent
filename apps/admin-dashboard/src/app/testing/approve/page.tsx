@@ -7,6 +7,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useLanguage } from "@/components/i18n";
 import { API } from "../../../components/api";
+import WhyNotPanel from "@/components/WhyNotPanel";
 
 type Zone = { pos: number; zone: "buy" | "sell" | "mid" } | null;
 type Room = { code: string; name: string; score?: number | null; price?: number | null;
@@ -120,6 +121,14 @@ export default function ApprovePage() {
   const [fDec, setFDec] = useState("");
   const [fDeal, setFDeal] = useState("");
   const [fDay, setFDay] = useState("");   // 📅 trading-list day (default: today)
+  // 🚧 the gate-proof section lives INSIDE this menu (boss 2026-09-07:
+  // "please do not make separate") — toggled open here, #whynot deep-links
+  const [wnOpen, setWnOpen] = useState(false);
+  useEffect(() => {
+    try {
+      if (window.location.hash === "#whynot") setWnOpen(true);
+    } catch {}
+  }, []);
   const [guOpen, setGuOpen] = useState<string | null>(null);   // opened give-up detail row (stable code|time key)
   const [histOpen, setHistOpen] = useState(true);              // 📜 history fold (boss: closeable)
   const [histDay, setHistDay] = useState("");                  // 📅 which day's record (compare days)
@@ -348,7 +357,9 @@ export default function ApprovePage() {
         <a href="/testing" style={{ color: "inherit" }}>{t("← 모의투자 메뉴", "← Paper Trading menu")}</a>
         <a href="/testing/live" style={{ color: "#00838f" }}>{t("📡 메뉴1 실시간 키움", "📡 Menu 1 Live Kiwoom")}</a>
         <a href="/testing/reco" style={{ color: "#e65100" }}>{t("🎯 메뉴2 추천 (자동)", "🎯 Menu 2 Reco (auto)")}</a>
-        <a href="/testing/whynot" style={{ color: "#6a1b9a" }}>{t("🚧 아직 왜 안 사나", "🚧 Why Not Buying Yet")}</a>
+        <span onClick={() => setWnOpen(!wnOpen)}
+              style={{ color: "#6a1b9a", cursor: "pointer", fontWeight: 700 }}>
+          {t("🚧 아직 왜 안 사나", "🚧 Why Not Buying Yet")} {wnOpen ? "▲" : "▼"}</span>
         <b style={{ color: "#2e7d32" }}>{t("🖥 메뉴3 실시간 모니터링", "🖥 Menu 3 Real Time Monitoring")}</b>
       </div>
       <h1 style={{ fontSize: 22, fontWeight: 800 }}>{t("🖥 실시간 모니터링", "🖥 Real Time Monitoring")}
@@ -417,24 +428,39 @@ export default function ApprovePage() {
                "After 15:20 the agent neither checks nor proposes. Review today's and previous days' results in the trading history below — it goes back to work automatically at the next open.")}
           </div>
           {/* the boss looks for the WHY here after the bell (2026-09-04
-              17:2x: "still there is not like menu") — a real button, not a
-              small link he can miss */}
-          <a href="/testing/whynot" style={{ display: "inline-block", marginTop: 10,
-               padding: "8px 14px", borderRadius: 9, background: "#6a1b9a",
-               color: "#fff", fontWeight: 800, fontSize: 13, textDecoration: "none" }}>
+              17:2x: "still there is not like menu"; 2026-09-07: "inside
+              Menu 3, do not make separate") — the button opens the section
+              on THIS page */}
+          <button onClick={() => setWnOpen(!wnOpen)}
+               style={{ display: "inline-block", marginTop: 10, cursor: "pointer",
+               padding: "8px 14px", borderRadius: 9, background: "#6a1b9a", border: "none",
+               color: "#fff", fontWeight: 800, fontSize: 13 }}>
             🚧 {t("오늘 왜 안 샀는지 보기 — 관문 증명 (에이전트의 기억)",
-                  "See WHY it did not buy today — gate proof (the agent's memory)")}
-          </a>
+                  "See WHY it did not buy today — gate proof (the agent's memory)")} {wnOpen ? "▲" : "▼"}
+          </button>
         </div>)}
 
       {/* the same door during market hours, beside the working blocks */}
       {feed?.market_open !== false && (
-        <a href="/testing/whynot" style={{ display: "inline-block", margin: "2px 0 10px",
+        <button onClick={() => setWnOpen(!wnOpen)}
+             style={{ display: "inline-block", margin: "2px 0 10px", cursor: "pointer",
              padding: "6px 12px", borderRadius: 9, background: "rgba(106,27,154,0.12)",
-             color: "#6a1b9a", fontWeight: 800, fontSize: 12.5, textDecoration: "none",
+             color: "#6a1b9a", fontWeight: 800, fontSize: 12.5,
              border: "1.5px solid #6a1b9a" }}>
-          🚧 {t("아직 왜 안 사나 — 종목별 관문 증명 열기", "Why Not Buying Yet — open the per-stock gate proof")}
-        </a>)}
+          🚧 {t("아직 왜 안 사나 — 종목별 관문 증명", "Why Not Buying Yet — per-stock gate proof")} {wnOpen ? "▲" : "▼"}
+        </button>)}
+
+      {/* ─ 🚧 the gate-proof section, INSIDE Menu 3 (boss 2026-09-07) ─ */}
+      <div id="whynot" />
+      {wnOpen && (
+        <div style={{ margin: "4px 0 16px", padding: "12px 14px", borderRadius: 12,
+                      border: "2px solid #6a1b9a", background: "rgba(106,27,154,0.03)" }}>
+          <b style={{ fontSize: 15, color: "#6a1b9a" }}>
+            🚧 {t("아직 왜 안 사나 — 관문 증명", "Why Not Buying Yet — proof of the gates")}</b>
+          <div style={{ marginTop: 8 }}>
+            <WhyNotPanel />
+          </div>
+        </div>)}
 
       {/* ─ 20 AGENT BLOCKS, ALL STEPPING AT ONCE (market hours only) ─ */}
       {feed?.market_open !== false && brain?.ok && !brain.computing && (() => {
