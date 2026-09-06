@@ -258,10 +258,29 @@ def _display_stats(held: list, log: list, rooms: list) -> dict:
         _w = min(done, key=lambda l: l.get("pnl_pct") or 0)
         best = {"name": _b.get("name"), "pct": _b.get("pnl_pct")}
         worst = {"name": _w.get("name"), "pct": _w.get("pnl_pct")}
+    # ── TODAY'S TOTAL GAIN, the industry-standard way (boss 2026-09-07:
+    # "top should show today's total gain money — think how to calculate,
+    # the industry-standard way"). The standard is MONEY-WEIGHTED:
+    #   total P&L  = realised (closed trips) + unrealised (open lots, live)
+    #   return %   = total P&L / capital actually deployed today
+    # His per-trade idea (average trade % × count) is kept as a SECONDARY
+    # number, because averaging percentages ignores position size — a +5%
+    # on 1 share and a −1% on 1,000 shares would "average" +2% while the
+    # wallet lost money. Money never lies about size, so money leads.
+    total_pnl = round(net + open_unreal)
+    ret_pct = round(total_pnl / inv * 100, 2) if inv else None
+    _pcts = [float(l.get("pnl_pct") or 0) for l in done if l.get("pnl_pct") is not None]
+    avg_trade_pct = round(sum(_pcts) / len(_pcts), 2) if _pcts else None
+    # the round-trip cost the real world charges (0.23%), estimated on
+    # today's closed trips so the gross headline carries its honest shadow
+    fee_est = round(sum(float(l.get("buy_price") or 0) * int(l.get("qty") or 0)
+                        for l in done) * 0.0023)
     return {"trips": len(done), "wins": wins, "losses": losses,
             "win_pct": round(wins / (wins + losses) * 100, 1) if (wins + losses) else 0,
             "net_won": net, "invested": round(inv),
             "open_n": len(held), "open_unreal": round(open_unreal),
+            "total_pnl": total_pnl, "ret_pct": ret_pct,
+            "avg_trade_pct": avg_trade_pct, "fee_est": fee_est,
             "best": best, "worst": worst}
 
 

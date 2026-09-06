@@ -26,6 +26,8 @@ type LogRow = Sug & { decision: string; fill?: number | null; at: string; dealt?
                       pnl_pct?: number; pnl_won?: number; day?: string };
 type Stats = { trips: number; wins: number; losses: number; win_pct: number;
                net_won: number; invested: number; open_n: number; open_unreal: number;
+               total_pnl?: number | null; ret_pct?: number | null;
+               avg_trade_pct?: number | null; fee_est?: number | null;
                best?: { name: string; pct: number } | null;
                worst?: { name: string; pct: number } | null };
 type Feed = { ok: boolean; market_open: boolean; rooms: Room[]; pending: Sug[];
@@ -811,8 +813,34 @@ export default function ApprovePage() {
                           color: colour || "inherit" }}>{value}</div>
           </div>);
         const money = (n: number) => (n >= 0 ? "+" : "") + W(Math.round(n));
+        // 💰 TODAY'S TOTAL GAIN leads the card (boss 2026-09-07: "top should
+        // show today's total gain money and %"). Industry-standard money-
+        // weighted numbers: total = realised + open, % = total / deployed
+        // capital. The per-trade average % rides underneath as reference.
+        const tp = S.total_pnl ?? (S.net_won + S.open_unreal);
+        const tpCol = tp > 0 ? "#c62828" : tp < 0 ? "#1565c0" : undefined;
         return (
           <div style={{ marginTop: 12 }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap",
+                          padding: "10px 14px", borderRadius: 10, marginBottom: 8,
+                          border: `2px solid ${tpCol || "rgba(128,128,128,0.35)"}`,
+                          background: tp > 0 ? "rgba(229,57,53,0.05)"
+                            : tp < 0 ? "rgba(21,101,192,0.05)" : "rgba(128,128,128,0.05)" }}>
+              <span style={{ fontSize: 12, fontWeight: 800, opacity: 0.7 }}>
+                💰 {t("오늘 총 손익", "TODAY'S TOTAL GAIN")}</span>
+              <b style={{ fontSize: 24, color: tpCol || "inherit" }}>{money(tp)}</b>
+              {S.ret_pct != null && (
+                <b style={{ fontSize: 17, color: tpCol || "inherit" }}>
+                  ({S.ret_pct >= 0 ? "+" : ""}{S.ret_pct}%)</b>)}
+              <span style={{ fontSize: 11.5, opacity: 0.65 }}>
+                {t(`= 실현 ${money(S.net_won)} + 평가 ${money(S.open_unreal)} · 투입 자금 ${W(S.invested)} 대비`,
+                   `= realised ${money(S.net_won)} + open ${money(S.open_unreal)} · vs ${W(S.invested)} deployed`)}
+                {S.avg_trade_pct != null && t(` · 거래당 평균 ${S.avg_trade_pct >= 0 ? "+" : ""}${S.avg_trade_pct}%`,
+                                             ` · avg per trade ${S.avg_trade_pct >= 0 ? "+" : ""}${S.avg_trade_pct}%`)}
+                {(S.fee_est || 0) > 0 && t(` · 왕복 수수료 약 ₩${(S.fee_est || 0).toLocaleString()}`,
+                                           ` · est. round-trip fees ₩${(S.fee_est || 0).toLocaleString()}`)}
+              </span>
+            </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {box(t("승률", "Win rate"),
                    S.trips ? `${S.win_pct}%` : "—",
