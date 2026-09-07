@@ -551,10 +551,13 @@ def _gate_verdict(db, code: str):
                     "메뉴 3 기준으로도 살 수 있는 자리입니다.",
                     "🤖 Menu 3 agent's verdict: ✅ all gates passed — "
                     "a place to buy by the desk's own rules too.", False)
-        _GN_KO = {"gap": "갭상승 관문", "position": "주간 포지션 관문",
+        # the gate stopped being a single weekly window on 09-04; the chatbot
+        # was still calling it 주간 포지션 (boss 2026-09-07 caught the same stale
+        # label on the why-not panel this morning - this was its twin)
+        _GN_KO = {"gap": "갭상승 관문", "position": "위치 관문 (주·월·3개월·6개월)",
                   "volume": "거래량 관문", "news": "나쁜 뉴스 관문",
                   "score": "100 체크리스트 관문"}
-        _GN_EN = {"gap": "Gap-up gate", "position": "Weekly-position gate",
+        _GN_EN = {"gap": "Gap-up gate", "position": "Position gate (week·month·3m·6m)",
                   "volume": "Volume gate", "news": "Bad-news gate",
                   "score": "100-checklist gate"}
         _lk9 = ["🤖 메뉴 3 에이전트 판정 — 지금 규칙으로 이 매수는 막혀 있습니다:"]
