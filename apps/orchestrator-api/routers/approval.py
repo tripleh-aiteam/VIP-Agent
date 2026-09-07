@@ -1357,10 +1357,17 @@ def _brain_compute():
         try:
             from services.kiwoom_rules import _hz_stats as _hzs9
             _hz9 = _hzs9(code, _kd()) or {}
-            _px9 = float((r.get("live_total") or r.get("live_adj") or 0)) or None
-            if not _px9:
-                from services.paper_desk import fast_price as _fp9
-                _px9 = float((_fp9(code) or [None])[0] or 0) or None
+            # THE LIVE PRICE, AND ONLY THE LIVE PRICE (bug found 2026-09-07
+            # 09:0x by auditing the board against an independent computation:
+            # live_total is a SCORE - 62.9, 57.2, 54.6 - not a price. Using it
+            # here made (score - window low) hugely negative, clamped to 0%,
+            # and a 0% position ALWAYS passes gate 2. Ten of the twenty stocks
+            # were shown at 0% and would have sailed through a gate that should
+            # have stopped several of them. The send-time guard reads
+            # fast_price and was never fooled, so no wrong trade could reach an
+            # order - but the board was telling him something false.
+            from services.paper_desk import fast_price as _fp9
+            _px9 = float((_fp9(code) or [None])[0] or 0) or None
             _pp9, _pl9, _pe9 = [], [], []
             for _k9, _n9, _ne9 in (("w", "주", "week"), ("m", "월", "month"),
                                    ("q", "3개월", "3mth"), ("h", "6개월", "6mth")):
