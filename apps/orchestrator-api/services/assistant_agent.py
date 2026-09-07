@@ -7368,6 +7368,140 @@ def _run_agent_impl(
         except Exception:
             pass
 
+    # === ⏱ "WHY DIDN'T YOU BUY X AT 14:49?" (boss 2026-09-07: "after trading
+    # we can ask why you did not buy SK hynix at 14:49 — then it should
+    # explain") — re-judges the gate cascade with only what the tape knew at
+    # that minute, in the SAME gate texts Menu 3 shows. No time given = the
+    # current verdict.
+    if (not confirmed_tool and not attachment_ids and transcript and len(transcript) <= 140
+            and _re.search(r"왜|why", transcript, _re.IGNORECASE)
+            and _re.search(r"안\s*샀|안\s*사\b|매수\s*안\s*했|매수를?\s*안\s*한"
+                           r"|(didn'?t|did\s*not|didnt)\s*(you\s*)?buy|no\s*buy"
+                           r"|not\s*(buy|bought)", transcript, _re.IGNORECASE)):
+        try:
+            from services.stock_resolver import resolve_one
+            _wc, _wn = resolve_one(transcript)
+            if not _wc:
+                for _h in reversed(history or []):
+                    _wc, _wn = resolve_one(str(_h.get("content") or _h.get("text") or ""))
+                    if _wc:
+                        break
+            if _wc:
+                _tm = _re.search(r"(\d{1,2})\s*[:시]\s*(\d{2})", transcript)
+                _hh = f"{int(_tm.group(1)):02d}:{_tm.group(2)}" if _tm else None
+                _row = None
+                _hdr_extra = ""
+                if _hh:
+                    from routers.approval import whynot_at
+                    _row = whynot_at(_wc, _hh, _wn or _wc)
+                    if _row is None and lang == "ko":
+                        return {"intent": "menu3_whynot_at", "language": lang,
+                                "reply": f"⏱ {_hh}의 시세 기록이 없어 그 시각의 관문을 판정할 수 없습니다 — 장중 시간(09:00~15:30)의 시각으로 다시 물어봐 주세요.",
+                                "action": None, "speak": True, "transcript": transcript,
+                                "tool_used": "menu3_whynot_at"}
+                    if _row is None:
+                        return {"intent": "menu3_whynot_at", "language": lang,
+                                "reply": f"⏱ No tape at {_hh} — ask with a market-hours clock (09:00–15:30).",
+                                "action": None, "speak": True, "transcript": transcript,
+                                "tool_used": "menu3_whynot_at"}
+                    _hdr_extra = (f" — {_hh} 그 시각의 판정" if lang == "ko"
+                                  else f" — judged as of {_hh}")
+                else:
+                    from routers.approval import whynot as _wn9f
+                    _wd0 = _wn9f(db)
+                    _row = next((x for x in (_wd0.get("rows") or [])
+                                 if str(x.get("code")) == str(_wc)), None)
+                _koq = lang == "ko"
+                LW: list[str] = []
+                if _row:
+                    LW.append(f"🧭 {_wn or _wc} ({_wc})" + _hdr_extra)
+                    if _row.get("px"):
+                        LW.append((f"그 시각 가격 ₩{_row['px']:,.0f}" if _hh else f"현재가 ₩{_row['px']:,.0f}")
+                                  if _koq else
+                                  (f"Price at that minute ₩{_row['px']:,.0f}" if _hh else f"Price ₩{_row['px']:,.0f}"))
+                    for _g9 in _row.get("gates") or []:
+                        LW.append(("✅ " if _g9["passed"] else "⛔ ")
+                                  + f"{_g9['n']}. " + (_g9["ko"] if _koq else _g9["en"]))
+                        if _g9.get("link"):
+                            LW.append(f"   📎 {_g9['link']}")
+                    if _row.get("stopped_at") and len(_row.get("gates") or []) < 5:
+                        _rm9 = 5 - len(_row.get("gates") or [])
+                        LW.append(f"(나머지 {_rm9}개 관문은 이 관문을 통과한 뒤에 검사합니다)" if _koq
+                                  else f"(the remaining {_rm9} gate(s) are checked only after this one is passed)")
+                    LW.append("")
+                    LW.append("📎 출처: 메뉴 3 관문 증명 — 챗봇과 보드가 같은 규칙, 같은 문장으로 말합니다."
+                              if _koq else
+                              "📎 Source: Menu 3's gate proof — the chatbot and the board speak the same rule in the same sentences.")
+                    return {"intent": "menu3_whynot_at", "language": lang,
+                            "reply": "\n".join(LW), "action": None, "speak": True,
+                            "transcript": transcript, "tool_used": "menu3_whynot_at"}
+        except Exception:
+            pass
+
+    # === 📜 "WHY DID YOU BUY / SELL X?" — the STORED reasons, verbatim (boss
+    # 2026-09-07: "all reasons for buying/selling/holding must be identical
+    # and same format between the chatbot and inside the app"): the answer IS
+    # the reason list saved on the Menu 3 log row, word for word.
+    if (not confirmed_tool and not attachment_ids and transcript and len(transcript) <= 140
+            and _re.search(r"왜\s*샀|왜\s*팔|왜\s*매수했|왜\s*매도했"
+                           r"|why\s*did\s*you\s*(buy|sell)", transcript, _re.IGNORECASE)):
+        try:
+            from services.stock_resolver import resolve_one
+            _yc, _yn = resolve_one(transcript)
+            if not _yc:
+                for _h in reversed(history or []):
+                    _yc, _yn = resolve_one(str(_h.get("content") or _h.get("text") or ""))
+                    if _yc:
+                        break
+            if _yc:
+                _sd = ("SELL" if _re.search(r"팔|매도|sell", transcript, _re.IGNORECASE)
+                       else "BUY")
+                from services import approval_desk as _ad0
+                _st0 = _ad0._load() or {}
+                _cands = [l for l in (_st0.get("log") or [])
+                          if str(l.get("code")) == str(_yc) and l.get("side") == _sd
+                          and l.get("decision") == "승인" and (l.get("reasons") or [])]
+                _tm2 = _re.search(r"(\d{1,2})\s*[:시]\s*(\d{2})", transcript)
+                _pick = None
+                if _cands:
+                    if _tm2:
+                        _hh2 = f"{int(_tm2.group(1)):02d}:{_tm2.group(2)}"
+                        _pick = min(_cands, key=lambda l: abs(
+                            int(str(l.get("at") or "00:00")[:2]) * 60
+                            + int(str(l.get("at") or "00:00")[3:5])
+                            - (int(_hh2[:2]) * 60 + int(_hh2[3:5]))))
+                    else:
+                        _pick = _cands[-1]
+                _koq = lang == "ko"
+                if _pick:
+                    _lab = ("매수" if _sd == "BUY" else "매도") if _koq else _sd
+                    LY = [(f"📜 {_yn or _yc} — {_pick.get('at')} {_lab} 이유 (메뉴 3에 저장된 그대로)"
+                           if _koq else
+                           f"📜 {_yn or _yc} — why we {'bought' if _sd == 'BUY' else 'sold'} at {_pick.get('at')} (exactly as saved on Menu 3)")]
+                    if _pick.get("fill"):
+                        LY.append((f"체결가 ₩{float(_pick['fill']):,.0f} × {int(_pick.get('qty') or 0):,}주"
+                                   if _koq else
+                                   f"Filled ₩{float(_pick['fill']):,.0f} × {int(_pick.get('qty') or 0):,} sh")
+                                  + (f" · {_pick.get('pnl_pct'):+.2f}%" if _pick.get("pnl_pct") is not None else ""))
+                    for _x9 in (_pick.get("reasons") if _koq
+                                else (_pick.get("reasons_en") or _pick.get("reasons")) ) or []:
+                        LY.append(str(_x9))
+                    LY.append("")
+                    LY.append("📎 출처: 메뉴 3 매매 기록 — 팝업·기록과 한 글자까지 같은 이유입니다."
+                              if _koq else
+                              "📎 Source: the Menu 3 trade record — the same reasons, word for word, as the popup and the history.")
+                    return {"intent": "menu3_trade_why", "language": lang,
+                            "reply": "\n".join(LY), "action": None, "speak": True,
+                            "transcript": transcript, "tool_used": "menu3_trade_why"}
+                return {"intent": "menu3_trade_why", "language": lang,
+                        "reply": (f"📜 {_yn or _yc} — 메뉴 3 기록에 해당 {'매도' if _sd == 'SELL' else '매수'} 내역이 없습니다. 이 데스크는 승인된 매매만 기록합니다."
+                                  if _koq else
+                                  f"📜 {_yn or _yc} — no {'sell' if _sd == 'SELL' else 'buy'} of it in the Menu 3 record. This desk records only approved trades."),
+                        "action": None, "speak": True,
+                        "transcript": transcript, "tool_used": "menu3_trade_why"}
+        except Exception:
+            pass
+
     # === 🧭 MENU-3 ADVICE LANE — ONE VOICE (boss 2026-09-04 18:4x: "when it
     # advises it should talk with the Algo-3 rule (the currently running
     # rule); each question is answering differently; buying / selling /
@@ -7383,8 +7517,9 @@ def _run_agent_impl(
         _adv = bool(_re.search(
             r"살까|살\s*까|살가|사까|사야|사도|매수|팔까|팔가|팔아야|매도|어때|어떄|추천"
             r"|전망|분석|판단|보류|살만|사면|팔면|언제\s*사|언제\s*팔|사는\s*게|사는게"
-            r"|파는\s*게|파는게|\bbuy\b|\bsell\b|worth|how about|should i|when to buy"
-            r"|when to sell|hold\??",
+            r"|파는\s*게|파는게|보유\s*이유|왜\s*들고|왜\s*보유|계속\s*들고"
+            r"|\bbuy\b|\bsell\b|worth|how about|should i|when to buy"
+            r"|when to sell|why.*holding|hold\??",
             transcript, _re.IGNORECASE))
         _bare = bool(_re.search(r"^[\w가-힣·&]+\s*[은는]?\s*\?*$", transcript.strip())
                      and len(transcript.strip()) <= 20)
@@ -7420,11 +7555,11 @@ def _run_agent_impl(
                             L9.append(_l1)
                         # ── the same verdict + gate story Menu 3 shows ──
                         _held9x = _row.get("held")
-                        if (not _held9x and _re.search(r"팔까|팔가|팔아|매도|\bsell\b",
+                        if (not _held9x and _re.search(r"팔까|팔가|팔아|매도|들고|보유|holding|\bsell\b",
                                                        transcript, _re.IGNORECASE)):
-                            L9.append("이 종목은 지금 메뉴 3 보유가 없습니다 — 팔 것이 없습니다. 아래는 매수 관점의 판정입니다."
+                            L9.append("이 종목은 지금 메뉴 3 보유가 없습니다 — 팔거나 들고 있을 것이 없습니다. 아래는 매수 관점의 판정입니다."
                                       if _koq else
-                                      "Menu 3 holds no position in this stock — nothing to sell. Below is the BUY-side verdict.")
+                                      "Menu 3 holds no position in this stock — nothing to sell or hold. Below is the BUY-side verdict.")
                         L9.append(("판정: " if _koq else "Verdict: ")
                                   + (_row["verdict_ko"] if _koq else _row["verdict_en"]))
                         if _held9x:

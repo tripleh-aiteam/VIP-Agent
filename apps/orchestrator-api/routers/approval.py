@@ -465,6 +465,193 @@ def gate_chart(code: str, tf: int = 1):
 _WHYNOT9 = {"t": 0.0, "v": None}
 
 
+def whynot_at(code: str, hhmm: str, name: str = "") -> dict | None:
+    """THE GATES AS THEY STOOD AT ONE MINUTE (boss 2026-09-07: "after trading
+    we can ask why you did not [buy] SK hynix at 14:49 — then it should
+    explain"). Re-judges the buy cascade with only what the tape knew at
+    that clock: price/gap/return-touch up to hhmm, volume PACE by then, the
+    news stamps alive at that moment, the day's score. Same gate texts as
+    the live menu, past tense — one voice everywhere."""
+    hhmm = str(hhmm)[:5]
+    try:
+        from services.kiwoom_tape import _day as _kd9
+        day = _kd9()
+    except Exception:
+        import time as _t0
+        day = _t0.strftime("%Y%m%d", _t0.gmtime(_t0.time() + 9 * 3600))
+    yc = op = px = None
+    touch_at = None
+    bars = []
+    try:
+        from services.kiwoom_rules import _gap_ref
+        yc = float(_gap_ref(code, day) or 0) or None
+    except Exception:
+        pass
+    try:
+        from routers.paper_desk import live_tape
+        d9 = live_tape(code=code, period=60, tick=5, bars=400)
+        bars = [b for b in (d9.get("bars") or [])
+                if str(b.get("hhmm") or "")[:5] <= hhmm]
+        if bars:
+            op = float(bars[0].get("open") or 0) or None
+            px = float(bars[-1].get("close") or 0) or None
+            if yc:
+                for b in bars:
+                    if float(b.get("low") or 1e18) <= yc * 1.0015:
+                        touch_at = str(b.get("hhmm") or "")[:5]
+                        break
+    except Exception:
+        pass
+    if px is None:
+        return None                     # no tape at that clock — cannot judge
+    gap = round((op / yc - 1) * 100, 2) if (op and yc) else None
+    at9 = round((px / yc - 1) * 100, 2) if (px and yc) else None
+    r: dict = {"code": code, "name": name or code, "hhmm": hhmm, "day": day,
+               "px": px, "yc": yc, "op": op, "gates": [], "stopped_at": None}
+    W9 = lambda v: f"₩{v:,.0f}" if v else "?"
+
+    def _g(n, key, passed, ko, en, link=None):
+        if r["stopped_at"] is not None:
+            return                       # explanations stop at the block
+        g = {"n": n, "key": key, "passed": bool(passed), "ko": ko, "en": en}
+        if link:
+            g["link"] = link
+        r["gates"].append(g)
+        if not passed:
+            r["stopped_at"] = n
+    # ① 갭상승 — had it come back BY that minute?
+    if gap is not None and gap >= 0.3:
+        if touch_at:
+            _g(1, "gap", True,
+               f"갭상승(+{gap}%)으로 출발했지만 {touch_at}에 어제 가격(₩{yc:,.0f}) 부근까지 "
+               f"내려와 있었습니다 — {hhmm}에는 1관문이 열려 있었습니다.",
+               f"Opened with a gap-up (+{gap}%) but had come back near yesterday's price "
+               f"({W9(yc)}) at {touch_at} — gate 1 was open by {hhmm}.")
+        else:
+            _g(1, "gap", False,
+               f"갭상승으로 출발 — 시가 {W9(op)} (어제 종가 {W9(yc)}보다 +{gap}%), 그리고 "
+               f"{hhmm}까지 어제 가격으로 내려온 적이 없습니다 (그 시각 {W9(px)}, {at9:+.2f}%). "
+               f"비싸게 출발한 값을 쫓지 않아서 그 시각에 사지 않았습니다.",
+               f"Started with a GAP-UP — opened {W9(op)} (+{gap}% above yesterday's close "
+               f"{W9(yc)}) and had never come back to yesterday's price by {hhmm} "
+               f"(then {W9(px)}, {at9:+.2f}%). We do not chase an expensive open — that is "
+               f"why it was not bought at that minute.")
+    else:
+        _g(1, "gap", True,
+           f"갭상승 없이 출발 (시가 {W9(op)}, 어제 종가 {W9(yc)} 대비 "
+           f"{(gap if gap is not None else 0):+.2f}%). 1관문 통과.",
+           f"No gap-up at the open ({W9(op)}, {(gap if gap is not None else 0):+.2f}% vs "
+           f"yesterday's close {W9(yc)}). Gate 1 passed.")
+    # ② 주간 포지션 at that minute's price
+    low5 = None
+    try:
+        from services.kiwoom_rules import _daily20
+        low5 = float(_daily20(code, day)[2] or 0) or None
+    except Exception:
+        pass
+    if low5 and px:
+        _dp = round((px / low5 - 1) * 100, 2)
+        if px <= low5 * 1.002:
+            _g(2, "position", True,
+               f"주간 포지션 — {hhmm}의 {W9(px)}는 지난 1주 최저 종가 ₩{low5:,.0f} "
+               f"부근/아래였습니다 ({_dp:+.2f}%). 2관문 통과.",
+               f"Weekly position — at {hhmm} the price {W9(px)} sat at or under the past "
+               f"week's lowest close (₩{low5:,.0f}, {_dp:+.2f}%). Gate 2 passed.")
+        else:
+            _g(2, "position", False,
+               f"주간 포지션이 높았습니다 — 지난 1주 최저 종가 ₩{low5:,.0f}, {hhmm}의 가격 "
+               f"{W9(px)} ({_dp:+.2f}% 위). 우리는 주간 저점 부근/아래에서만 삽니다 — "
+               f"그 시각은 살 자리가 아니었습니다.",
+               f"The weekly POSITION was high — the past week's lowest close was "
+               f"₩{low5:,.0f} and at {hhmm} the price sat {W9(px)} ({_dp:+.2f}% above). "
+               f"We buy only at or under the week's low — not a buying place at that minute.")
+    else:
+        _g(2, "position", True, "주간 저점 자료 없음 — 막는 근거 없음. 2관문 통과.",
+           "No week-low data — nothing blocking. Gate 2 passed.")
+    # ③ 거래량 PACE by that minute (cumulative vs a normal day by that hour)
+    try:
+        from services.kiwoom_rules import _vol5
+        cum9 = sum(float(b.get("vol") or 0) for b in bars)
+        avg5 = _vol5(code, day)
+        frac = max(len(bars) / 381.0, 0.02)
+        pace = round(cum9 / (avg5 * frac), 2) if avg5 else None
+    except Exception:
+        cum9, pace = 0, None
+    if pace is not None and pace < 0.6:
+        _g(3, "volume", False,
+           f"거래가 매우 적었습니다 — {hhmm}까지 누적 {int(cum9):,}주, 보통 날의 그 시각 "
+           f"페이스의 {pace:.1f}배. 거래가 적으면 원하는 가격에 사고팔기 어렵습니다.",
+           f"Very FEW tradings — {int(cum9):,} shares by {hhmm}, {pace:.1f}× a normal "
+           f"day's pace by that hour. Thin trading makes fills unreliable.")
+    else:
+        _g(3, "volume", True,
+           (f"거래량 충분 — {hhmm}까지 누적 {int(cum9):,}주, 보통 날 페이스의 {pace:.1f}배. 3관문 통과."
+            if pace is not None else "거래량 자료 수집 중 — 막는 근거 없음. 3관문 통과."),
+           (f"Enough volume — {int(cum9):,} shares by {hhmm}, {pace:.1f}× a normal day's "
+            f"pace. Gate 3 passed." if pace is not None
+            else "Volume data still collecting — nothing blocking. Gate 3 passed."))
+    # ④ 나쁜 뉴스 alive at that minute (stamped in the 3h before it)
+    _bad9 = None
+    try:
+        import json as _j9
+        from pathlib import Path as _P9
+        from datetime import datetime as _dt9, timedelta as _td9
+        nd9 = _P9(__file__).resolve().parent.parent / "data" / "news_intern"
+        fs9 = sorted(nd9.glob("2*.jsonl"))
+        if fs9:
+            _tgt = _dt9.strptime(f"{day} {hhmm}", "%Y%m%d %H:%M")
+            for ln9 in fs9[-1].read_text(encoding="utf-8").splitlines():
+                try:
+                    r9 = _j9.loads(ln9)
+                    if str(r9.get("code")) != str(code):
+                        continue
+                    ts9 = _dt9.fromisoformat(str(r9.get("ts"))[:19])
+                    if (ts9 <= _tgt and _tgt - ts9 <= _td9(hours=3)
+                            and str(r9.get("stamp")) in ("위험", "악재")):
+                        _bad9 = r9
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    if _bad9:
+        _hm9 = str(_bad9.get("ts") or "")[11:16]
+        _g(4, "news", False,
+           f"그 시각 가격을 누르는 나쁜 뉴스가 살아 있었습니다 ({_hm9}): "
+           f"\"{str(_bad9.get('title'))[:44]}\" — 나쁜 뉴스가 살아있는 동안은 사지 않습니다.",
+           f"A danger story was ALIVE at that minute (stamped {_hm9}): "
+           f"\"{str(_bad9.get('title'))[:44]}\" — we do not buy while bad news is alive.",
+           link=_bad9.get("link"))
+    else:
+        _g(4, "news", True,
+           f"{hhmm} 기준 직전 3시간 안에 나쁜 뉴스가 없었습니다. 4관문 통과.",
+           f"No bad news in the 3 hours before {hhmm}. Gate 4 passed.")
+    # ⑤ the day's score + the best-five competition (daily, not per-minute)
+    try:
+        from services.checklist_reco import _ranking
+        _rw9 = (_ranking() or {}).get("rows") or []
+        _rk9 = next((i + 1 for i, x in enumerate(_rw9)
+                     if str(x.get("code")) == str(code)), None)
+        _sc9 = next((x.get("score") for x in _rw9
+                     if str(x.get("code")) == str(code)), None)
+    except Exception:
+        _rk9 = _sc9 = None
+    r["score"], r["rank"] = _sc9, _rk9
+    if r["stopped_at"] is None:
+        _g(5, "score", True,
+           (f"그 시각 4관문이 모두 열려 있었습니다 — 오늘 점수 {_sc9}점"
+            + (f"({_rk9}등)" if _rk9 else "") +
+            ". 그런데도 안 샀다면: 통과 종목 중 최고 5종목 경쟁에서 밀렸거나, "
+            "매수 신호(바닥 반등 확인)가 그 순간 켜지지 않았거나, 이미 보유/제안 중이었기 "
+            "때문입니다 — 신호가 켜지는 순간에만 팝업이 갑니다."),
+           (f"All 4 gates were open at that minute — today's score {_sc9} pts"
+            + (f" (rank {_rk9})" if _rk9 else "") +
+            ". If it still was not bought: it lost the best-five score race among the "
+            "passers, the entry signal (bottom-rebound confirmation) did not fire at "
+            "that moment, or it was already held / had a proposal out — the popup goes "
+            "only the moment the signal fires."))
+    return r
+
+
 @router.get("/whynot")
 def whynot(db: Session = Depends(get_db)):
     """WHY NOT BUYING YET — the proof menu (boss 2026-09-04 13:0x: "we have
