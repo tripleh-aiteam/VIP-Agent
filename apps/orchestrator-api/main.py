@@ -31,6 +31,7 @@ import redis.asyncio as aioredis
 
 from db.base import engine, Base, get_db
 from contracts.router import router as contracts_router
+from routers.news_impact import router as news_impact_router
 from routers.tasks import router as tasks_router
 from routers.callbacks import router as callbacks_router
 from routers.agents import router as agents_router
@@ -295,6 +296,7 @@ _uploads_root.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(_uploads_root)), name="static")
 
 # Register routers
+app.include_router(news_impact_router)
 app.include_router(tasks_router)
 app.include_router(callbacks_router)
 app.include_router(agents_router)
