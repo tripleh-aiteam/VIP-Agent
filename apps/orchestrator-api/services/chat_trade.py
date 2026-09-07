@@ -191,6 +191,12 @@ def is_status_q(transcript: Optional[str]) -> bool:
     # and answered 'no chatbot order on record' instead of selling (2026-09-02)
     if _CMD_EN.match(t) or _CMD_EN2.search(t):
         return False
+    # a TIME-EDIT or remove/hide order is never a status question — "this
+    # buying time to 10:26: … holding — not sold yet" matched 'not sold' from
+    # the pasted row and answered with the order record (2026-09-07)
+    if re.search(r"buying\s*time|selling\s*time|time\s*to\s*\d|시간을|시간\s*변경"
+                 r"|시간으로|remove|delete|삭제|지워|숨겨|hide", t):
+        return False
     # "did my naver sell order fill?" got an ML decision card (2026-09-01) —
     # any did/is + my/the + order phrasing is a record question
     if re.search(r"(?:did|is|has|have)\s+(?:my|the)\b.*\border\b"

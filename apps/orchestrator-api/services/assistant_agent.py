@@ -7539,7 +7539,12 @@ def _run_agent_impl(
                                # "I wanna buy skhynix right now" must make the order)
                                r"|\d+\s*shares?|please\s+(buy|sell)|(buy|sell)\s+\d"
                                r"|wanna\s+(buy|sell)|want\s+to\s+(buy|sell)"
-                               r"|사고\s*싶|팔고\s*싶|살래|팔래",
+                               r"|사고\s*싶|팔고\s*싶|살래|팔래"
+                               # time-EDIT orders belong to the trip editor, not
+                               # advice ("this buying time to 10:26: …" was
+                               # answered with a holding verdict, 2026-09-07)
+                               r"|buying\s*time|selling\s*time|time\s*to\s*\d"
+                               r"|시간을|시간\s*변경|시간으로|remove|delete|삭제|지워",
                                transcript, _re.IGNORECASE)):
         _adv = bool(_re.search(
             r"살까|살\s*까|살가|사까|사야|사도|매수|팔까|팔가|팔아야|매도|어때|어떄|추천"

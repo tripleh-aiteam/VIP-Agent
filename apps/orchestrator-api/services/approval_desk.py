@@ -1333,29 +1333,31 @@ def scan(db) -> dict:
             if st.get("asked", {}).get(code):
                 st.setdefault("why_skip", {})[code] = "already answered"
                 continue
-            # DRIVEN BY THE BOARD ITSELF (boss 2026-09-03 15:0x: "현대차 says BUY
-            # but the popup is not coming" - twice). Re-testing the gates here
-            # meant two code paths could disagree, and they did. The scan now
-            # asks the board for its OWN verdict: if the card says BUY, the
-            # popup is raised; if it does not, nothing is raised. One source.
+            # THE CASCADE IS THE ONE GATE LAW (boss 2026-09-07, the Samsung
+            # Biologics case: the proof menu said ALL gates passed but no
+            # popup came — the old brain gates, 1-year average and already-
+            # rising, were still required on top although the 09-04 three-
+            # gate order superseded them). The cascade decides WHERE we may
+            # buy; the lane is only recorded for the note. Falls back to the
+            # lane when the cascade cache is cold.
             _ln9 = _lane_of(code)
-            st.setdefault("why_skip", {})[code] = (
-                "lane=" + (_ln9 or "?") + (" -> popup" if _ln9 == "BUY" else ""))
-            if _ln9 != "BUY":
-                st.setdefault("streak", {})[code] = 0
-                continue
+            if _wn_pass9 is not None:
+                if str(code) not in _wn_pass9:
+                    st.setdefault("why_skip", {})[code] = "whynot cascade blocked — no popup"
+                    st.setdefault("streak", {})[code] = 0
+                    continue
+                st.setdefault("why_skip", {})[code] = "cascade passed"
+            else:
+                st.setdefault("why_skip", {})[code] = "lane=" + (_ln9 or "?")
+                if _ln9 != "BUY":
+                    st.setdefault("streak", {})[code] = 0
+                    continue
             # AND THE TURN MUST HAVE HAPPENED (boss 2026-09-07 10:4x - the
             # three holdings above). Gates say WHERE we may buy; the turn says
             # WHEN. Both, or no popup.
             _tok9, _tk9, _te9, _tt9 = turn_now(code, _board9)
             if not _tok9:
                 st.setdefault("why_skip", {})[code] = "no turn yet: " + _te9[:60]
-                st.setdefault("streak", {})[code] = 0
-                continue
-            # the proof menu's own cascade has the final word — no popup for
-            # a stock it marks blocked (boss 2026-09-07)
-            if _wn_pass9 is not None and str(code) not in _wn_pass9:
-                st.setdefault("why_skip", {})[code] = "whynot cascade blocked — no popup"
                 st.setdefault("streak", {})[code] = 0
                 continue
             try:
@@ -1526,56 +1528,128 @@ def _algo3_board(codes: list) -> dict:
 # popup. That trade-off is now reversed by his own instruction: the shape is a
 # REQUIREMENT, and a card without it says WAITING instead of BUY.
 #
-# No new law is written here. 알고3's dip door already IS his sentence - a fall
-# of 0.7% measured to now, sharp against the bar's own typical move, the price
-# within 1.5% of the trough, and the 3rd rising candle - so the desk asks the
-# engine instead of re-implementing it, exactly as it does for every other
-# verdict. Two conditions, both from him:
-#   · the engine is IN  → the fall stopped and the rise was confirmed
-#   · and it went in JUST NOW → we ask at the turn, never long after it
-#     (제1조, no late buy: an hour-old signal is a chase, not an entry)
-_TURN_MIN = 10.0        # minutes an entry signal stays fresh enough to ask about
+# No new law is written here either - every number below is 알고3's own dip door.
+# What changed after his 11:0x correction is only WHERE it is counted: on the
+# 1-minute candles, not on the engine's 5-tick bars. (The first version of this
+# asked the engine whether it held the stock; measured against his three cases
+# it agreed on two and missed HD현대중공업's 10:27 turn entirely, which is the
+# case he could see with his own eyes.)
+# THE COUNT IS DONE ON THE CHART HE READS (boss 2026-09-07 11:0x, correcting me
+# on HD현대중공업: "it should be 10:27, is it not?"). He was right and I was wrong -
+# I had measured the shallow 10:30 dip and missed the real one: the fall ran
+# 444,000 (09:55) → 435,000 (10:22), −2.03%, and the rises after that bottom are
+# 10:23 · 10:24 · [10:25, 10:26 flat] · 10:27 — the 3rd red stands at 10:27 and
+# THAT is where we buy, not 10:32 where the desk actually bought.
+#
+# So the turn is counted here, minute by minute, on the same 1-minute candles he
+# looks at - the engine's own door runs on 5-tick bars and answers a different
+# question at a different moment (it never entered HD현대중공업 at all today).
+# Every number below is 알고3's, unchanged: a 0.7% fall measured to NOW, a real
+# range (not a flat tape), sharp against the bar's own typical move, no more
+# than half the fall given back, the price within 1.5% of the bottom, and the
+# 3rd rising candle. A flat minute neither counts nor breaks the run; a blue
+# deeper than 0.2% resets it, exactly as the blues law does everywhere else.
+_TURN = {"win": 30, "drop": 0.7, "ups": 3, "soft": 0.2,
+         "chase": 1.5, "chop": 1.0, "sharp": 3.0, "recov": 0.5}
+_TURNC: dict = {}       # (code, minute) -> answer; the tape only moves once a minute
 
 
-def _turn_age(buy_t: str) -> float | None:
-    """Minutes since an engine entry stamped HH:MM(:SS), or None if unreadable."""
-    try:
-        _p = [int(x) for x in str(buy_t).strip().split(":")[:3]]
-        while len(_p) < 3:
-            _p.append(0)
-        _now = _hhmm() + ":00"
-        _q = [int(x) for x in _now.split(":")[:3]]
-        return ((_q[0] * 3600 + _q[1] * 60 + _q[2])
-                - (_p[0] * 3600 + _p[1] * 60 + _p[2])) / 60.0
-    except Exception:
-        return None
+def _turn_shape(code: str, bars: list | None = None) -> tuple:
+    """(ok, ko, en, at) — does the 3rd rise stand on the 1-minute tape right now?
+
+    `bars` lets the same shipped code be REPLAYED against any past minute - pass
+    the tape up to that minute and it answers as it would have answered then.
+    The send-time guard has been replayable this way since 09-04; a rule that
+    decides when we buy must be checkable against the day it decided."""
+    import statistics, time as _t
+    _live = bars is None                 # a replay must never read or write the memo
+    _key = (str(code), int(_t.time() // 20))
+    if _live and _key in _TURNC:
+        return _TURNC[_key]
+    if len(_TURNC) > 200:
+        _TURNC.clear()
+    d = _TURN
+    if bars is None:
+        try:
+            from services.kiwoom_tape import load as _ld, bars_time as _bt, _day as _dy
+            bars = _bt(_ld(str(code), _dy()), 60)
+        except Exception:
+            bars = []
+    w = bars[-d["win"]:] if bars else []
+    if len(w) < 8:
+        out = (False, "1분봉이 아직 충분하지 않습니다 — 신호를 셀 수 없습니다",
+               "not enough 1-minute tape yet to count the signal", None)
+        if _live:
+            _TURNC[_key] = out
+        return out
+    px = w[-1]["close"]
+    whi, wlo = max(b["high"] for b in w), min(b["low"] for b in w)
+    lows = [b["low"] for b in w]
+    ti = lows.index(min(lows))
+    trough, hi = w[ti]["low"], max(b["high"] for b in w[:ti + 1])
+    at = str(w[ti].get("hhmm") or "")[:5]
+    fall = (hi - px) / hi * 100 if hi else 0.0
+    diffs = [abs(w[k]["close"] - w[k - 1]["close"]) for k in range(1, len(w))]
+    typ = statistics.median(diffs) if diffs else 0.0
+
+    def _no(ko, en):
+        out = (False, ko, en, at)
+        if _live:
+            _TURNC[_key] = out
+        return out
+    if wlo and (whi - wlo) / wlo * 100 < d["chop"]:
+        return _no(f"움직임이 거의 없는 평평한 흐름입니다 (30분 폭 {(whi - wlo) / wlo * 100:.2f}%) — "
+                   f"내렸다 돌아서는 모양이 아니라 사지 않습니다",
+                   f"a flat tape - {(whi - wlo) / wlo * 100:.2f}% of range over 30 minutes; there is no "
+                   f"fall to stop and no turn to confirm, so we do not buy")
+    if fall < d["drop"]:
+        return _no(f"하락이 이미 회복됐습니다 — 고점 대비 {fall:.2f}%뿐이라 "
+                   f"살 만한 눌림이 아닙니다",
+                   f"the fall has already healed - only {fall:.2f}% below the high; "
+                   f"there is no dip left to buy")
+    if typ and (hi - px) < d["sharp"] * typ:
+        return _no("천천히 흘러내린 것이지 급락이 아닙니다 — 기다립니다",
+                   "a slow drift, not a sharp fall - we wait")
+    if trough and hi > trough and (px - trough) / (hi - trough) > d["recov"]:
+        return _no(f"반등이 이미 하락폭의 {(px - trough) / (hi - trough) * 100:.0f}%를 "
+                   f"되돌렸습니다 — 돌아서는 자리는 지났습니다",
+                   f"the bounce already took back {(px - trough) / (hi - trough) * 100:.0f}% of the fall - "
+                   f"the turn happened without us")
+    if trough and px > trough * (1 + d["chase"] / 100):
+        return _no(f"바닥({at} ₩{trough:,.0f})보다 {(px - trough) / trough * 100:+.2f}% 위입니다 — "
+                   f"추격 매수는 하지 않습니다 (제1조)",
+                   f"{(px - trough) / trough * 100:+.2f}% above the bottom (₩{trough:,.0f} at {at}) - "
+                   f"we do not chase (제1조)")
+    ups, prev, third = 0, w[ti]["close"], None
+    for b in w[ti + 1:]:
+        c = b["close"]
+        if c > prev:
+            ups += 1
+            if ups == d["ups"] and third is None:
+                third = str(b.get("hhmm") or "")[:5]
+        elif prev and (prev - c) / prev * 100 > d["soft"]:
+            ups, third = 0, None
+        prev = c
+    if ups < d["ups"]:
+        return _no(f"하락 {fall:.2f}%는 충분하지만 {at} 바닥 이후 양봉이 {ups}개뿐입니다 — "
+                   f"3번째 양봉이 서면 그때 삽니다",
+                   f"the fall of {fall:.2f}% is real, but only {ups} rising candle(s) since the "
+                   f"bottom at {at} - we buy when the 3rd one stands")
+    out = (True,
+           f"진입 신호 확인 — {at} 바닥 ₩{trough:,.0f}까지 {fall:.2f}% 하락한 뒤 하락이 멈췄고, "
+           f"{third}에 3번째 양봉이 섰습니다 (바닥 대비 {(px - trough) / trough * 100:+.2f}%)",
+           f"entry signal confirmed - a {fall:.2f}% fall into the bottom of ₩{trough:,.0f} at {at}, "
+           f"the fall stopped, and the 3rd rising candle stood at {third} "
+           f"({(px - trough) / trough * 100:+.2f}% off the bottom)",
+           third or at)
+    if _live:
+        _TURNC[_key] = out
+    return out
 
 
 def turn_now(code: str, board: dict | None = None) -> tuple:
-    """Has 알고3's own door just opened for this stock? (ok, ko, en, buy_t)."""
-    b = board if board is not None else _BOARD9
-    import time as _t
-    if not b or (_t.time() - float(b.get("t") or 0) > 15 and not b.get("hold")):
-        b = _algo3_board([c for c, _n, _s in desk_codes()])
-    h = (b.get("hold") or {}).get(str(code))
-    if not h:
-        return (False,
-                "아직 진입 신호가 없습니다 — 하락이 멈추고 3번째 양봉이 서야 삽니다",
-                "no entry signal yet - we buy only after the fall stops and the "
-                "3rd rising candle stands", None)
-    _bt = str(h.get("buy_t") or "")
-    _age = _turn_age(_bt)
-    if _age is not None and _age > _TURN_MIN:
-        return (False,
-                f"진입 신호는 {_bt[:5]}에 이미 지나갔습니다 ({_age:.0f}분 전) — "
-                f"지금 사면 늦은 추격 매수입니다. 다음 신호를 기다립니다",
-                f"the entry signal fired at {_bt[:5]}, {_age:.0f} min ago - buying "
-                f"now would be chasing a turn that has passed; we wait for the next one",
-                _bt[:5])
-    return (True,
-            f"진입 신호 확인 ({_bt[:5]}) — 하락이 멈추고 3번째 양봉이 섰습니다",
-            f"entry signal confirmed at {_bt[:5]} - the fall stopped and the 3rd "
-            f"rising candle stands", _bt[:5])
+    """Kept for its callers - the answer now comes from the 1-minute chart."""
+    return _turn_shape(code)
 
 
 def _algo3_view(code: str, name: str, board: dict | None = None) -> dict:
@@ -2520,9 +2594,17 @@ def _why_buy(code: str, name: str, hold: dict):
     # THE ENGINE'S OWN VIEW, STATED HONESTLY (boss 2026-09-03 14:3x). Menu 3 now
     # proposes on HIS gate set, which can be ready before 알고3's entry shape is;
     # rather than hide that, the popup says whether the engine has entered yet.
-    if bt:
+    # THE TURN, WITH ITS OWN NUMBERS (boss 2026-09-07 11:0x). The popup used to
+    # print the engine's entry clock here; it now prints the shape counted on
+    # the same 1-minute chart he checks - how far it fell, where the bottom
+    # was, and at which minute the 3rd rising candle stood.
+    _tok8, _tk8, _te8, _tt8 = turn_now(code)
+    if _tok8:
         # no engine names in the boss's reading (2026-09-04 09:1x: "remove the
         # word 알고3") — the SIGNAL is the reason, not who else took it
+        R.append("④ " + _tk8 + ". 급락 직후 매수 금지 규칙(제1조)도 통과했습니다.")
+        E.append("④ " + _te8 + ". The no-buy-right-after-a-crash rule also cleared.")
+    elif bt:
         R.append(f"④ 진입 신호 확인 ({bt}) — 하락이 멈추고 3번째 양봉이 섰습니다. 급락 직후 매수 금지 규칙(제1조)도 통과했습니다.")
         E.append(f"④ Entry signal confirmed ({bt}) — the fall stopped and the 3rd rising candle stood; the no-buy-right-after-a-crash rule also cleared.")
     else:

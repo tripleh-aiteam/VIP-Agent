@@ -734,7 +734,25 @@ def whynot(db: Session = Depends(get_db)):
             return res
         # no memory of today — fall through and RECONSTRUCT from the tape
     st = ad._load() or {}
-    held_codes = {str(h.get("code")) for h in st.get("held") or []}
+    # a lot the boss ERASED from the board must not mark its card HOLDING
+    # (boss 2026-09-07: "I have deleted them, so please change — they say
+    # holding but we are not holding"): the same eraser filter the feed
+    # applies rules here too, so the card returns to its normal gate verdict
+    _held_wn = [dict(h) for h in (st.get("held") or [])]
+    try:
+        # the feed applies time-overrides BEFORE the eraser, and the hide is
+        # recorded against the DISPLAYED clock — same order here, or a lot
+        # whose time was edited slips past the filter (HD현대중공업 10:32→10:26)
+        ad.apply_time_overrides(_held_wn, [])
+    except Exception:
+        pass
+    try:
+        from services.kiwoom_tape import _day as _kdwn
+        from services.trip_eraser import filter_m3_held
+        _held_wn = filter_m3_held(_held_wn, _kdwn())
+    except Exception:
+        pass
+    held_codes = {str(h.get("code")) for h in _held_wn}
     pend_codes = {str(p.get("code")) for p in st.get("pending") or []}
     # the same 20 the agent board watches
     stocks: list[tuple[str, str]] = []
@@ -1786,6 +1804,28 @@ def _brain_compute():
         _ourown = {h.get("code") for h in (_st9.get("held") or [])}
     except Exception:
         pass
+    # THE CASCADE OVERRIDES THE OLD GATES (boss 2026-09-07, the Samsung
+    # Biologics case: the proof menu said ALL gates passed while this board
+    # still said NOBUY on the pre-09-04 average/rising gates — and the popup
+    # follows the board). Where the whynot cascade has a verdict, it IS the
+    # verdict: pass or the cascade's own blocked reason. Cached rows only —
+    # the board never waits on a recompute.
+    try:
+        _wnrows9 = {str(x.get("code")): x
+                    for x in ((_WHYNOT9.get("v") or {}).get("rows") or [])}
+    except Exception:
+        _wnrows9 = {}
+    for e in out["six"] + out["universe"]:
+        _wr9 = _wnrows9.get(str(e.get("code")))
+        if not _wr9 or str(e.get("code")) in _own:
+            continue
+        if not _wr9.get("stopped_at") and not _wr9.get("held") and not _wr9.get("pending"):
+            e["pass"] = True
+            e["no_buy"] = e["no_buy_en"] = None
+        elif _wr9.get("stopped_at"):
+            e["pass"] = False
+            e["no_buy"] = _wr9.get("verdict_ko") or e.get("no_buy")
+            e["no_buy_en"] = _wr9.get("verdict_en") or e.get("no_buy_en")
     # THE BEST FIVE BY SCORE (boss 2026-09-04 18:2x: "if it passed the 4
     # gates it should not stop buying — out of the 14 beside the six fixed,
     # suggest the best 5 by score; if a score is low we do not take it and
