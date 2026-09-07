@@ -5090,35 +5090,62 @@ export default function LiveDeskPage() {
           </div>
           <table className="w-full text-[11.5px] tabular-nums">
             <thead><tr className="text-[10px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
-              <th className="text-right px-3 py-1">{t("잔량", "qty")}</th>
+              <th className="text-right px-3 py-1" style={{ color: BLUE }}>
+                {t("매도 잔량 (파는 사람)", "sellers waiting")}</th>
               <th className="text-center px-2">{t("호가", "price")}</th>
-              <th className="text-left px-3">{t("잔량", "qty")}</th>
+              <th className="text-left px-3" style={{ color: RED }}>
+                {t("매수 잔량 (사는 사람)", "buyers waiting")}</th>
             </tr></thead>
             <tbody>
+              <tr><td colSpan={3} className="px-3 pt-1 text-[9.5px] font-bold"
+                      style={{ color: BLUE }}>
+                {t("▲ 위쪽 = 파는 사람들이 기다리는 자리 (매도호가) — 위로 갈수록 비쌉니다",
+                   "▲ above = where sellers are waiting (asks) - dearer as it goes up")}</td></tr>
               {(book?.asks ?? []).slice().reverse().map(([p, q], i) => {
-                const sl = (lad?.slices || []).find((x) => Math.abs(x.px - p) < 0.5);
+                // ONE SLICE, ONE BLOCK. A price can exist on both sides at the
+                // same instant (삼성전자 sat locked at ₩268,500 while this was
+                // written), so a slice matched on price alone printed twice. The
+                // leg that deals now belongs to the side it trades INTO - a buy
+                // lifts an ask, a sell hits a bid - and the resting legs belong
+                // where they will actually wait.
+                const sl = (lad?.slices || []).find((x) => Math.abs(x.px - p) < 0.5
+                  && (ladSide === "BUY" ? x.kind === "market" : x.kind === "limit"));
+                // OUR slice sits in OUR column: a buy order of ours belongs among
+                // the buyers (right), a sell of ours among the sellers (left) -
+                // whatever price row it happens to stand on (boss 2026-09-07)
+                const mark = sl ? `🪜 ${sl.qty.toLocaleString()}${t("주", "sh")}${sl.kind === "market" ? t(" 지금 체결", " deals now") : ""}` : "";
+                const mine = ladSide === "BUY";
                 return (
                 <tr key={"a" + i} className="border-t border-[var(--border-default)]/30"
                     style={sl ? { background: "rgba(106,27,154,0.10)" } : undefined}>
-                  <td className="text-right px-3 py-[2px]" style={{ color: BLUE }}>{fmt(q)}</td>
+                  <td className="text-right px-3 py-[2px]" style={{ color: mark && !mine ? "#6a1b9a" : BLUE }}>
+                    {mark && !mine ? mark : fmt(q)}</td>
                   <td className="text-center px-2 font-bold" style={{ color: BLUE }}>
-                    ₩{fmt(p)}{p === book?.best_ask && <span className="text-[9px]"> {t("← 매수 체결", "← buy fills here")}</span>}
+                    ₩{fmt(p)}{p === book?.best_ask && <span className="text-[9px]"> {t("← 여기서 사면 바로 체결", "← buying here deals now")}</span>}
                   </td>
                   <td className="text-left px-3 text-[10px]" style={{ color: "#6a1b9a" }}>
-                    {sl ? `🪜 ${sl.qty.toLocaleString()}${t("주", "sh")}${sl.kind === "market" ? t(" 지금 체결", " deals now") : ""}` : ""}</td>
+                    {mark && mine ? mark : ""}</td>
                 </tr>);
               })}
+              <tr><td colSpan={3} className="px-3 pt-1 text-[9.5px] font-bold"
+                      style={{ color: RED }}>
+                {t("▼ 아래쪽 = 사는 사람들이 기다리는 자리 (매수호가) — 아래로 갈수록 쌉니다",
+                   "▼ below = where buyers are waiting (bids) - cheaper as it goes down")}</td></tr>
               {(book?.bids ?? []).map(([p, q], i) => {
-                const sl = (lad?.slices || []).find((x) => Math.abs(x.px - p) < 0.5);
+                const sl = (lad?.slices || []).find((x) => Math.abs(x.px - p) < 0.5
+                  && (ladSide === "SELL" ? x.kind === "market" : x.kind === "limit"));
+                const mark = sl ? `🪜 ${sl.qty.toLocaleString()}${t("주", "sh")}${sl.kind === "market" ? t(" 지금 체결", " deals now") : ""}` : "";
+                const mine = ladSide === "BUY";
                 return (
                 <tr key={"b" + i} className="border-t border-[var(--border-default)]/30"
                     style={sl ? { background: "rgba(106,27,154,0.10)" } : undefined}>
                   <td className="text-right px-3 text-[10px]" style={{ color: "#6a1b9a" }}>
-                    {sl ? `🪜 ${sl.qty.toLocaleString()}${t("주", "sh")}${sl.kind === "market" ? t(" 지금 체결", " deals now") : ""}` : ""}</td>
+                    {mark && !mine ? mark : ""}</td>
                   <td className="text-center px-2 font-bold" style={{ color: RED }}>
-                    ₩{fmt(p)}{p === book?.best_bid && <span className="text-[9px]"> {t("← 매도 체결", "← sell fills here")}</span>}
+                    ₩{fmt(p)}{p === book?.best_bid && <span className="text-[9px]"> {t("← 여기서 팔면 바로 체결", "← selling here deals now")}</span>}
                   </td>
-                  <td className="text-left px-3 py-[2px]" style={{ color: RED }}>{fmt(q)}</td>
+                  <td className="text-left px-3 py-[2px]" style={{ color: mark && mine ? "#6a1b9a" : RED }}>
+                    {mark && mine ? mark : fmt(q)}</td>
                 </tr>);
               })}
             </tbody>
