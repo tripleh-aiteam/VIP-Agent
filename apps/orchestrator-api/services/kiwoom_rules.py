@@ -386,18 +386,19 @@ def pos_story(code: str, px: float, day: str, bar: float = 35.0,
     if not px:
         return None
     parts = []
-    ko_l = ["📍 위치 (주·월·3·6개월) — 지금 가격이 각 기간의 최저~최고 사이 어디쯤인지 봅니다. "
-            "0% = 그 기간 제일 쌌던 값(가장 싼 자리), 100% = 제일 비쌌던 값(가장 비싼 자리)."]
-    en_l = ["📍 POSITION (week·month·3m·6m) — where today's price sits between each "
-            "window's lowest and highest. 0% = the cheapest that window ever was, "
-            "100% = the most expensive."]
-    # the % formula, stated once and then WORKED OUT on the 1-week line with
-    # the exact numbers (boss 2026-09-07: "start by showing 1 week — how you
-    # calculate, with the formula and the exact calculation")
-    ko_l.append("각 %의 계산법: (지금 가격 − 그 기간의 최저가) ÷ (그 기간의 최고가 − 그 기간의 최저가) × 100 "
-                "— 최저가·최고가는 모두 같은 기간 안의 값입니다.")
-    en_l.append("How each % is computed: (price now − that window's LOW) ÷ (that window's HIGH − "
-                "that window's LOW) × 100 — the high and the low both come from the same window.")
+    # THE ALL-DAYS PROOF LEADS (boss 2026-09-07: "you again started with the
+    # formula — if people are impatient they do not read our explanation that
+    # we are not using only min/max price"). The impatient reader must meet
+    # the 120-day analysis in the FIRST lines; the min/max arithmetic the
+    # rule uses follows underneath as the detail.
+    ko_l: list[str] = []
+    en_l: list[str] = []
+    rng_ko = ["📐 규칙이 쓰는 계산 (최저~최고 방식) — 각 %의 계산법: "
+              "(지금 가격 − 그 기간의 최저가) ÷ (그 기간의 최고가 − 그 기간의 최저가) × 100 "
+              "— 최저가·최고가는 모두 같은 기간 안의 값입니다."]
+    rng_en = ["📐 The ruler the rule uses (range method) — how each % is computed: "
+              "(price now − that window's LOW) ÷ (that window's HIGH − that window's LOW) "
+              "× 100 — the high and the low both come from the same window."]
     for k, nk, ne in (("w", "1주일", "1 week"), ("m", "1개월", "1 month"),
                       ("q", "3개월", "3 months"), ("h", "6개월", "6 months")):
         lo, hi = hz.get(k + "_low"), hz.get(k + "_hi")
@@ -407,43 +408,45 @@ def pos_story(code: str, px: float, day: str, bar: float = 35.0,
             tag_k = "싼 자리" if v < 35 else "중간" if v < 65 else "비싼 자리"
             tag_e = "cheap" if v < 35 else "middle" if v < 65 else "expensive"
             if k == "w":
-                ko_l.append(f"· {nk}: 최저 ₩{lo:,.0f} ~ 최고 ₩{hi:,.0f} → 계산: "
-                            f"(₩{px:,.0f} − ₩{lo:,.0f}) ÷ (₩{hi:,.0f} − ₩{lo:,.0f}) × 100 "
-                            f"= ₩{px - lo:,.0f} ÷ ₩{hi - lo:,.0f} × 100 = {v:.0f}% ({tag_k})")
-                en_l.append(f"· {ne}: low ₩{lo:,.0f} ~ high ₩{hi:,.0f} → worked out: "
-                            f"(₩{px:,.0f} − ₩{lo:,.0f}) ÷ (₩{hi:,.0f} − ₩{lo:,.0f}) × 100 "
-                            f"= ₩{px - lo:,.0f} ÷ ₩{hi - lo:,.0f} × 100 = {v:.0f}% ({tag_e})")
+                rng_ko.append(f"· {nk}: 최저 ₩{lo:,.0f} ~ 최고 ₩{hi:,.0f} → 계산: "
+                              f"(₩{px:,.0f} − ₩{lo:,.0f}) ÷ (₩{hi:,.0f} − ₩{lo:,.0f}) × 100 "
+                              f"= ₩{px - lo:,.0f} ÷ ₩{hi - lo:,.0f} × 100 = {v:.0f}% ({tag_k})")
+                rng_en.append(f"· {ne}: low ₩{lo:,.0f} ~ high ₩{hi:,.0f} → worked out: "
+                              f"(₩{px:,.0f} − ₩{lo:,.0f}) ÷ (₩{hi:,.0f} − ₩{lo:,.0f}) × 100 "
+                              f"= ₩{px - lo:,.0f} ÷ ₩{hi - lo:,.0f} × 100 = {v:.0f}% ({tag_e})")
             else:
-                ko_l.append(f"· {nk}: 최저 ₩{lo:,.0f} ~ 최고 ₩{hi:,.0f} → 같은 계산으로 "
-                            f"지금 ₩{px:,.0f}는 {v:.0f}% 지점 ({tag_k})")
-                en_l.append(f"· {ne}: low ₩{lo:,.0f} ~ high ₩{hi:,.0f} → same formula: "
-                            f"now ₩{px:,.0f} sits at {v:.0f}% ({tag_e})")
+                rng_ko.append(f"· {nk}: 최저 ₩{lo:,.0f} ~ 최고 ₩{hi:,.0f} → 같은 계산으로 "
+                              f"지금 ₩{px:,.0f}는 {v:.0f}% 지점 ({tag_k})")
+                rng_en.append(f"· {ne}: low ₩{lo:,.0f} ~ high ₩{hi:,.0f} → same formula: "
+                              f"now ₩{px:,.0f} sits at {v:.0f}% ({tag_e})")
     if not parts:
         return None
     blend = sum(parts) / len(parts)
     ok = blend <= bar
     ssum = " + ".join(f"{x:.0f}" for x in parts)
     # one decimal on the blend, so "35.5% > 35%" never reads as "35 > 35"
-    ko_l.append(f"공식: 네 기간의 평균 = ({ssum}) ÷ {len(parts)} = {blend:.1f}%")
-    en_l.append(f"Formula: the average of the four = ({ssum}) ÷ {len(parts)} = {blend:.1f}%")
+    rng_ko.append(f"네 기간의 평균 = ({ssum}) ÷ {len(parts)} = {blend:.1f}%")
+    rng_en.append(f"The average of the four = ({ssum}) ÷ {len(parts)} = {blend:.1f}%")
+    rule_ko: list[str] = []
+    rule_en: list[str] = []
     if context == "hold":
-        ko_l.append(f"→ 지금 평균 {blend:.1f}% 지점입니다 (낮을수록 싼 자리). "
-                    f"보유 중의 매도는 이 위치가 아니라 -1% 규칙이 결정합니다.")
-        en_l.append(f"→ It sits at an average {blend:.1f}% (lower = cheaper). While "
-                    f"holding, the SELL is decided by the -1% rule, not this position.")
+        rule_ko.append(f"→ 지금 평균 {blend:.1f}% 지점입니다 (낮을수록 싼 자리). "
+                       f"보유 중의 매도는 이 위치가 아니라 -1% 규칙이 결정합니다.")
+        rule_en.append(f"→ It sits at an average {blend:.1f}% (lower = cheaper). While "
+                       f"holding, the SELL is decided by the -1% rule, not this position.")
     elif ok:
-        ko_l.append(f"규칙: 평균이 {bar:.0f}% 이하(아래쪽 싼 자리)일 때만 삽니다 → "
-                    f"{blend:.1f}% ≤ {bar:.0f}% ✔ 살 수 있는 자리입니다.")
-        en_l.append(f"Rule: we buy only when the average is {bar:.0f}% or less (the cheap "
-                    f"bottom side) → {blend:.1f}% ≤ {bar:.0f}% ✔ a place we can buy.")
+        rule_ko.append(f"⚖ 규칙: 평균이 {bar:.0f}% 이하(아래쪽 싼 자리)일 때만 삽니다 → "
+                       f"{blend:.1f}% ≤ {bar:.0f}% ✔ 살 수 있는 자리입니다.")
+        rule_en.append(f"⚖ Rule: we buy only when the average is {bar:.0f}% or less (the cheap "
+                       f"bottom side) → {blend:.1f}% ≤ {bar:.0f}% ✔ a place we can buy.")
     else:
-        ko_l.append(f"규칙: 평균이 {bar:.0f}% 이하(아래쪽 싼 자리)일 때만 삽니다 → "
-                    f"{blend:.1f}% > {bar:.0f}% ✘ 아직 비싼 자리라 사지 않습니다. "
-                    f"평균이 {bar:.0f}% 아래로 내려오면 다시 삽니다.")
-        en_l.append(f"Rule: we buy only when the average is {bar:.0f}% or less (the cheap "
-                    f"bottom side) → {blend:.1f}% > {bar:.0f}% ✘ still too expensive, so "
-                    f"we do not buy. It becomes buyable when the average comes under "
-                    f"{bar:.0f}%.")
+        rule_ko.append(f"⚖ 규칙: 평균이 {bar:.0f}% 이하(아래쪽 싼 자리)일 때만 삽니다 → "
+                       f"{blend:.1f}% > {bar:.0f}% ✘ 아직 비싼 자리라 사지 않습니다. "
+                       f"평균이 {bar:.0f}% 아래로 내려오면 다시 삽니다.")
+        rule_en.append(f"⚖ Rule: we buy only when the average is {bar:.0f}% or less (the cheap "
+                       f"bottom side) → {blend:.1f}% > {bar:.0f}% ✘ still too expensive, so "
+                       f"we do not buy. It becomes buyable when the average comes under "
+                       f"{bar:.0f}%.")
     # 📊 COUNTED AGAINST EVERY DAY (boss 2026-09-07: "show that we are not
     # caring only 3 numbers, and that our work is helping"): the range
     # formula above reads two days per window; this reads them ALL, and the
@@ -524,16 +527,24 @@ def pos_story(code: str, px: float, day: str, bar: float = 35.0,
             _agree = abs(weighted - blend) <= 7.0
             ko_l.append(f"→ 전체 분석 {weighted:.0f}% · 규칙이 쓰는 최저~최고 방식 {blend:.1f}% — "
                         + ("두 방식이 같은 답을 줍니다 (판정 신뢰 ↑)." if _agree else
-                           "두 방식이 다릅니다 — 최고·최저가 한두 날의 극단값에 끌려간 자리입니다.")
-                        + " 판정은 아래 규칙대로 합니다.")
+                           "두 방식이 다릅니다 — 최고·최저가 한두 날의 극단값에 끌려간 자리입니다."))
             en_l.append(f"→ whole-read {weighted:.0f}% vs the range method the rule uses "
                         f"{blend:.1f}% — "
                         + ("both agree, so the verdict is solid." if _agree else
                            "they disagree, which means the high/low is being pulled by one or "
-                           "two extreme days.")
-                        + " The verdict below follows the rule.")
+                           "two extreme days."))
     except Exception:
         dist = None
+    if not ko_l:
+        # no all-days data — the range detail becomes the opening
+        ko_l.append("📍 위치 — 지금 가격이 각 기간의 최저~최고 사이 어디쯤인지 봅니다 "
+                    "(0% = 가장 싼 자리, 100% = 가장 비싼 자리).")
+        en_l.append("📍 POSITION — where today's price sits between each window's lowest "
+                    "and highest (0% = cheapest, 100% = most expensive).")
+    # ORDER (boss 2026-09-07): the all-days proof above, THEN the rule's own
+    # range arithmetic, then the verdict, then why the bar is 35.
+    ko_l += rng_ko + rule_ko
+    en_l += rng_en + rule_en
     if context != "hold" and abs(bar - 35.0) < 0.01:
         # WHY 35 (boss 2026-09-07: "why are we taking 35? It should have a
         # reason — like 35 was the best winning % among the others"): the
