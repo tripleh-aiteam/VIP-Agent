@@ -448,7 +448,22 @@ def gate_chart(code: str, tf: int = 1):
         # gate 1: has price come back to yesterday's last price?
         out["g1_back"] = bool(ref and any((b.get("l") or 1e18) <= ref for b in bars))
         # gate 2: are we at or under the week's low?
-        out["g2_ok"] = bool(out.get("low5") and px and px <= out["low5"])
+        # the chart's gate-2 verdict follows the blend too, so the line he
+        # sees drawn and the verdict printed under it tell one story
+        _hzc = {}
+        try:
+            from services.kiwoom_rules import _hz_stats as _hzcf
+            _hzc = _hzcf(code, day) or {}
+        except Exception:
+            _hzc = {}
+        _pc9 = []
+        for _k in ("w", "m", "q", "h"):
+            _lo, _hi = _hzc.get(_k + "_low"), _hzc.get(_k + "_hi")
+            if px and _lo and _hi and _hi > _lo:
+                _pc9.append(max(0.0, min(100.0, (px - _lo) / (_hi - _lo) * 100)))
+        out["pos_blend"] = round(sum(_pc9) / len(_pc9), 1) if _pc9 else None
+        out["g2_ok"] = bool(out.get("pos_blend") is not None
+                            and out["pos_blend"] <= 35.0)
         # gate 3: the pace
         avg5 = _vol5(code, day)
         cum = sum(float(b.get("v") or 0) for b in bars)
@@ -545,32 +560,45 @@ def whynot_at(code: str, hhmm: str, name: str = "") -> dict | None:
            f"{(gap if gap is not None else 0):+.2f}%). 1관문 통과.",
            f"No gap-up at the open ({W9(op)}, {(gap if gap is not None else 0):+.2f}% vs "
            f"yesterday's close {W9(yc)}). Gate 1 passed.")
-    # ② 주간 포지션 at that minute's price
-    low5 = None
+    # ② POSITION at that minute — the SAME blended formula (boss 2026-09-07:
+    # "have you implemented these formula to all cases, all places including
+    # chatbot?"). This helper answers "what were the gates at 10:23", and the
+    # chatbot reads it, so it must judge by the rule the desk actually applies.
+    _bl9 = None
+    _pk9, _pe9 = [], []
     try:
-        from services.kiwoom_rules import _daily20
-        low5 = float(_daily20(code, day)[2] or 0) or None
+        from services.kiwoom_rules import _hz_stats as _hz9f
+        _hzm = _hz9f(code, day) or {}
+        _ps9 = []
+        for _k, _nk, _ne in (("w", "주", "week"), ("m", "월", "month"),
+                             ("q", "3개월", "3mth"), ("h", "6개월", "6mth")):
+            _lo, _hi = _hzm.get(_k + "_low"), _hzm.get(_k + "_hi")
+            if px and _lo and _hi and _hi > _lo:
+                _v = max(0.0, min(100.0, (px - _lo) / (_hi - _lo) * 100))
+                _ps9.append(_v)
+                _pk9.append(f"{_nk} {_v:.0f}%")
+                _pe9.append(f"{_ne} {_v:.0f}%")
+        if _ps9:
+            _bl9 = sum(_ps9) / len(_ps9)
     except Exception:
         pass
-    if low5 and px:
-        _dp = round((px / low5 - 1) * 100, 2)
-        if px <= low5 * 1.002:
-            _g(2, "position", True,
-               f"주간 포지션 — {hhmm}의 {W9(px)}는 지난 1주 최저 종가 ₩{low5:,.0f} "
-               f"부근/아래였습니다 ({_dp:+.2f}%). 2관문 통과.",
-               f"Weekly position — at {hhmm} the price {W9(px)} sat at or under the past "
-               f"week's lowest close (₩{low5:,.0f}, {_dp:+.2f}%). Gate 2 passed.")
-        else:
-            _g(2, "position", False,
-               f"주간 포지션이 높았습니다 — 지난 1주 최저 종가 ₩{low5:,.0f}, {hhmm}의 가격 "
-               f"{W9(px)} ({_dp:+.2f}% 위). 우리는 주간 저점 부근/아래에서만 삽니다 — "
-               f"그 시각은 살 자리가 아니었습니다.",
-               f"The weekly POSITION was high — the past week's lowest close was "
-               f"₩{low5:,.0f} and at {hhmm} the price sat {W9(px)} ({_dp:+.2f}% above). "
-               f"We buy only at or under the week's low — not a buying place at that minute.")
+    if _bl9 is None:
+        _g(2, "position", True, "위치 자료 없음 — 막는 근거 없음. 2관문 통과.",
+           "No position data — nothing blocking. Gate 2 passed.")
+    elif _bl9 <= 35.0:
+        _g(2, "position", True,
+           f"위치 — {hhmm} {W9(px)} 기준 {' · '.join(_pk9)} → 네 구간 평균 "
+           f"{_bl9:.0f}% (35% 이하). 2관문 통과.",
+           f"Position — at {hhmm}, {W9(px)}: {' · '.join(_pe9)} → averaging "
+           f"{_bl9:.0f}% across the four windows (35% or less). Gate 2 passed.")
     else:
-        _g(2, "position", True, "주간 저점 자료 없음 — 막는 근거 없음. 2관문 통과.",
-           "No week-low data — nothing blocking. Gate 2 passed.")
+        _g(2, "position", False,
+           f"위치가 높았습니다 — {hhmm} {W9(px)} 기준 {' · '.join(_pk9)} → 네 구간 "
+           f"평균 {_bl9:.0f}%. 35% 이하일 때만 삽니다 — 그 시각은 살 자리가 "
+           f"아니었습니다.",
+           f"The POSITION was high — at {hhmm}, {W9(px)}: {' · '.join(_pe9)} → "
+           f"averaging {_bl9:.0f}%. We buy only at 35% or less — not a buying "
+           f"place at that minute.")
     # ③ 거래량 PACE by that minute (cumulative vs a normal day by that hour)
     try:
         from services.kiwoom_rules import _vol5
