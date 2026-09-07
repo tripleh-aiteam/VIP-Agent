@@ -390,6 +390,21 @@ def pos_story(code: str, px: float, day: str, bar: float = 35.0,
                     f"bottom side) → {blend:.1f}% > {bar:.0f}% ✘ still too expensive, so "
                     f"we do not buy. It becomes buyable when the average comes under "
                     f"{bar:.0f}%.")
+    if context != "hold" and abs(bar - 35.0) < 0.01:
+        # WHY 35 (boss 2026-09-07: "why are we taking 35? It should have a
+        # reason — like 35 was the best winning % among the others"): the
+        # deployed sweep, measured over all 22 stored sessions (09-04 court)
+        ko_l.append("왜 35%인가 — 저장된 22일 전체에서 기준선을 바꿔가며 측정했습니다: "
+                    "20% 이하 = 7건 · 승률 86% · +1.45% / 25% = 16건 · 75% · +4.66% / "
+                    "30% = 19건 · 74% · +7.09% / 35% = 22건 · 77% · +8.89% ★ / "
+                    "40~60% = 24건 · 71% · +6.30%. 수익이 35%까지 꾸준히 오르다 그 위에서 "
+                    "꺾입니다 — 가장 많이 벌면서 최악 손실은 같았던 기준이라 35%를 씁니다.")
+        en_l.append("WHY 35% — we swept the bar over all 22 stored sessions: "
+                    "≤20% = 7 trades · 86% win · +1.45% / 25% = 16 · 75% · +4.66% / "
+                    "30% = 19 · 74% · +7.09% / 35% = 22 · 77% · +8.89% ★ / "
+                    "40–60% = 24 · 71% · +6.30%. Profit climbs steadily to 35% and rolls "
+                    "over above it — the bar that earned the most with the same worst "
+                    "trade, so 35% is the rule.")
     return {"ko": "\n".join(ko_l), "en": "\n".join(en_l),
             "blend": round(blend, 1), "ok": ok, "parts": [round(p) for p in parts]}
 
