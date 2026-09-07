@@ -1403,6 +1403,20 @@ def scan(db) -> dict:
             _qko, _qen = _why_qty(_bp, _bq)
             reasons.append("💰 왜 이 가격인가 — " + _pko)
             reasons_en.append("💰 WHY THIS PRICE — " + _pen)
+            # THE LADDER IS SHOWN BEFORE HE CLICKS (boss 2026-09-07: "20% with
+            # this price and another 20% another like this"), so the popup he
+            # approves is the order that actually goes out.
+            try:
+                _lad9 = book_ladder(code, "BUY", _bp, int(_bq))
+                if len(_lad9) > 1:
+                    _lk9, _le9 = ladder_words(_lad9, "BUY")
+                    reasons.append("🪜 주문을 나눠서 — " + _lk9)
+                    reasons_en.append("🪜 SPLIT INTO SLICES — " + _le9)
+                    _sg_lad9 = _lad9
+                else:
+                    _sg_lad9 = None
+            except Exception:
+                _sg_lad9 = None
             reasons.append("🔢 왜 이 수량인가 — " + _qko)
             reasons_en.append("🔢 WHY THIS QUANTITY — " + _qen)
 
@@ -1457,6 +1471,9 @@ def scan(db) -> dict:
             # checked against Kiwoom at that exact minute
             _sg9["guard"] = _vs9
             _sg9['algo_t'] = _algo_t
+            if _sg_lad9:
+                _sg9["ladder"] = [{k: r[k] for k in ("px", "qty", "kind")}
+                                  for r in _sg_lad9]
         except Exception as e:
             log.warning(f"approval scan {code}: {str(e)[:80]}")
 
@@ -2047,6 +2064,67 @@ def _working_order(db, code: str) -> bool:
         return bool(row)
     except Exception:
         return False
+
+
+LADDER_N = 5            # five slices of 20% (boss 2026-09-07)
+LADDER_STEP = 1         # one tick better per slice
+
+
+def book_ladder(code: str, side: str, fallback: float, qty: int,
+                slices: int = LADDER_N) -> list[dict]:
+    """ONE ORDER BECOMES A LADDER (boss 2026-09-07: "we are selling all with one
+    price. How about 20% with this price and another 20% another like this").
+
+    The first slice keeps his standing law - one tick in front of the biggest
+    wall - and goes out at MARKET, so a decision always executes: a sell that
+    must leave gets out, a buy that must get in gets in. The remaining slices
+    rest one tick better each, so a move in our favour is harvested instead of
+    given away at a single price.
+
+        SELL 100 sh, wall price ₩86,300, tick ₩100
+          20 sh market (fills now)         ← the guaranteed leg
+          20 sh limit ₩86,400
+          20 sh limit ₩86,500
+          20 sh limit ₩86,600
+          20 sh limit ₩86,700
+
+    A BUY steps the other way (cheaper each slice). Rounding rides on the first
+    slice, so the guaranteed leg is never the short one. Below `slices` shares,
+    or with no book, there is no ladder - one order, as before."""
+    qty = int(qty or 0)
+    base, ko, en = _book_price(code, side, fallback)
+    if qty < max(2, slices) or not base:
+        return [{"px": base, "qty": qty, "kind": "market", "ko": ko, "en": en}]
+    from services.kiwoom_rules import krx_tick
+    tk = krx_tick(base) or 1
+    each = qty // slices
+    first = qty - each * (slices - 1)          # the remainder rides the sure leg
+    out = [{"px": base, "qty": first, "kind": "market", "ko": ko, "en": en}]
+    for i in range(1, slices):
+        px = base + (tk * LADDER_STEP * i if side == "SELL" else -tk * LADDER_STEP * i)
+        if px <= 0:
+            break
+        out.append({"px": float(px), "qty": each, "kind": "limit",
+                    "ko": (f"{i + 1}번째 {each:,}주 — {'한 호가 위' if side == 'SELL' else '한 호가 아래'}"
+                           f" ₩{px:,.0f}에 걸어둡니다."),
+                    "en": (f"slice {i + 1}, {each:,} sh resting at ₩{px:,.0f} "
+                           f"({'one tick higher' if side == 'SELL' else 'one tick lower'})")})
+    return out
+
+
+def ladder_words(rows: list[dict], side: str) -> tuple:
+    """The ladder as one sentence a person can check against the book."""
+    if len(rows) < 2:
+        return rows[0].get("ko", ""), rows[0].get("en", "")
+    _k = " · ".join(f"{r['qty']:,}주 " + ("시장가" if r["kind"] == "market" else f"₩{r['px']:,.0f}")
+                    for r in rows)
+    _e = " · ".join(f"{r['qty']:,}sh " + ("at market" if r["kind"] == "market" else f"₩{r['px']:,.0f}")
+                    for r in rows)
+    return (f"{'매도' if side == 'SELL' else '매수'}를 {len(rows)}조각으로 나눕니다 — {_k}. "
+            f"첫 조각은 반드시 체결되게 시장가로 나가고, 나머지는 한 호가씩 유리한 자리에서 기다립니다.",
+            f"the {'sell' if side == 'SELL' else 'buy'} goes out in {len(rows)} slices - {_e}. "
+            f"The first leg is a market order so the decision always executes; "
+            f"the rest wait one tick better each.")
 
 
 def _book_price(code: str, side: str, fallback: float):
@@ -2895,7 +2973,56 @@ def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
              edited=bool((qty and int(qty) != int(p["qty"]))
                          or (price and float(price) != float(p.get("price") or 0))))
     from services.paper_desk import place_order
-    if _px:
+    # ── THE LADDER (boss 2026-09-07) ────────────────────────────────────────
+    # His own price is never overridden: if he edited the number, that single
+    # limit is what goes out. A STOP is never laddered either - an exit that
+    # must complete leaves in one market order, whole. Everything else goes out
+    # as five slices, the first at market so the decision always executes.
+    _urgent = bool(p.get("urgent") or p.get("via") == "stop"
+                   or any("손절" in str(x) or "-1%" in str(x)
+                          for x in (p.get("reasons") or [])[:3]))
+    _rows = None
+    if not _px and not _urgent and _q >= LADDER_N:
+        try:
+            _rows = book_ladder(p["code"], p["side"], float(p.get("price") or 0), _q)
+        except Exception:
+            _rows = None
+    if _rows and len(_rows) > 1:
+        _placed, _filled, _cost, _oids = [], 0, 0.0, []
+        for _r in _rows:
+            if _r["kind"] == "market":
+                _o = place_order(db, p["code"], p["side"], int(_r["qty"]),
+                                 order_type="market", source="semi", direct=True)
+            else:
+                _o = place_order(db, p["code"], p["side"], int(_r["qty"]),
+                                 order_type="limit", limit_price=float(_r["px"]),
+                                 source="semi", direct=True)
+            _ok9 = bool(_o.get("ok"))
+            _f9 = _o.get("fill_price")
+            if _ok9 and _f9:
+                _filled += int(_r["qty"])
+                _cost += float(_f9) * int(_r["qty"])
+            if _ok9:
+                _oids.append(_o.get("id") or _o.get("order_id"))
+            _placed.append({**{k: _r[k] for k in ("px", "qty", "kind")},
+                            "ok": _ok9, "fill": _f9,
+                            "oid": _o.get("id") or _o.get("order_id"),
+                            "error": None if _ok9 else (_o.get("error") or "")[:60]})
+        if not any(x["ok"] for x in _placed):
+            st.setdefault("pending", []).append(p)
+            _save(st)
+            return {"ok": False,
+                    "error": (_placed[0].get("error") if _placed else "order failed")}
+        p["slices"] = _placed
+        p["oids"] = [o for o in _oids if o]
+        # the decision's own numbers are what actually filled right now; the
+        # resting slices join later through _reconcile_fills
+        res = {"ok": True, "fill_price": (_cost / _filled) if _filled else None,
+               "status": ("FILLED" if _filled else "OPEN"),
+               "id": p["oids"][0] if p["oids"] else None}
+        _q = _filled or _q
+        p = dict(p, qty=_q)
+    elif _px:
         res = place_order(db, p["code"], p["side"], _q, order_type="limit",
                           limit_price=_px, source="semi", direct=True)
     else:
@@ -2928,10 +3055,23 @@ def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
                 _trip = {"buy_at": _lot.get("at"), "buy_price": _bp,
                          "pnl_pct": round((fill / _bp - 1) * 100, 2),
                          "pnl_won": round((fill - _bp) * int(p["qty"]))}
-            st["held"] = [h for h in st.get("held") or [] if h["code"] != p["code"]]
-            # flat again - this stock may be offered once more (his rule: we do
-            # not buy before selling, so the next question waits for the sale)
-            st.setdefault("asked", {}).pop(p["code"], None)
+            # A LADDER SELLS A PIECE AT A TIME (boss 2026-09-07). Removing the
+            # whole holding because the first slice filled would erase shares we
+            # still own - the position shrinks by what actually sold, and only
+            # an empty one leaves the book.
+            if _lot and (p.get("slices") or []):
+                _left9 = int(_lot.get("qty") or 0) - int(p["qty"])
+                if _left9 > 0:
+                    _lot["qty"] = _left9
+                else:
+                    st["held"] = [h for h in st.get("held") or []
+                                  if h["code"] != p["code"]]
+                    st.setdefault("asked", {}).pop(p["code"], None)
+            else:
+                st["held"] = [h for h in st.get("held") or [] if h["code"] != p["code"]]
+                # flat again - this stock may be offered once more (his rule: we
+                # do not buy before selling, so the next question waits for the sale)
+                st.setdefault("asked", {}).pop(p["code"], None)
     st.setdefault("asked", {})[p["code"]] = time.time()
     st.setdefault("log", []).append({**p, **_trip, "decision": "승인", "at": _hhmm(),
                                      "dealt": (not queued),
@@ -2945,10 +3085,70 @@ def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
     return {"ok": True, "decision": "approved", "fill": fill}
 
 
+def _reconcile_slices(db, st, rows: list[dict]) -> None:
+    """Every resting slice of a laddered decision, checked one by one.
+
+    A slice that fills adds its own shares to the position (BUY) or closes that
+    much of it (SELL); the row's price becomes the weighted average of what has
+    actually filled, so the history shows the price we really got rather than
+    the first leg's."""
+    from sqlalchemy import text as _sqt
+    for l in rows:
+        _sl = l.get("slices") or []
+        _changed = False
+        for _s in _sl:
+            if _s.get("settled") or not _s.get("oid") or _s.get("fill"):
+                continue
+            row = db.execute(_sqt(
+                "SELECT status, fill_price, "
+                "to_char(filled_at AT TIME ZONE 'Asia/Seoul','HH24:MI') "
+                "FROM paper_desk_orders WHERE id=:i"), {"i": _s["oid"]}).fetchone()
+            if not row:
+                continue
+            if str(row[0]) == "FILLED" and row[1]:
+                _s["fill"], _s["settled"], _s["at"] = float(row[1]), True, (row[2] or _hhmm())
+                _changed = True
+                if l.get("side") == "BUY":
+                    _add_lot(st, l["code"], l["name"], int(_s["qty"]),
+                             float(row[1]), l.get("hhmm"), _s["at"])
+                else:
+                    _lot = next((h for h in st.get("held") or []
+                                 if h["code"] == l["code"]), None)
+                    if _lot:
+                        _left = int(_lot.get("qty") or 0) - int(_s["qty"])
+                        if _left > 0:
+                            _lot["qty"] = _left
+                        else:
+                            st["held"] = [h for h in st.get("held") or []
+                                          if h["code"] != l["code"]]
+            elif str(row[0]) in ("CANCELLED", "REJECTED"):
+                _s["settled"], _s["gave_up"] = True, True
+                _changed = True
+        if not _changed:
+            continue
+        _got = [(int(x["qty"]), float(x["fill"])) for x in _sl if x.get("fill")]
+        if _got:
+            _q = sum(q for q, _p in _got)
+            l["fill"] = round(sum(q * p for q, p in _got) / _q, 2)
+            l["qty"] = _q
+            l["dealt"] = True
+        l["slices_left"] = sum(1 for x in _sl if not x.get("settled") and not x.get("fill"))
+
+
 def _reconcile_fills(db, st) -> None:
     """A 승인-but-미체결 limit that later fills flips to 체결 and joins holdings."""
     open_logs = [l for l in st.get("log") or []
                  if l.get("decision") == "승인" and l.get("dealt") is False and l.get("oid")]
+    # A LADDERED DECISION HAS FIVE ORDERS, NOT ONE (boss 2026-09-07). Each slice
+    # that later fills has to reach the holdings on its own; a row is only
+    # finished when every slice of it is settled.
+    _lad = [l for l in st.get("log") or []
+            if l.get("decision") == "승인" and (l.get("slices") or [])]
+    if _lad:
+        try:
+            _reconcile_slices(db, st, _lad)
+        except Exception as e:
+            print(f"[approval] slice reconcile skipped: {str(e)[:80]}")
     if not open_logs:
         return
     try:
