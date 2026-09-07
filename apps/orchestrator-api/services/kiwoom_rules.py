@@ -393,12 +393,14 @@ def pos_story(code: str, px: float, day: str, bar: float = 35.0,
     # rule uses follows underneath as the detail.
     ko_l: list[str] = []
     en_l: list[str] = []
-    rng_ko = ["📐 규칙이 쓰는 계산 (최저~최고 방식) — 각 %의 계산법: "
+    rng_ko = ["📐 규칙이 판정에 쓰는 계산 (최저~최고 방식) — 위 전체 분석은 '무엇이 사실인가'를 "
+              "보여주고, 매수/보류 판정은 아래 계산으로 내립니다. 각 %의 계산법: "
               "(지금 가격 − 그 기간의 최저가) ÷ (그 기간의 최고가 − 그 기간의 최저가) × 100 "
               "— 최저가·최고가는 모두 같은 기간 안의 값입니다."]
-    rng_en = ["📐 The ruler the rule uses (range method) — how each % is computed: "
-              "(price now − that window's LOW) ÷ (that window's HIGH − that window's LOW) "
-              "× 100 — the high and the low both come from the same window."]
+    rng_en = ["📐 The ruler the rule DECIDES with (range method) — the whole read above shows "
+              "what is true; the buy/wait verdict is taken with the calculation below. "
+              "How each % is computed: (price now − that window's LOW) ÷ (that window's HIGH "
+              "− that window's LOW) × 100 — the high and the low both come from the same window."]
     for k, nk, ne in (("w", "1주일", "1 week"), ("m", "1개월", "1 month"),
                       ("q", "3개월", "3 months"), ("h", "6개월", "6 months")):
         lo, hi = hz.get(k + "_low"), hz.get(k + "_hi")
@@ -567,10 +569,39 @@ def pos_story(code: str, px: float, day: str, bar: float = 35.0,
                 dist["mid"] = round(mid)
                 dist["today_move"] = (round(today_mv, 2) if today_mv is not None else None)
             if wins:
-                ko_l.append("  (기간별로 잘라 보면: "
-                            + " · ".join(f"{x['ko']} {x['pct']}%" for x in wins) + ")")
-                en_l.append("  (cut into windows it reads: "
-                            + " · ".join(f"{x['en']} {x['pct']}%" for x in wins) + ")")
+                # WHY THE WINDOWS STILL EXIST (boss 2026-09-07: "if you read
+                # all 6 months at once, why do you need 3-month, 1-month, 1
+                # week?"). Fair question, and the answer must be in the
+                # product: they are NOT extra data - they are the same 120
+                # days cut by time, and they answer a different question.
+                # The whole read says HOW cheap; the cuts say WHEN it was
+                # cheaper - a stock can be cheap over months and expensive
+                # this week (a bounce off a deep fall) or the reverse (fresh
+                # weakness from a high place). One number cannot show that.
+                _wk = next((x["pct"] for x in wins if x["k"] == "w"), None)
+                _hf = next((x["pct"] for x in wins if x["k"] == "h"), None)
+                _shape_k = _shape_e = ""
+                if _wk is not None and _hf is not None:
+                    if _wk - _hf >= 20:
+                        _shape_k = (" → 길게 보면 싸지만 최근에는 비쌉니다: 크게 떨어진 뒤 "
+                                    "이번 주에 되올라오는 중이라는 뜻입니다.")
+                        _shape_e = (" → cheap over months but expensive lately: a deep fall "
+                                    "that is bouncing back this week.")
+                    elif _hf - _wk >= 20:
+                        _shape_k = (" → 길게 보면 비싼 편인데 최근에 급히 싸졌습니다: "
+                                    "높은 자리에서 막 무너지는 중일 수 있어 조심합니다.")
+                        _shape_e = (" → expensive over months but suddenly cheap lately: it may "
+                                    "be breaking down from a high place, so we stay careful.")
+                    else:
+                        _shape_k = " → 어느 시간대로 봐도 같은 그림입니다 (판정이 흔들리지 않습니다)."
+                        _shape_e = (" → the same picture at every time scale, so the verdict "
+                                    "does not depend on which window you look at.")
+                ko_l.append("· 시간대별 모양 (새로운 자료가 아니라 같은 120일을 시간으로 자른 것 — "
+                            "'얼마나 싼가'가 아니라 '언제 더 쌌는가'를 봅니다): "
+                            + " · ".join(f"{x['ko']} {x['pct']}%" for x in wins) + _shape_k)
+                en_l.append("· The time shape (not new data — the SAME 120 days cut by time; it "
+                            "answers WHEN it was cheaper, not how cheap): "
+                            + " · ".join(f"{x['en']} {x['pct']}%" for x in wins) + _shape_e)
             _agree = abs(weighted - blend) <= 7.0
             ko_l.append(f"→ 전체 분석 {weighted:.0f}% · 규칙이 쓰는 최저~최고 방식 {blend:.1f}% — "
                         + ("두 방식이 같은 답을 줍니다 (판정 신뢰 ↑)." if _agree else
