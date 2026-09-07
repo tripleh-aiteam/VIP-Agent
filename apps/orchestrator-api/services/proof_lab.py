@@ -635,7 +635,10 @@ VARIANTS: list[dict] = [
      # flipped sign between 25%% and 35%% and is therefore NOT deployed there.
      # Against what was live: +8.89%% vs +4.95%%, 22 trades vs 14, same worst
      # trade (-1.3%%). More money and more chances at the same risk.
-     "pos_mode": "hz_score", "pos_tol": 35,
+     # gate 2 = position only, top zone refused (boss 2026-09-07 evening;
+     # court in _pos_ok's "allinfo" note: 42 trips 55% win -0.17%/trade vs
+     # the old 35% bar's 18 trips 44% -0.34%)
+     "pos_mode": "allinfo", "pos_tol": 65,
      # GATE 3 LEADS WITH THE MINUTE WE ACTUALLY BUY IN (boss 2026-09-07: "do we
      # consider only today's, or the CURRENT time, that is the buying time? ...
      # main priority should be that minute volume").
@@ -2055,6 +2058,39 @@ def _pos_ok(s: dict, c: float, v: dict) -> bool:
             if not (lo and hi and hi > lo):
                 return True
             return (c - lo) / (hi - lo) * 100 <= tol
+    if m == "allinfo":
+        # GATE 2 = POSITION ONLY, AND ONLY THE TOP IS REFUSED (boss
+        # 2026-09-07 evening: "gate 2 is too heavy, it is blocking
+        # everything; it should only care about position - if it is TOP do
+        # not buy, otherwise buy - and find the % by analysing ALL
+        # information, not only min/max/price").
+        #
+        # The score averages BOTH readings: the range read (price between
+        # each window's low and high, four windows) and the all-days read
+        # (share of the last 120 daily closes that were cheaper, recency-
+        # weighted). MEASURED over all 24 stored days, 20 stocks, this book,
+        # changing only this ruler:
+        #   old 35%  18 trips 44% -0.34%/trade | 45%  23 52% -0.18%
+        #   55%      33 trips 52% -0.23%       | 60%  36 53% -0.22%
+        #   65%      42 trips 55% -0.17% <-    | 70%  46 52% -0.24%
+        #   no gate2 69 trips 49% -0.29%/trade
+        # 65 gives 2.3x the chances at the best win rate and the smallest
+        # per-trade loss; 70 and "no gate" are both worse, so the gate stays
+        # and its line is the top zone.
+        ps = []
+        for h in ("w", "m", "q", "h"):
+            lo, hi = hz.get(h + "_low"), hz.get(h + "_hi")
+            if lo and hi and hi > lo:
+                ps.append(max(0.0, min(100.0, (c - lo) / (hi - lo) * 100)))
+        rng = (sum(ps) / len(ps)) if ps else None
+        wh = None
+        try:
+            from services.kiwoom_rules import whole_read
+            wh = whole_read(s.get("code"), c, s.get("d8") or "")
+        except Exception:
+            wh = None
+        vals = [x for x in (rng, wh) if x is not None]
+        return (sum(vals) / len(vals) <= tol) if vals else False
     if m == "hz_score":
         # THE EQUATION he asked about: average the percentile position across
         # every horizon we have, and buy only in the bottom `tol`% of that

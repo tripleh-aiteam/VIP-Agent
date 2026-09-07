@@ -370,7 +370,44 @@ def closes120(code: str, day: str) -> list[float]:
     return cl
 
 
-def pos_story(code: str, px: float, day: str, bar: float = 35.0,
+def whole_read(code: str, px: float, day: str) -> float | None:
+    """The all-days position: what share of the last 120 daily closes were
+    CHEAPER than `px`, with recent days carrying more weight (half-life 20
+    sessions). Every day counted once - no window edges, no double counting."""
+    cl = closes120(code, day)
+    if not cl or not px:
+        return None
+    wsum = bsum = 0.0
+    for i, x in enumerate(cl):
+        wt = 0.5 ** (i / 20.0)
+        wsum += wt
+        if x < float(px):
+            bsum += wt
+    return (bsum / wsum * 100) if wsum else None
+
+
+def pos_score(code: str, px: float, day: str) -> float | None:
+    """GATE 2's NUMBER (boss 2026-09-07 evening: "gate 2 should only care
+    about position - if it is TOP do not buy, otherwise buy - and find this
+    % by analysing ALL information, not only min, max and price").
+
+    One score from both readings: the RANGE read (where the price sits
+    between each window's low and high, four windows averaged) blended with
+    the ALL-DAYS read (how many of the last 120 closes were cheaper,
+    recency-weighted). Neither alone; both, averaged."""
+    hz = _hz_stats(code, day) or {}
+    ps = []
+    for h in ("w", "m", "q", "h"):
+        lo, hi = hz.get(h + "_low"), hz.get(h + "_hi")
+        if lo and hi and hi > lo and px:
+            ps.append(max(0.0, min(100.0, (float(px) - lo) / (hi - lo) * 100)))
+    rng = (sum(ps) / len(ps)) if ps else None
+    wh = whole_read(code, px, day)
+    vals = [x for x in (rng, wh) if x is not None]
+    return (sum(vals) / len(vals)) if vals else None
+
+
+def pos_story(code: str, px: float, day: str, bar: float = 65.0,
               context: str = "buy") -> dict | None:
     """THE POSITION FORMULA, TOLD SO A PERSON CAN FOLLOW IT (boss 2026-09-07:
     "we created the position formula last Friday but it is not easily
@@ -424,31 +461,37 @@ def pos_story(code: str, px: float, day: str, bar: float = 35.0,
     if not parts:
         return None
     blend = sum(parts) / len(parts)
-    ok = blend <= bar
     ssum = " + ".join(f"{x:.0f}" for x in parts)
-    # one decimal on the blend, so "35.5% > 35%" never reads as "35 > 35"
     rng_ko.append(f"네 기간의 평균 = ({ssum}) ÷ {len(parts)} = {blend:.1f}%")
     rng_en.append(f"The average of the four = ({ssum}) ÷ {len(parts)} = {blend:.1f}%")
+    # THE GATE'S OWN NUMBER: both readings averaged (boss 2026-09-07 evening)
+    _wh0 = whole_read(code, px, day)
+    score = ((blend + _wh0) / 2) if _wh0 is not None else blend
+    ok = score <= bar
     rule_ko: list[str] = []
     rule_en: list[str] = []
+    if _wh0 is not None:
+        rule_ko.append(f"🧮 관문 2의 점수 = (최저~최고 방식 {blend:.1f}% + 모든 날 방식 "
+                       f"{_wh0:.1f}%) ÷ 2 = {score:.1f}%")
+        rule_en.append(f"🧮 Gate 2's score = (range method {blend:.1f}% + all-days method "
+                       f"{_wh0:.1f}%) ÷ 2 = {score:.1f}%")
     if context == "hold":
-        rule_ko.append(f"→ 지금 평균 {blend:.1f}% 지점입니다 (낮을수록 싼 자리). "
+        rule_ko.append(f"→ 지금 {score:.1f}% 지점입니다 (낮을수록 싼 자리). "
                        f"보유 중의 매도는 이 위치가 아니라 -1% 규칙이 결정합니다.")
-        rule_en.append(f"→ It sits at an average {blend:.1f}% (lower = cheaper). While "
-                       f"holding, the SELL is decided by the -1% rule, not this position.")
+        rule_en.append(f"→ It sits at {score:.1f}% (lower = cheaper). While holding, the "
+                       f"SELL is decided by the -1% rule, not this position.")
     elif ok:
-        rule_ko.append(f"⚖ 규칙: 평균이 {bar:.0f}% 이하(아래쪽 싼 자리)일 때만 삽니다 → "
-                       f"{blend:.1f}% ≤ {bar:.0f}% ✔ 살 수 있는 자리입니다.")
-        rule_en.append(f"⚖ Rule: we buy only when the average is {bar:.0f}% or less (the cheap "
-                       f"bottom side) → {blend:.1f}% ≤ {bar:.0f}% ✔ a place we can buy.")
+        rule_ko.append(f"⚖ 규칙: 고점권({bar:.0f}% 초과)만 사지 않습니다 → "
+                       f"{score:.1f}% ≤ {bar:.0f}% ✔ 고점이 아니므로 살 수 있습니다.")
+        rule_en.append(f"⚖ Rule: we refuse ONLY the top zone (above {bar:.0f}%) → "
+                       f"{score:.1f}% ≤ {bar:.0f}% ✔ not the top, so we can buy.")
     else:
-        rule_ko.append(f"⚖ 규칙: 평균이 {bar:.0f}% 이하(아래쪽 싼 자리)일 때만 삽니다 → "
-                       f"{blend:.1f}% > {bar:.0f}% ✘ 아직 비싼 자리라 사지 않습니다. "
-                       f"평균이 {bar:.0f}% 아래로 내려오면 다시 삽니다.")
-        rule_en.append(f"⚖ Rule: we buy only when the average is {bar:.0f}% or less (the cheap "
-                       f"bottom side) → {blend:.1f}% > {bar:.0f}% ✘ still too expensive, so "
-                       f"we do not buy. It becomes buyable when the average comes under "
-                       f"{bar:.0f}%.")
+        rule_ko.append(f"⚖ 규칙: 고점권({bar:.0f}% 초과)에서는 사지 않습니다 → "
+                       f"{score:.1f}% > {bar:.0f}% ✘ 지금은 고점권입니다. "
+                       f"{bar:.0f}% 아래로 내려오면 삽니다.")
+        rule_en.append(f"⚖ Rule: we do not buy in the TOP zone (above {bar:.0f}%) → "
+                       f"{score:.1f}% > {bar:.0f}% ✘ it is in the top zone now. "
+                       f"It becomes buyable once it comes under {bar:.0f}%.")
     # 📊 COUNTED AGAINST EVERY DAY (boss 2026-09-07: "show that we are not
     # caring only 3 numbers, and that our work is helping"): the range
     # formula above reads two days per window; this reads them ALL, and the
@@ -623,21 +666,26 @@ def pos_story(code: str, px: float, day: str, bar: float = 35.0,
     # range arithmetic, then the verdict, then why the bar is 35.
     ko_l += rng_ko + rule_ko
     en_l += rng_en + rule_en
-    if context != "hold" and abs(bar - 35.0) < 0.01:
-        # WHY 35 (boss 2026-09-07: "why are we taking 35? It should have a
-        # reason — like 35 was the best winning % among the others"): the
-        # deployed sweep, measured over all 22 stored sessions (09-04 court)
-        ko_l.append("왜 35%인가 — 저장된 22일 전체에서 기준선을 바꿔가며 측정했습니다: "
-                    "20% 이하 = 7건 · 승률 86% · +1.45% / 25% = 16건 · 75% · +4.66% / "
-                    "30% = 19건 · 74% · +7.09% / 35% = 22건 · 77% · +8.89% ★ / "
-                    "40~60% = 24건 · 71% · +6.30%. 수익이 35%까지 꾸준히 오르다 그 위에서 "
-                    "꺾입니다 — 가장 많이 벌면서 최악 손실은 같았던 기준이라 35%를 씁니다.")
-        en_l.append("WHY 35% — we swept the bar over all 22 stored sessions: "
-                    "≤20% = 7 trades · 86% win · +1.45% / 25% = 16 · 75% · +4.66% / "
-                    "30% = 19 · 74% · +7.09% / 35% = 22 · 77% · +8.89% ★ / "
-                    "40–60% = 24 · 71% · +6.30%. Profit climbs steadily to 35% and rolls "
-                    "over above it — the bar that earned the most with the same worst "
-                    "trade, so 35% is the rule.")
+    if context != "hold" and abs(bar - 65.0) < 0.01:
+        # WHY 65 (boss 2026-09-07 evening: "gate 2 is too heavy, it is
+        # blocking everything - make it weaker, only refuse the top"): the
+        # court over all 24 stored days, 20 stocks, 알고3's book, changing
+        # ONLY this ruler. 65 is where the chances stop being free.
+        ko_l.append("왜 65%인가 — 저장된 24일·20종목 전체를 다시 돌려 기준선을 쓸어봤습니다: "
+                    "옛 기준 35% = 18건 · 승률 44% · 거래당 -0.34% / 45% = 23건 · 52% · -0.18% / "
+                    "55% = 33건 · 52% · -0.23% / 60% = 36건 · 53% · -0.22% / "
+                    "65% = 42건 · 승률 55% · 거래당 -0.17% ★ / 70% = 46건 · 52% · -0.24% / "
+                    "관문 2 없음 = 69건 · 49% · 거래당 -0.29%. 65%에서 기회가 2.3배로 늘고 "
+                    "승률이 가장 높으며 거래당 손실이 가장 작습니다. 70%부터는 다시 나빠지고, "
+                    "관문을 아예 없애면 크게 나빠집니다 — 그래서 '고점권만 거부'의 경계는 65%입니다.")
+        en_l.append("WHY 65% — we re-ran the court over all 24 stored days and 20 stocks, "
+                    "changing only this ruler: old bar 35% = 18 trades · 44% win · "
+                    "-0.34%/trade / 45% = 23 · 52% · -0.18% / 55% = 33 · 52% · -0.23% / "
+                    "60% = 36 · 53% · -0.22% / 65% = 42 trades · 55% win · -0.17%/trade ★ / "
+                    "70% = 46 · 52% · -0.24% / NO gate 2 at all = 69 · 49% · -0.29%/trade. "
+                    "At 65% the chances multiply 2.3×, the win rate is the best measured and "
+                    "the per-trade loss the smallest; above it the numbers turn worse again, "
+                    "and removing the gate entirely is far worse — so the top-zone line is 65%.")
     return {"ko": "\n".join(ko_l), "en": "\n".join(en_l),
             "blend": round(blend, 1), "ok": ok, "parts": [round(p) for p in parts],
             "dist": dist}
