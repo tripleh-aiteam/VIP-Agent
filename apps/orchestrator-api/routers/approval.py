@@ -1773,9 +1773,11 @@ def _brain_compute():
     # which stocks the ENGINE is actually in right now - the board may only
     # say BUY for these, because only these produce a popup
     _eng, _answered, _ourown = set(), set(), set()
+    _bd9 = None
     try:
         from services.approval_desk import _algo3_board, desk_codes as _dc9, _load as _ld9
-        _eng = set((_algo3_board([c for c, _n, _s in _dc9()]).get("hold") or {}).keys())
+        _bd9 = _algo3_board([c for c, _n, _s in _dc9()])
+        _eng = set((_bd9.get("hold") or {}).keys())
         _st9 = _ld9()
         # what the boss has already answered, and what we already own - the
         # scanner refuses to ask about either, so the board must not show BUY
@@ -1849,16 +1851,30 @@ def _brain_compute():
                 e["lane_why_en"] = ("all gates passed - already decided; it will be "
                                     "offered again after we sell")
                 continue
+            # GATES SAY WHERE, THE TURN SAYS WHEN (boss 2026-09-07 10:4x:
+            # "even though they passed the gates we have to wait for their
+            # decrease, and once they stopped decreasing and in the 3 red -
+            # I mean it started to increase - then we should buy"). Until the
+            # fall has stopped and the rise is confirmed, the card reads READY,
+            # not BUY - and the scanner, which follows the card, stays quiet.
+            _tok9 = _tk9 = _te9 = None
+            try:
+                from services.approval_desk import turn_now as _tn9
+                _tok9, _tk9, _te9, _tt9 = _tn9(e["code"], _bd9)
+            except Exception:
+                _tok9 = True            # unreadable engine never blocks the board
+            if not _tok9:
+                e["lane"] = "READY"
+                e["lane_why"] = "모든 관문 통과 — " + (_tk9 or "진입 신호 대기 중")
+                e["lane_why_en"] = "all gates passed — " + (_te9 or "waiting for the entry signal")
+                continue
             e["lane"] = "BUY"
-            e["lane_why"] = ("모든 관문 통과 — 팝업으로 승인 요청"
-                             + (" · 매매 엔진도 진입" if e["code"] in _eng
-                                else " · 진입 신호 대기 중"))
-            e["lane_why_en"] = ("all gates passed - asking approval by popup"
-                                + (" · the engine is in too" if e["code"] in _eng
-                                   else " · waiting for the entry signal"))
+            e["lane_why"] = "모든 관문 통과 · " + (_tk9 or "진입 신호 확인") + " — 팝업으로 승인 요청"
+            e["lane_why_en"] = ("all gates passed · " + (_te9 or "entry signal confirmed")
+                                + " - asking approval by popup")
     out["lanes"] = {k: [e["name"] for e in out["six"] + out["universe"]
                         if e.get("lane") == k]
-                    for k in ("BUY", "DONE", "NOBUY", "HOLD", "SELL")}
+                    for k in ("BUY", "READY", "DONE", "NOBUY", "HOLD", "SELL")}
     out["conditions"] = len(out["six"] + out["universe"]) * 7 + len(sell_rows) * 6
     return out
 

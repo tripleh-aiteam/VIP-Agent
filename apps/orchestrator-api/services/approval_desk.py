@@ -1344,6 +1344,14 @@ def scan(db) -> dict:
             if _ln9 != "BUY":
                 st.setdefault("streak", {})[code] = 0
                 continue
+            # AND THE TURN MUST HAVE HAPPENED (boss 2026-09-07 10:4x - the
+            # three holdings above). Gates say WHERE we may buy; the turn says
+            # WHEN. Both, or no popup.
+            _tok9, _tk9, _te9, _tt9 = turn_now(code, _board9)
+            if not _tok9:
+                st.setdefault("why_skip", {})[code] = "no turn yet: " + _te9[:60]
+                st.setdefault("streak", {})[code] = 0
+                continue
             # the proof menu's own cascade has the final word — no popup for
             # a stock it marks blocked (boss 2026-09-07)
             if _wn_pass9 is not None and str(code) not in _wn_pass9:
@@ -1497,6 +1505,77 @@ def _algo3_board(codes: list) -> dict:
     except Exception as e:
         _BOARD9["err"] = str(e)[:120]
     return _BOARD9
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE TURN ITSELF (boss 2026-09-07 10:4x, holding 현대로템 10:28, 한국전력 10:30 and
+# HD현대중공업 10:32 on his screen: "even though they passed the gates we have to
+# wait for their decrease, and once they stopped decreasing and in the 3 red -
+# I mean it started to increase - then we should buy").
+#
+# He was right and the tape says so. 현대로템 was bought at 10:28 into two blue
+# minutes (125,900 → 125,700 → 125,600) and kept falling to 125,300; 알고3's own
+# door did not open until 10:35:54. 한국전력 was bought at 10:30 inside a
+# one-tick chop (32,150↔32,200 all morning) - there was no fall to stop and no
+# rise to confirm; the engine's entry there was 09:04:59, an hour and a half
+# earlier, so buying at 10:30 was a late chase of a turn that had long passed.
+#
+# Since 09-03 the board deliberately did NOT require the entry shape - "whether
+# 알고3 has taken its own entry shape yet is shown INSIDE the popup, not used to
+# gate the question" - because he was then asking why a card said BUY with no
+# popup. That trade-off is now reversed by his own instruction: the shape is a
+# REQUIREMENT, and a card without it says WAITING instead of BUY.
+#
+# No new law is written here. 알고3's dip door already IS his sentence - a fall
+# of 0.7% measured to now, sharp against the bar's own typical move, the price
+# within 1.5% of the trough, and the 3rd rising candle - so the desk asks the
+# engine instead of re-implementing it, exactly as it does for every other
+# verdict. Two conditions, both from him:
+#   · the engine is IN  → the fall stopped and the rise was confirmed
+#   · and it went in JUST NOW → we ask at the turn, never long after it
+#     (제1조, no late buy: an hour-old signal is a chase, not an entry)
+_TURN_MIN = 10.0        # minutes an entry signal stays fresh enough to ask about
+
+
+def _turn_age(buy_t: str) -> float | None:
+    """Minutes since an engine entry stamped HH:MM(:SS), or None if unreadable."""
+    try:
+        _p = [int(x) for x in str(buy_t).strip().split(":")[:3]]
+        while len(_p) < 3:
+            _p.append(0)
+        _now = _hhmm() + ":00"
+        _q = [int(x) for x in _now.split(":")[:3]]
+        return ((_q[0] * 3600 + _q[1] * 60 + _q[2])
+                - (_p[0] * 3600 + _p[1] * 60 + _p[2])) / 60.0
+    except Exception:
+        return None
+
+
+def turn_now(code: str, board: dict | None = None) -> tuple:
+    """Has 알고3's own door just opened for this stock? (ok, ko, en, buy_t)."""
+    b = board if board is not None else _BOARD9
+    import time as _t
+    if not b or (_t.time() - float(b.get("t") or 0) > 15 and not b.get("hold")):
+        b = _algo3_board([c for c, _n, _s in desk_codes()])
+    h = (b.get("hold") or {}).get(str(code))
+    if not h:
+        return (False,
+                "아직 진입 신호가 없습니다 — 하락이 멈추고 3번째 양봉이 서야 삽니다",
+                "no entry signal yet - we buy only after the fall stops and the "
+                "3rd rising candle stands", None)
+    _bt = str(h.get("buy_t") or "")
+    _age = _turn_age(_bt)
+    if _age is not None and _age > _TURN_MIN:
+        return (False,
+                f"진입 신호는 {_bt[:5]}에 이미 지나갔습니다 ({_age:.0f}분 전) — "
+                f"지금 사면 늦은 추격 매수입니다. 다음 신호를 기다립니다",
+                f"the entry signal fired at {_bt[:5]}, {_age:.0f} min ago - buying "
+                f"now would be chasing a turn that has passed; we wait for the next one",
+                _bt[:5])
+    return (True,
+            f"진입 신호 확인 ({_bt[:5]}) — 하락이 멈추고 3번째 양봉이 섰습니다",
+            f"entry signal confirmed at {_bt[:5]} - the fall stopped and the 3rd "
+            f"rising candle stands", _bt[:5])
 
 
 def _algo3_view(code: str, name: str, board: dict | None = None) -> dict:
@@ -2447,10 +2526,16 @@ def _why_buy(code: str, name: str, hold: dict):
         R.append(f"④ 진입 신호 확인 ({bt}) — 하락이 멈추고 3번째 양봉이 섰습니다. 급락 직후 매수 금지 규칙(제1조)도 통과했습니다.")
         E.append(f"④ Entry signal confirmed ({bt}) — the fall stopped and the 3rd rising candle stood; the no-buy-right-after-a-crash rule also cleared.")
     else:
-        R.append("④ 알고3는 아직 진입 신호(급락 후 3번째 양봉)를 기다리는 중입니다 — "
-                 "관문은 모두 열렸고, 승인하시면 지금 들어갑니다.")
-        E.append("④ 알고3 has not taken its entry shape yet (the 3rd rise after a fall) - "
-                 "every gate is open, and approving enters now.")
+        # THIS BRANCH NO LONGER RAISES A POPUP (boss 2026-09-07 10:4x: "we have
+        # to wait for their decrease, and once they stopped decreasing and in
+        # the 3 red then we should buy"). The scanner refuses to ask without
+        # the turn, so a card can only reach here through a board view; it says
+        # what is still missing instead of offering to enter now.
+        R.append("④ 진입 신호 대기 중 — 아직 하락이 멈추고 3번째 양봉이 서지 "
+                 "않았습니다. 관문은 모두 열렸고, 신호가 서는 순간 제안드립니다.")
+        E.append("④ Waiting for the entry signal — the fall has not stopped with "
+                 "a 3rd rising candle yet. Every gate is open; the moment the "
+                 "signal stands, we ask.")
     # BOTH LANGUAGES OR NEITHER (found 2026-09-04 while testing his ordering).
     # The Korean half of this line was disabled inside `if False:` but the
     # English append sat OUTSIDE it, so every English reason carried a line the
