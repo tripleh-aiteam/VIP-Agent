@@ -7522,6 +7522,48 @@ def _run_agent_impl(
         except Exception:
             pass
 
+    # === 🔔 THE BELL COMES FIRST (boss 2026-09-07 16:2x: he asked "which stock
+    # should I buy right now" at 16:0x and got a full live buy verdict - price,
+    # gates, "a place we can buy" - with no word that the market had closed
+    # forty minutes earlier. The order lane has refused off-hours since 08-26;
+    # the ADVICE lane never learned. An advisor that reads the tape must read
+    # the clock, so every advice answer now opens with where we are in the
+    # session and what can actually be done about it.)
+    def _bell_line(_ko: bool):
+        """(banner, is_closed) — None when the desk is open for new buys."""
+        try:
+            from services.kiwoom_tape import market_open as _mo7
+            from services.approval_desk import can_propose as _cp7
+            from services.chat_trade import _next_open_kst as _no7
+            _open = bool(_mo7())
+            _may = bool(_cp7())
+        except Exception:
+            return None, False
+        if _open and _may:
+            return None, False
+        try:
+            _nx, _nw = _no7()
+            _h = (_nx - _nw).total_seconds() / 3600
+            _when = (f"{_nx.month}/{_nx.day} 09:00" if _h >= 1.5 else f"{_h * 60:.0f}분 후")
+            _when_en = (f"{_nx.month}/{_nx.day} 09:00 KST" if _h >= 1.5
+                        else f"in {_h * 60:.0f} minutes")
+        except Exception:
+            _when, _when_en = "다음 장", "the next session"
+        if _open and not _may:
+            # 15:20-15:30: the tape still moves, but nothing new may be bought
+            return (("🔔 지금은 장 마감 정리 시간(15:20 이후)입니다 — 신규 매수는 오늘 "
+                     "더 나가지 않습니다. 아래 판정은 다음 장을 위한 것입니다."
+                     if _ko else
+                     "🔔 It is past 15:20 - the desk takes no new buys today. The verdict "
+                     "below is for the next session."), True)
+        return (("🌙 지금은 장이 닫혀 있습니다 (한국 주식 09:00~15:30). 지금은 주문이 "
+                 f"나갈 수 없고, 아래 판정은 다음 장({_when})을 위한 판단입니다. "
+                 "가격과 관문은 마지막 거래 시점 기준입니다."
+                 if _ko else
+                 "🌙 The market is closed right now (KRX trades 09:00-15:30). No order can "
+                 f"go out; the verdict below is for the next session ({_when_en}), and the "
+                 "prices and gates are as of the last trade."), True)
+
     # === 🧭 MENU-3 ADVICE LANE — ONE VOICE (boss 2026-09-04 18:4x: "when it
     # advises it should talk with the Algo-3 rule (the currently running
     # rule); each question is answering differently; buying / selling /
@@ -7571,6 +7613,9 @@ def _run_agent_impl(
                                  if str(x.get("code")) == str(_ac)), None)
                     L9: list[str] = []
                     _koq = lang == "ko"
+                    _bell9, _shut9 = _bell_line(_koq)
+                    if _bell9:
+                        L9.append(_bell9)
                     if _row:
                         _nm9 = _row["name"] if _koq else (_row.get("name_en") or _row["name"])
                         L9.append(f"🧭 {_nm9} ({_ac}) — " + ("메뉴 3 에이전트의 판정 (지금 돌아가는 규칙 그대로)"
