@@ -1,14 +1,18 @@
 # -*- coding: utf-8 -*-
-"""GATE-2 COURT v2 (boss 2026-09-07: "the formula cares only about max and
-min price — should we consider other information? Check and tell me").
+"""GATE-2 COURT (boss 2026-09-07: "gate 2 is very hard, it is not allowing
+to buy - we have to make it weaker; tell me your idea").
 
-Uses the REAL replay pipeline (kiwoom_rules.rank) — the same stks builder the
-live board runs — with proof_lab.VARIANTS temporarily reduced to 알고3 (D3)
-copies whose ONLY difference is the gate-2 ruler:
-  deployed  hz_score<=35 : blended (price-low)/(high-low) of 4 windows
-  hz_rank<=N            : blended PERCENTILE — price ranked against EVERY
-                          daily close in the window ('cheaper than N% of
-                          that window's days'), N swept 25/30/35/40."""
+Replays 알고3 (D3) over EVERY stored day, changing ONLY the gate-2 ruler:
+
+  deployed   range blend <= 35   (price between window low and high, 4 windows)
+  range<=40 / <=45              simply loosening the deployed bar
+  whole<=35 / <=40              the all-days ruler: recency-weighted share of
+                                the last 120 daily closes below today
+  either<=35                    pass if EITHER ruler says cheap
+
+Everything else in the book is identical, and the replay uses the SAME
+fill function and merged event clock as the live board (the first cut of
+this court forgot fill_fn/events, which is why every ruler read 0 trips)."""
 import copy, sys, time
 sys.path.insert(0, r"C:\Users\A\Desktop\VIP\apps\orchestrator-api")
 from dotenv import load_dotenv
@@ -16,77 +20,94 @@ load_dotenv(r"C:\Users\A\Desktop\VIP\.env", override=False)
 
 from services import kiwoom_rules as KR
 from services import proof_lab as PL
+from services.kiwoom_tape import load_book as _lb
 
-_CLOSES_CACHE: dict = {}
-def _closes(code, day):
-    key = (code, day)
-    if key in _CLOSES_CACHE:
-        return _CLOSES_CACHE[key]
-    cl = []
-    try:
-        from services.daily_pick import _conn
-        cn = _conn(); cu = cn.cursor()
-        cu.execute("""SELECT close FROM raw_daily_prices
-                      WHERE ticker=%s AND date < %s AND close IS NOT NULL
-                      ORDER BY date DESC LIMIT 120""",
-                   (code, f"{day[:4]}-{day[4:6]}-{day[6:8]}"))
-        cl = [float(r[0]) for r in cu.fetchall()]
-        cn.close()
-    except Exception:
-        pass
-    if not cl:                      # official-record fallback, like _hz_stats
-        try:
-            from services.naver_stock import daily_history
-            rows = daily_history(code, days=130) or []
-            d_iso = f"{day[:4]}-{day[4:6]}-{day[6:8]}"
-            cl = [float(r["close"]) for r in rows
-                  if r.get("close") and str(r.get("date"))[:10] < d_iso]
-        except Exception:
-            pass
-    _CLOSES_CACHE[key] = cl
-    return cl
+# ── the all-days ruler, patched into gate 2 ──────────────────────────────
+def _whole(code, day, px):
+    cl = KR.closes120(code, day)
+    if not cl:
+        return None
+    wsum = bsum = 0.0
+    for i, x in enumerate(cl):
+        wt = 0.5 ** (i / 20.0)
+        wsum += wt
+        if x < px:
+            bsum += wt
+    return (bsum / wsum * 100) if wsum else None
 
-_orig_pos_ok = PL._pos_ok
-def _pos_ok_patched(s, c, v):
-    if str(v.get("pos_mode") or "") == "hz_rank":
-        cl = _closes(s.get("code"), s.get("d8") or "")
-        if not cl:
-            return False            # no data is not a pass (the 09-07 law)
-        ps = []
-        for n in (5, 20, 60, 120):
-            w = cl[:n]
-            if len(w) >= max(3, n // 4):
-                ps.append(sum(1 for x in w if x < c) / len(w) * 100)
-        return (sum(ps) / len(ps) <= float(v.get("pos_tol") or 0)) if ps else False
-    return _orig_pos_ok(s, c, v)
-PL._pos_ok = _pos_ok_patched
+_orig = PL._pos_ok
+def _patched(s, c, v):
+    m = str(v.get("pos_mode") or "")
+    tol = float(v.get("pos_tol") or 35)
+    if m in ("whole", "either"):
+        w = _whole(s.get("code"), s.get("d8") or "", c)
+        if m == "whole":
+            return False if w is None else (w <= tol)
+        base = _orig(s, c, dict(v, pos_mode="hz_score", pos_tol=35))
+        return bool(base or (w is not None and w <= tol))
+    return _orig(s, c, v)
+PL._pos_ok = _patched
 
 D3 = next(v for v in PL.VARIANTS if v["id"] == "D3")
 MODES = [
-    ("deployed hz_score<=35 (min/max)", "D3", {}),
-    ("percentile<=25 (all closes)", "D3r25", {"pos_mode": "hz_rank", "pos_tol": 25}),
-    ("percentile<=30", "D3r30", {"pos_mode": "hz_rank", "pos_tol": 30}),
-    ("percentile<=35", "D3r35", {"pos_mode": "hz_rank", "pos_tol": 35}),
-    ("percentile<=40", "D3r40", {"pos_mode": "hz_rank", "pos_tol": 40}),
+    ("deployed  range<=35", {}),
+    ("range<=40", {"pos_tol": 40}),
+    ("range<=45", {"pos_tol": 45}),
+    ("whole-read<=35", {"pos_mode": "whole", "pos_tol": 35}),
+    ("whole-read<=40", {"pos_mode": "whole", "pos_tol": 40}),
+    ("either passes<=35", {"pos_mode": "either", "pos_tol": 35}),
 ]
-variants = []
-for lbl, vid, mut in MODES:
-    v = copy.deepcopy(D3)
-    v["id"] = vid
-    v.update(mut)
-    variants.append(v)
-PL.VARIANTS = variants              # rank() reads this list
-try:
-    KR.VARIANTS = variants          # in case kiwoom_rules re-exported it
-except Exception:
-    pass
 
+days = KR.stored_days()
+print(f"replaying {len(days)} stored days · 알고3 book · gate-2 ruler swapped\n")
+res = {lbl: [] for lbl, _ in MODES}
 t0 = time.time()
-r = KR.rank(tick=5, period=0, day="all", use_gate=True, allow_fallback=False)
-print(f"replay took {time.time() - t0:.0f}s over {len(r.get('days') or [])} stored days\n")
-print(f"{'ruler':<34} {'trips':>5} {'win%':>5} {'net%':>8} {'per-trade':>9}")
-rows = {x["id"]: x for x in r.get("variants") or []}
-for lbl, vid, _ in MODES:
-    x = rows.get(vid) or {}
-    print(f"{lbl:<34} {x.get('trips', 0):>5} {x.get('win_pct', 0):>4}% "
-          f"{x.get('net', 0.0):>+8.2f} {x.get('per_trade', 0.0):>+9.3f}")
+for d in days:
+    tapes = {}
+    for code, name in KR.WATCH:
+        cs = KR._bars_for(code, 5, 0, d, "", "")
+        if len(cs) >= 10:
+            tapes[code] = {"name": name, "cs": cs, "tk": KR.krx_tick(cs[-1]["close"]) or 1}
+    if not tapes:
+        continue
+    base = []
+    for code, tp in tapes.items():
+        base.append({"code": code, "_dipc": {}, "book": _lb(code, d), "d8": d,
+                     "closes": [c["close"] for c in tp["cs"]],
+                     "highs": [c["high"] for c in tp["cs"]],
+                     "lows": [c["low"] for c in tp["cs"]],
+                     "open_px": KR._open_official(code, d, tp["cs"][0].get("open"))
+                                or tp["cs"][0].get("open"),
+                     "news_hits": [], "tick": tp["tk"], "seed": 1,
+                     "times": [c.get("hhmm") for c in tp["cs"]],
+                     "vols": [c.get("vol") for c in tp["cs"]],
+                     "vol_day_avg": KR._vol5(code, d),
+                     "prev_close": KR._gap_ref(code, d),
+                     "hz": KR._hz_stats(code, d),
+                     "low5": KR._week_stats(code, d)[0],
+                     "high5": KR._week_stats(code, d)[1],
+                     "avg5": KR._week_stats(code, d)[2],
+                     "gate_ok": True, "name": tp["name"]})
+    events = sorted((sk["times"][i], si, i)
+                    for si, sk in enumerate(base)
+                    for i in range(1, len(sk["closes"])))
+    for lbl, mut in MODES:
+        v = copy.deepcopy(D3)
+        v.update(mut)
+        stks = [dict(copy.deepcopy(s), ml_bundle=None) for s in base]
+        try:
+            res[lbl] += PL.run_desk(stks, v, fill_fn=KR._fill, events=events)
+        except Exception as e:
+            print(f"  {d} {lbl}: {str(e)[:70]}")
+
+print(f"({time.time() - t0:.0f}s)\n")
+print(f"{'gate-2 ruler':<22} {'trips':>5} {'win%':>5} {'net%':>9} {'per trade':>10} {'worst':>8}")
+for lbl, _ in MODES:
+    tr = res[lbl]
+    w = sum(1 for t in tr if t["gross_pct"] > 0)
+    l = sum(1 for t in tr if t["gross_pct"] < 0)
+    net = sum(t["net_pct"] for t in tr)
+    worst = min((t["net_pct"] for t in tr), default=0.0)
+    wp = round(w / (w + l) * 100) if (w + l) else 0
+    per = (net / len(tr)) if tr else 0.0
+    print(f"{lbl:<22} {len(tr):>5} {wp:>4}% {net:>+9.2f} {per:>+10.3f} {worst:>+8.2f}")
