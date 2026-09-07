@@ -307,6 +307,26 @@ def _hz_stats(code: str, day: str) -> dict:
                 out[k + "_avg"] = sum(w) / len(w)
     except Exception:
         pass
+    if not out:
+        # THE OFFICIAL RECORD FILLS THE HOLE (boss 2026-09-07: 삼성중공업 read
+        # "all gates passed" because raw_daily_prices had no rows for it, so
+        # the position gate silently passed on missing data — while Kiwoom's
+        # own numbers said BLOCKED). Naver's daily history covers every
+        # listed code; today's row is excluded to keep the date<day meaning.
+        try:
+            from services.naver_stock import daily_history
+            rows = daily_history(code, days=130) or []
+            d_iso = f"{day[:4]}-{day[4:6]}-{day[6:8]}"
+            cl = [float(r["close"]) for r in rows
+                  if r.get("close") and str(r.get("date"))[:10] < d_iso]
+            for k, n in HORIZONS.items():
+                w = cl[:n]
+                if len(w) >= max(3, n // 4):
+                    out[k + "_low"] = min(w)
+                    out[k + "_hi"] = max(w)
+                    out[k + "_avg"] = sum(w) / len(w)
+        except Exception:
+            pass
     _HZ_CACHE[key] = out
     return out
 
@@ -423,6 +443,19 @@ def _vol5(code: str, day: str) -> float | None:
             out = sum(vs) / len(vs)
     except Exception:
         out = None
+    if out is None:
+        # official-record fallback (boss 2026-09-07: a code missing from
+        # raw_daily_prices let the volume gate pass on no data)
+        try:
+            from services.naver_stock import daily_history
+            rows = daily_history(code, days=8) or []
+            d_iso = f"{day[:4]}-{day[4:6]}-{day[6:8]}"
+            vs = [float(r["volume"]) for r in rows
+                  if r.get("volume") and str(r.get("date"))[:10] < d_iso][:5]
+            if len(vs) >= 3:
+                out = sum(vs) / len(vs)
+        except Exception:
+            pass
     _VOL5_CACHE[key] = out
     return out
 

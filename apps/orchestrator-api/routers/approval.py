@@ -302,7 +302,18 @@ def feed(db: Session = Depends(get_db)):
         ad.apply_time_overrides(st.get("held") or [], st.get("log") or [])
     except Exception:
         pass
-    held = {h["code"]: h for h in ad.held(st)}
+    # a lot the boss erased must not badge its ROOM as holding either (boss
+    # 2026-09-07: "still some of them showing holding") — overrides first,
+    # then the eraser, the same order every held view uses
+    _held_rm = [dict(h) for h in ad.held(st)]
+    try:
+        ad.apply_time_overrides(_held_rm, [])
+        from services.kiwoom_tape import _day as _kdrm
+        from services.trip_eraser import filter_m3_held
+        _held_rm = filter_m3_held(_held_rm, _kdrm())
+    except Exception:
+        pass
+    held = {h["code"]: h for h in _held_rm}
     for m in meta:
         code = m["code"]
         px = chg = None
@@ -585,8 +596,10 @@ def whynot_at(code: str, hhmm: str, name: str = "") -> dict | None:
     except Exception:
         _st9p = None
     if _st9p is None:
-        _g(2, "position", True, "위치 자료 없음 — 막는 근거 없음. 2관문 통과.",
-           "No position data — nothing blocking. Gate 2 passed.")
+        _g(2, "position", False,
+           "위치 — 기간별 시세 자료가 없어 판정할 수 없습니다. 판정 불가는 통과가 아닙니다.",
+           "Position — no window history, so this gate cannot be judged. "
+           "Unjudgeable is NOT a pass.")
     else:
         # the same line-by-line story, stamped with the asked minute
         _g(2, "position", _st9p["ok"],
@@ -938,10 +951,15 @@ def whynot(db: Session = Depends(get_db)):
         except Exception:
             _st2 = None
         if _st2 is None:
-            _gate(2, "position", True,
-                  "위치 — 기간별 자료 수집 중, 막는 근거 없음. 2관문 통과.",
-                  "Position — window data still collecting, nothing blocking. "
-                  "Gate 2 passed.")
+            # NO DATA IS NOT A PASS (boss 2026-09-07: 삼성중공업 read "all
+            # gates passed" on missing history while Kiwoom said blocked) —
+            # a gate that cannot be judged refuses the buy and says why
+            _gate(2, "position", False,
+                  "위치 — 기간별 시세 자료를 아직 가져오지 못해 판정할 수 없습니다. "
+                  "판정 불가는 통과가 아닙니다 — 자료가 오면 다시 판정합니다.",
+                  "Position — the window history could not be loaded, so this gate "
+                  "cannot be judged. Unjudgeable is NOT a pass — it re-judges when "
+                  "the data arrives.")
         else:
             r["pos_blend"] = _st2["blend"]
             _gate(2, "position", _st2["ok"], _st2["ko"], _st2["en"])
@@ -980,17 +998,23 @@ def whynot(db: Session = Depends(get_db)):
                    f"Very FEW tradings — {int(tv9 or 0):,} shares today, {_vmul9:.1f}× the "
                    f"20-day average ({(_vmul9 - 1) * 100:+.0f}%). Thin trading makes it hard "
                    f"to buy or sell at the price we want."))
+        elif _vmul9 is None:
+            # no volume data = no judgement = no pass (boss 2026-09-07)
+            _gate(3, "volume", False,
+                  "거래량 — 비교 자료를 아직 가져오지 못해 판정할 수 없습니다. "
+                  "판정 불가는 통과가 아닙니다 — 자료가 오면 다시 판정합니다.",
+                  "Volume — the comparison data could not be loaded, so this gate "
+                  "cannot be judged. Unjudgeable is NOT a pass — it re-judges when "
+                  "the data arrives.")
         else:
             _gate(3, "volume", True,
                   (f"거래량 충분 — 지금까지 {int(tv9 or 0):,}주, 이 시각 보통 페이스의 "
                    f"{_vmul9:.1f}배. 3관문 통과." if pace9 is not None
-                   else f"거래량 충분 — 오늘 {int(tv9 or 0):,}주, 20일 평균의 {_vmul9:.1f}배. 3관문 통과."
-                   if _vmul9 is not None else "거래량 자료 수집 중 — 막는 근거 없음. 3관문 통과."),
+                   else f"거래량 충분 — 오늘 {int(tv9 or 0):,}주, 20일 평균의 {_vmul9:.1f}배. 3관문 통과."),
                   (f"Enough volume — {int(tv9 or 0):,} shares so far, {_vmul9:.1f}× a normal "
                    f"pace by this hour. Gate 3 passed." if pace9 is not None
                    else f"Enough volume — {int(tv9 or 0):,} shares today, {_vmul9:.1f}× the "
-                   f"20-day average. Gate 3 passed." if _vmul9 is not None
-                   else "Volume data still collecting — nothing blocking. Gate 3 passed."))
+                   f"20-day average. Gate 3 passed."))
         # ④ 나쁜 뉴스 (the veto's own 3h net; the remembered day reads the
         # WHOLE trading day's stamps, each line carrying its own clock)
         _sts = _fresh_stamps(code, limit=3, max_age_min=180 if mkt else 600)
