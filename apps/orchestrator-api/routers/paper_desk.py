@@ -1717,6 +1717,36 @@ def raw_daily(code: str = Query(...), days: int = Query(20), to: str = Query("")
         rows = [{"date": d.strftime("%Y-%m-%d"), "open": float(o or 0), "high": float(h or 0),
                  "low": float(lo or 0), "close": float(c or 0), "volume": float(v or 0)}
                 for d, o, h, lo, c, v in cur.fetchall()][::-1]
+        # TODAY BELONGS IN THE RECORD TOO (boss 2026-09-07: "the historical
+        # record looks like not working real time"). raw_daily_prices is
+        # written after the close, so during the session the newest row was
+        # yesterday's while Kiwoom's own daily chart already shows today's
+        # candle forming. Checked row by row first: our stored days match
+        # Kiwoom's ka10081 exactly - open, high, low, close AND volume, five
+        # days deep - so nothing here is corrected, only the missing day added,
+        # and it is marked live so it can never be mistaken for a closed one.
+        _today = None
+        try:
+            from services.kiwoom_tape import _day as _kd, market_open as _mo
+            _td = _kd()
+            if not to and (not rows or rows[-1]["date"].replace("-", "") < _td):
+                from services.kiwoom_rest import _request as _kr
+                _d9 = _kr("ka10081", {"stk_cd": code, "base_dt": _td,
+                                      "upd_stkpc_tp": "1"}, path="/api/dostk/chart")
+                _lst = (_d9 or {}).get("stk_dt_pole_chart_qry") or []
+                _r0 = next((r for r in _lst if str(r.get("dt")) == _td), None)
+                if _r0:
+                    _f = lambda k: abs(float(str(_r0.get(k) or 0).replace("+", "")))
+                    _today = {"date": f"{_td[:4]}-{_td[4:6]}-{_td[6:]}",
+                              "open": _f("open_pric"), "high": _f("high_pric"),
+                              "low": _f("low_pric"), "close": _f("cur_prc"),
+                              "volume": _f("trde_qty"), "live": True,
+                              "live_note": ("장중 — 키움 일봉에서 직접 읽은 오늘 값 "
+                                            "(마감 후 확정 저장)" if _mo() else
+                                            "오늘 — 키움 일봉 (아직 저장 전)")}
+                    rows.append(_today)
+        except Exception:
+            pass
         for i in range(1, len(rows)):
             p = rows[i - 1]["close"]
             rows[i]["chg"] = round((rows[i]["close"] / p - 1) * 100, 2) if p else 0.0
@@ -2090,6 +2120,99 @@ def live_book(code: str = Query("005930")):
             # against a different one without noticing (boss 2026-09-07)
             "market": ob.get("market"), "tot_ask": ob.get("tot_ask"),
             "tot_bid": ob.get("tot_bid")}
+
+
+@router.get("/day-detail")
+def day_detail(code: str = Query(...), day: str = Query(...),
+               ticks: int = Query(300)):
+    """ONE DAY, OPENED (boss 2026-09-07: "when I click any day it should open
+    per day and per minute and second prices, so the order list and trading
+    history prices and time match").
+
+    Three things for that date: the minute candles we stored, the raw
+    executions with their second-by-second clock, and Kiwoom's own daily row
+    for the same date, so the day's open/high/low/close/volume can be checked
+    against the exchange without leaving the page."""
+    day = str(day).replace("-", "")[:8]
+    code = str(code).zfill(6)
+    out = {"ok": True, "code": code, "day": day}
+    try:
+        from services.kiwoom_tape import load, bars_time
+        raw = load(code, day) or []
+        bars = bars_time(raw, 60) or []
+        out["bars"] = [{"t": str(b.get("hhmm") or "")[:8], "o": b.get("open"),
+                        "h": b.get("high"), "l": b.get("low"), "c": b.get("close"),
+                        "v": b.get("vol")} for b in bars]
+        _n = max(0, min(int(ticks or 0), 2000))
+        out["ticks"] = [{"t": str(r.get("t") or r.get("time") or "")[:8],
+                         "px": r.get("px") or r.get("price"),
+                         "qty": r.get("qty") or r.get("q")}
+                        for r in (raw[-_n:] if _n else [])][::-1]
+        out["tick_total"] = len(raw)
+        if bars:
+            out["tape"] = {"open": bars[0].get("open"),
+                           "high": max(b.get("high") or 0 for b in bars),
+                           "low": min(b.get("low") or 0 for b in bars),
+                           "close": bars[-1].get("close"),
+                           "volume": sum(b.get("vol") or 0 for b in bars)}
+    except Exception as e:
+        out["tape_error"] = str(e)[:120]
+    # and what the exchange says the day was
+    try:
+        from services.kiwoom_rest import _request as _kr
+        d9 = _kr("ka10081", {"stk_cd": code, "base_dt": day,
+                             "upd_stkpc_tp": "1"}, path="/api/dostk/chart")
+        r0 = next((r for r in ((d9 or {}).get("stk_dt_pole_chart_qry") or [])
+                   if str(r.get("dt")) == day), None)
+        if r0:
+            _f = lambda k: abs(float(str(r0.get(k) or 0).replace("+", "")))
+            out["kiwoom"] = {"open": _f("open_pric"), "high": _f("high_pric"),
+                             "low": _f("low_pric"), "close": _f("cur_prc"),
+                             "volume": _f("trde_qty")}
+    except Exception as e:
+        out["kiwoom_error"] = str(e)[:120]
+    # our own orders and fills on that date, so the history lines up
+    try:
+        from sqlalchemy import text as _t
+        from db.base import SessionLocal
+        _db = SessionLocal()
+        try:
+            rows = _db.execute(_t(
+                "SELECT to_char(created_at AT TIME ZONE 'Asia/Seoul','HH24:MI:SS'), "
+                "to_char(filled_at AT TIME ZONE 'Asia/Seoul','HH24:MI:SS'), "
+                "side, qty, limit_price, fill_price, status, source "
+                "FROM paper_desk_orders WHERE ticker=:c "
+                "AND (created_at AT TIME ZONE 'Asia/Seoul')::date = :d "
+                "ORDER BY created_at"), {"c": code,
+                                         "d": f"{day[:4]}-{day[4:6]}-{day[6:]}"}).fetchall()
+            out["orders"] = [{"at": r[0], "filled_at": r[1], "side": r[2],
+                              "qty": int(r[3] or 0), "limit": float(r[4] or 0) or None,
+                              "fill": float(r[5] or 0) or None, "status": r[6],
+                              "source": r[7]} for r in rows]
+        finally:
+            _db.close()
+    except Exception as e:
+        out["orders_error"] = str(e)[:120]
+    return out
+
+
+@router.get("/live/ladder")
+def live_ladder(code: str = Query("005930"), side: str = Query("BUY"),
+                won: int = Query(10_000_000)):
+    """THE LADDER, DRAWN ON THE REAL BOOK (boss 2026-09-07: "implement the above
+    idea to this place as a demo"). Same function the desk uses when he
+    approves - not a mock - so the demo and the order are the same arithmetic."""
+    from services.approval_desk import book_ladder, ladder_words
+    from services.paper_desk import fast_price
+    side = "SELL" if str(side).upper().startswith("S") else "BUY"
+    px = float((fast_price(code) or [None])[0] or 0)
+    if not px:
+        return {"ok": False, "error": "no live price"}
+    qty = max(1, int(int(won) // px))
+    rows = book_ladder(code, side, px, qty)
+    ko, en = ladder_words(rows, side)
+    return {"ok": True, "code": code, "side": side, "price": px, "qty": qty,
+            "won": int(won), "slices": rows, "ko": ko, "en": en}
 
 
 @router.get("/live/execs")

@@ -25,7 +25,7 @@ import { useLanguage } from "@/components/i18n";
 type RawDaily = {
   ok: boolean; code: string; name: string; table: string;
   rows: { date: string; open: number; high: number; low: number; close: number;
-          volume: number; chg?: number | null }[];
+          volume: number; chg?: number | null; live?: boolean; live_note?: string }[];
   flows: { date: string; foreign: number; inst: number; retail: number }[];
   flow_latest: string | null;
 };
@@ -1534,6 +1534,12 @@ export default function LiveDeskPage() {
   const [clockIn, setClockIn] = useState("");
   const [tape, setTape] = useState<Tape | null>(null);
   const [book, setBook] = useState<Book | null>(null);
+  // THE LADDER, DRAWN ON THIS BOOK (boss 2026-09-07: "implement the above idea
+  // to this place as a demo"). Same endpoint the desk prices real orders with.
+  type Lad = { ok: boolean; side: string; qty: number; price: number;
+               slices: { px: number; qty: number; kind: string }[]; ko: string; en: string };
+  const [lad, setLad] = useState<Lad | null>(null);
+  const [ladSide, setLadSide] = useState<"BUY" | "SELL">("BUY");
   const [execs, setExecs] = useState<Execs | null>(null);
   const [st, setSt] = useState<Status | null>(null);
   const [rank, setRank] = useState<Rank | null>(null);
@@ -1829,6 +1835,26 @@ export default function LiveDeskPage() {
   const [rawCode, setRawCode] = useState("");
   const [rawDays, setRawDays] = useState(20);
   const [raw, setRaw] = useState<RawDaily | null>(null);
+  // CLICK A DAY, OPEN IT (boss 2026-09-07: "when I click any day it should open
+  // per day and per minute and second prices... order list and trading history
+  // prices and time need to be matched")
+  type DayDetail = { ok: boolean; day: string;
+    bars?: { t: string; o: number; h: number; l: number; c: number; v: number }[];
+    ticks?: { t: string; px: number; qty: number }[]; tick_total?: number;
+    tape?: { open: number; high: number; low: number; close: number; volume: number };
+    kiwoom?: { open: number; high: number; low: number; close: number; volume: number };
+    orders?: { at: string; filled_at?: string; side: string; qty: number;
+               limit?: number | null; fill?: number | null; status: string; source: string }[] };
+  const [dayOpen, setDayOpen] = useState<string | null>(null);
+  const [dayData, setDayData] = useState<DayDetail | null>(null);
+  const openDay = useCallback((d: string) => {
+    const d8 = d.replace(/-/g, "");
+    setDayOpen((cur) => (cur === d ? null : d));
+    setDayData(null);
+    if (dayOpen === d) return;
+    api<DayDetail>(`/paper-desk/day-detail?code=${rawCode}&day=${d8}&ticks=400`)
+      .then((x) => setDayData(x?.ok ? x : null)).catch(() => setDayData(null));
+  }, [rawCode, dayOpen]);
   useEffect(() => {
     if (!rawCode) { setRaw(null); return; }
     setRaw(null);
@@ -1920,6 +1946,7 @@ export default function LiveDeskPage() {
   const dfToRef = useRef("");
 
   const codeRef = useRef(code); codeRef.current = code;
+  const ladSideRef = useRef(ladSide); ladSideRef.current = ladSide;
   const perRef = useRef(period); perRef.current = period;
   const tickRef = useRef(tick); tickRef.current = tick;
 
@@ -2308,6 +2335,8 @@ export default function LiveDeskPage() {
     if (chartOn9Ref.current)
       api<Tape>(`/paper-desk/live/tape?code=${c}&${q}&bars=${chartBarsRef.current}`).then(setTape).catch(() => {});
     api<Book>(`/paper-desk/live/book?code=${c}`).then(setBook).catch(() => {});
+    api<Lad>(`/paper-desk/live/ladder?code=${c}&side=${ladSideRef.current}`)
+      .then((d) => setLad(d?.ok ? d : null)).catch(() => setLad(null));
     api<Execs>(`/paper-desk/live/execs?code=${c}&n=120`).then(setExecs).catch(() => {});
     api<Rank>(`/paper-desk/live/rules?${q}&gate=${showBlockedRef.current ? 0 : 1}&day=${ruleDayRef.current}`
       + `&auto=${dayTouchedRef.current && !ruleDayRef.current ? 0 : 1}`
@@ -5042,6 +5071,22 @@ export default function LiveDeskPage() {
               {t("사면 가장 싼 매도호가를, 팔면 가장 비싼 매수호가를 잡습니다 — 그 차이가 왕복 비용의 절반입니다.",
                  "a buy takes the cheapest ask, a sell takes the highest bid - that gap is half the round-trip cost.")}
             </div>
+            {/* THE LADDER DEMO (boss 2026-09-07): the same split the desk uses
+                when he approves, drawn on THIS book so he can see where each
+                20% would stand among the waiting orders. */}
+            <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10.5px] font-bold" style={{ color: "#6a1b9a" }}>
+                🪜 {t("1,000만원을 5조각으로 나누면", "₩10m split into 5 slices")}</span>
+              {(["BUY", "SELL"] as const).map((sd) => (
+                <button key={sd} onClick={() => setLadSide(sd)}
+                  className="text-[10px] px-2 py-[1px] rounded-full border"
+                  style={{ borderColor: "#6a1b9a",
+                           background: ladSide === sd ? "#6a1b9a" : "transparent",
+                           color: ladSide === sd ? "#fff" : "var(--text-primary)" }}>
+                  {sd === "BUY" ? t("살 때", "buying") : t("팔 때", "selling")}</button>))}
+              {lad && <span className="text-[10px] text-[var(--text-muted)]">
+                {lad.qty.toLocaleString()}{t("주", " sh")} · {t("아래 표에 🪜로 표시", "marked 🪜 in the table below")}</span>}
+            </div>
           </div>
           <table className="w-full text-[11.5px] tabular-nums">
             <thead><tr className="text-[10px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
@@ -5050,26 +5095,39 @@ export default function LiveDeskPage() {
               <th className="text-left px-3">{t("잔량", "qty")}</th>
             </tr></thead>
             <tbody>
-              {(book?.asks ?? []).slice().reverse().map(([p, q], i) => (
-                <tr key={"a" + i} className="border-t border-[var(--border-default)]/30">
+              {(book?.asks ?? []).slice().reverse().map(([p, q], i) => {
+                const sl = (lad?.slices || []).find((x) => Math.abs(x.px - p) < 0.5);
+                return (
+                <tr key={"a" + i} className="border-t border-[var(--border-default)]/30"
+                    style={sl ? { background: "rgba(106,27,154,0.10)" } : undefined}>
                   <td className="text-right px-3 py-[2px]" style={{ color: BLUE }}>{fmt(q)}</td>
                   <td className="text-center px-2 font-bold" style={{ color: BLUE }}>
                     ₩{fmt(p)}{p === book?.best_ask && <span className="text-[9px]"> {t("← 매수 체결", "← buy fills here")}</span>}
                   </td>
-                  <td />
-                </tr>
-              ))}
-              {(book?.bids ?? []).map(([p, q], i) => (
-                <tr key={"b" + i} className="border-t border-[var(--border-default)]/30">
-                  <td />
+                  <td className="text-left px-3 text-[10px]" style={{ color: "#6a1b9a" }}>
+                    {sl ? `🪜 ${sl.qty.toLocaleString()}${t("주", "sh")}${sl.kind === "market" ? t(" 지금 체결", " deals now") : ""}` : ""}</td>
+                </tr>);
+              })}
+              {(book?.bids ?? []).map(([p, q], i) => {
+                const sl = (lad?.slices || []).find((x) => Math.abs(x.px - p) < 0.5);
+                return (
+                <tr key={"b" + i} className="border-t border-[var(--border-default)]/30"
+                    style={sl ? { background: "rgba(106,27,154,0.10)" } : undefined}>
+                  <td className="text-right px-3 text-[10px]" style={{ color: "#6a1b9a" }}>
+                    {sl ? `🪜 ${sl.qty.toLocaleString()}${t("주", "sh")}${sl.kind === "market" ? t(" 지금 체결", " deals now") : ""}` : ""}</td>
                   <td className="text-center px-2 font-bold" style={{ color: RED }}>
                     ₩{fmt(p)}{p === book?.best_bid && <span className="text-[9px]"> {t("← 매도 체결", "← sell fills here")}</span>}
                   </td>
                   <td className="text-left px-3 py-[2px]" style={{ color: RED }}>{fmt(q)}</td>
-                </tr>
-              ))}
+                </tr>);
+              })}
             </tbody>
           </table>
+          {lad && (
+            <div className="px-4 py-2 text-[10.5px] border-t"
+                 style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+              {t(lad.ko, lad.en)}
+            </div>)}
         </div>
 
         {/* 체결 — the deals themselves, with their time */}
@@ -5181,8 +5239,15 @@ export default function LiveDeskPage() {
                     {[...raw.rows].reverse().map((r) => {
                       const f = raw.flows.find((x) => x.date === r.date);
                       return (
-                        <tr key={r.date} className="border-t border-[var(--border-default)]/30">
-                          <td className="px-2 py-0.5 text-[var(--text-secondary)]">{r.date}</td>
+                        <tr key={r.date} className="border-t border-[var(--border-default)]/30 cursor-pointer"
+                            onClick={() => openDay(r.date)}
+                            style={dayOpen === r.date ? { background: "rgba(106,27,154,0.10)" } : undefined}>
+                          <td className="px-2 py-0.5 text-[var(--text-secondary)]">
+                            {dayOpen === r.date ? "▼ " : "▶ "}{r.date}
+                            {(r as { live?: boolean }).live && (
+                              <span className="ml-1 text-[9px] px-1 rounded"
+                                    style={{ background: "#e6a817", color: "#12161b" }}>
+                                {t("장중", "live")}</span>)}</td>
                           <td className="text-right px-2">{Math.round(r.open).toLocaleString()}</td>
                           <td className="text-right px-2" style={{ color: RED }}>{Math.round(r.high).toLocaleString()}</td>
                           <td className="text-right px-2" style={{ color: BLUE }}>{Math.round(r.low).toLocaleString()}</td>
@@ -5202,6 +5267,100 @@ export default function LiveDeskPage() {
                     })}
                   </tbody>
                 </table>
+                {dayOpen && (
+                  <div className="mt-2 rounded-lg border p-2" style={{ borderColor: "#6a1b9a" }}>
+                    <b className="text-[11.5px]" style={{ color: "#6a1b9a" }}>
+                      {"\u{1F50E}"} {dayOpen} — {t("이 날을 열었습니다", "this day, opened")}</b>
+                    {!dayData && <span className="ml-2 text-[10.5px] opacity-70">{t("불러오는 중…", "loading…")}</span>}
+                    {dayData && (<>
+                      <table className="mt-1 text-[10.5px] tabular-nums">
+                        <thead><tr className="text-[9.5px] text-[var(--text-muted)]">
+                          <th className="text-left pr-3">{t("출처", "source")}</th>
+                          <th className="text-right px-2">{t("시가", "open")}</th>
+                          <th className="text-right px-2">{t("고가", "high")}</th>
+                          <th className="text-right px-2">{t("저가", "low")}</th>
+                          <th className="text-right px-2">{t("종가", "close")}</th>
+                          <th className="text-right px-2">{t("거래량", "volume")}</th>
+                        </tr></thead>
+                        <tbody>
+                          {([["키움 일봉", "Kiwoom daily", dayData.kiwoom],
+                             ["우리 테이프", "our tape", dayData.tape]] as const).map(([ko, en, v], i) => (
+                            <tr key={i} className="border-t border-[var(--border-default)]/30">
+                              <td className="pr-3 py-0.5">{t(ko, en)}</td>
+                              <td className="text-right px-2">{v ? Math.round(v.open).toLocaleString() : "—"}</td>
+                              <td className="text-right px-2">{v ? Math.round(v.high).toLocaleString() : "—"}</td>
+                              <td className="text-right px-2">{v ? Math.round(v.low).toLocaleString() : "—"}</td>
+                              <td className="text-right px-2 font-bold">{v ? Math.round(v.close).toLocaleString() : "—"}</td>
+                              <td className="text-right px-2">{v ? Math.round(v.volume).toLocaleString() : "—"}</td>
+                            </tr>))}
+                        </tbody>
+                      </table>
+                      {dayData.kiwoom && dayData.tape && (
+                        <div className="text-[10px] mt-0.5"
+                             style={{ color: Math.abs(dayData.kiwoom.close - dayData.tape.close) < 1 ? "#2e7d32" : "#c62828" }}>
+                          {Math.abs(dayData.kiwoom.close - dayData.tape.close) < 1
+                            ? t("종가 일치 — 우리 테이프와 키움이 같은 날을 말합니다.",
+                                "closes agree - our tape and Kiwoom describe the same day.")
+                            : t("종가가 다릅니다 — 우리 테이프는 그날 수집을 시작한 시점부터의 기록입니다.",
+                                "closes differ - our tape only holds what was collected from the moment it started that day.")}
+                        </div>)}
+                      {(dayData.orders || []).length > 0 && (
+                        <div className="mt-2">
+                          <b className="text-[10.5px]">{t("이 날 우리 주문", "our orders that day")}</b>
+                          <table className="text-[10.5px] tabular-nums w-full">
+                            <thead><tr className="text-[9.5px] text-[var(--text-muted)]">
+                              <th className="text-left pr-2">{t("낸 시각", "placed")}</th>
+                              <th className="text-left pr-2">{t("체결 시각", "filled")}</th>
+                              <th className="text-left pr-2">{t("방향", "side")}</th>
+                              <th className="text-right px-2">{t("수량", "qty")}</th>
+                              <th className="text-right px-2">{t("제시가", "offered")}</th>
+                              <th className="text-right px-2">{t("체결가", "fill")}</th>
+                              <th className="text-left pl-2">{t("상태", "status")}</th>
+                            </tr></thead>
+                            <tbody>
+                              {(dayData.orders || []).map((o, i) => (
+                                <tr key={i} className="border-t border-[var(--border-default)]/30">
+                                  <td className="pr-2 py-0.5">{o.at}</td>
+                                  <td className="pr-2">{o.filled_at || "—"}</td>
+                                  <td className="pr-2" style={{ color: o.side === "BUY" ? RED : BLUE }}>{o.side}</td>
+                                  <td className="text-right px-2">{o.qty.toLocaleString()}</td>
+                                  <td className="text-right px-2">{o.limit ? Math.round(o.limit).toLocaleString() : "—"}</td>
+                                  <td className="text-right px-2 font-bold">{o.fill ? Math.round(o.fill).toLocaleString() : "—"}</td>
+                                  <td className="pl-2">{o.status}</td>
+                                </tr>))}
+                            </tbody>
+                          </table>
+                        </div>)}
+                      <div className="mt-2 grid gap-2" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                        <div>
+                          <b className="text-[10.5px]">{t("분봉", "minute bars")} {(dayData.bars || []).length}</b>
+                          <div className="max-h-40 overflow-auto text-[10px] tabular-nums">
+                            {(dayData.bars || []).slice().reverse().map((b, i) => (
+                              <div key={i} className="flex gap-2 border-t border-[var(--border-default)]/20">
+                                <span className="w-14">{String(b.t).slice(0, 5)}</span>
+                                <span className="w-16 text-right">{Math.round(b.c || 0).toLocaleString()}</span>
+                                <span className="w-16 text-right opacity-60">{Math.round(b.v || 0).toLocaleString()}</span>
+                              </div>))}
+                            {!(dayData.bars || []).length && (
+                              <div className="opacity-70 py-1">{t("이 날의 분봉 기록이 없습니다.", "no minute tape stored for this day.")}</div>)}
+                          </div>
+                        </div>
+                        <div>
+                          <b className="text-[10.5px]">{t("초 단위 체결", "executions to the second")} {(dayData.ticks || []).length}/{(dayData.tick_total || 0).toLocaleString()}</b>
+                          <div className="max-h-40 overflow-auto text-[10px] tabular-nums">
+                            {(dayData.ticks || []).map((x, i) => (
+                              <div key={i} className="flex gap-2 border-t border-[var(--border-default)]/20">
+                                <span className="w-16">{x.t}</span>
+                                <span className="w-16 text-right">{Math.round(x.px || 0).toLocaleString()}</span>
+                                <span className="w-12 text-right opacity-60">{(x.qty || 0).toLocaleString()}</span>
+                              </div>))}
+                            {!(dayData.ticks || []).length && (
+                              <div className="opacity-70 py-1">{t("이 날의 체결 기록이 없습니다.", "no executions stored for this day.")}</div>)}
+                          </div>
+                        </div>
+                      </div>
+                    </>)}
+                  </div>)}
                 {drillDays.length > 0 && (
                   <div className="mt-2 text-[10.5px]">
                     <b style={{ color: "#6a1b9a" }}>
