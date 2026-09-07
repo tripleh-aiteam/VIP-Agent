@@ -608,23 +608,30 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
             # price and number of stock it should ask politely how many and how
             # much per stock") — the reply ("10주 시장가" / "10주 215,000원에" /
             # bare "10주") flows through qty_reply into the confirmation.
+            # STEP BY STEP, PRICE FIRST (boss 2026-09-07: "if we do not tell,
+            # it should ask step by step — do you want market price or the
+            # efficient price, THEN how many stocks"). One combined answer
+            # ("10주 시장가") still jumps straight to the confirmation.
             _adv = advise_qty(px)
             _PENDING.clear()
-            _PENDING.update({"offer": True, "side": "BUY", "code": code,
-                             "name": name, "ts": time.time(), "en": en})
+            _PENDING.update({"offer": True, "price_first": True, "side": "BUY",
+                             "code": code, "name": name, "ts": time.time(), "en": en})
             _save_pending()
             if en:
-                return (f"🛒 **{name}** — how many shares would you like, and at "
-                        f"what price?\n"
-                        f"· e.g. **\"10 shares market\"** (fills instantly) · "
-                        f"**\"10 shares at {int(px):,}\"** (your limit price) · "
-                        f"just **\"10 shares\"** → I propose the best order-book price\n"
-                        f"· For reference: live ₩{px:,.0f} · suggested size by budget: "
-                        f"{_adv:,} shares")
-            return (f"🛒 **{name}** — 몇 주를, 어떤 가격으로 사드릴까요?\n"
-                    f"· 예: **\"10주 시장가\"** (즉시 체결) · **\"10주 {int(px):,}원에\"** "
-                    f"(지정가) · 그냥 **\"10주\"** → 호가창 기준 최적가를 제안해 드립니다\n"
-                    f"· 참고: 현재가 ₩{px:,.0f} · 예산 기준 추천 수량 {_adv:,}주")
+                return (f"🛒 **{name}** — step 1 of 2: what PRICE would you like?\n"
+                        f"· **\"market\"** — fills instantly at the live price (₩{px:,.0f})\n"
+                        f"· **\"efficient\"** — my order-book offer (queues at the best spot)\n"
+                        f"· **\"smart\"** — today's-data suggestion, buys a small dip cheaper\n"
+                        f"· or your own price: **\"at {int(px):,}\"**\n"
+                        f"(then step 2 asks the quantity — budget suggestion {_adv:,} shares · "
+                        f"or answer both at once: \"10 shares market\")")
+            return (f"🛒 **{name}** — 1단계/2단계: 어떤 **가격**으로 살까요?\n"
+                    f"· **\"시장가\"** — 현재가(₩{px:,.0f})로 즉시 체결\n"
+                    f"· **\"효율가\"** — 호가창 기준 제가 제안하는 최적가\n"
+                    f"· **\"추천가\"** — 오늘 데이터 기준, 살짝 눌릴 때 더 싸게\n"
+                    f"· 직접 가격: **\"{int(px):,}원에\"**\n"
+                    f"(가격을 고르시면 2단계로 수량을 여쭤봅니다 — 예산 기준 추천 {_adv:,}주 · "
+                    f"한 번에 답하셔도 됩니다: \"10주 시장가\")")
         qty = cmd["qty"] or advise_qty(px)
     fee = BUY_COST_PCT if side == "BUY" else SELL_COST_PCT
     # PRICE OFFERING like a real trader (boss 2026-08-26): his own price wins;
@@ -910,6 +917,13 @@ def qty_reply(db, transcript: Optional[str]) -> Optional[str]:
         qty = max(1, int(m.group(1).replace(",", "")))
     except Exception:
         return None
+    # step 2 of the price-first wizard: the price is already chosen — a bare
+    # quantity completes the order preview (boss 2026-09-07)
+    if p.get("need_qty"):
+        return _make_preview(db, p["code"], p.get("name") or p["code"], "BUY",
+                             qty, False, bool(p.get("en")),
+                             price_asked=p.get("price"),
+                             market_flag=bool(p.get("market")))
     # qty ONLY on a BUY → ask the PRICE as its own question (boss 2026-09-01:
     # "it asked stock number but did not ask price"); sells keep their flow
     if (p.get("side") or "BUY") == "BUY" and p.get("offer"):
@@ -950,9 +964,14 @@ def qty_reply(db, transcript: Optional[str]) -> Optional[str]:
 
 
 def price_reply(db, transcript: Optional[str]) -> Optional[str]:
-    """The price answer to the 💰 question: '시장가' / '151,600원에' / '제안가'."""
+    """The price answer to the 💰 question: '시장가' / '151,600원에' / '제안가'.
+    Also handles STEP 1 of the price-first wizard (boss 2026-09-07): the same
+    words while the 🛒 step-1 question stands store the choice and ask the
+    QUANTITY as step 2."""
     _load_pending()
-    if (not _PENDING or not _PENDING.get("need_price")
+    if (not _PENDING
+            or not (_PENDING.get("need_price")
+                    or (_PENDING.get("offer") and _PENDING.get("price_first")))
             or time.time() - _PENDING.get("ts", 0) > _TTL):
         return None
     t = (transcript or "").strip().lower()
@@ -960,6 +979,48 @@ def price_reply(db, transcript: Optional[str]) -> Optional[str]:
         return None
     p = dict(_PENDING)
     en = bool(p.get("en"))
+    if p.get("offer") and p.get("price_first") and not p.get("qty"):
+        # ── step 1 answered: keep the price, ask the size (step 2) ──
+        _mk = _pr1 = None
+        if re.search(r"시장가|\bmarket\b", t):
+            _mk = True
+        elif re.search(r"추천|스마트|\bsmart\b", t):
+            try:
+                from services.paper_desk import _live_price
+                _px1, _ = _live_price(p["code"])
+                _pr1 = smart_price(p["code"], float(_px1)) if _px1 else None
+            except Exception:
+                _pr1 = None
+        elif re.search(r"효율|제안|최적|알아서|그냥|efficient|\bbest\b|\bbook\b", t):
+            pass                            # book offer = the default path
+        else:
+            _pm1 = re.search(r"(\d[\d,]{3,})\s*(?:원|won)?", t)
+            if not _pm1:
+                return None                 # not a price answer — other lanes try
+            try:
+                _pr1 = float(_pm1.group(1).replace(",", ""))
+            except Exception:
+                return None
+        try:
+            from services.paper_desk import _live_price
+            _px2, _ = _live_price(p["code"])
+        except Exception:
+            _px2 = None
+        _adv1 = advise_qty(float(_px2)) if _px2 else 1
+        _PENDING.clear()
+        _PENDING.update({"need_qty": True, "side": "BUY", "code": p["code"],
+                         "name": p.get("name") or p["code"], "ts": time.time(),
+                         "en": en, "market": bool(_mk), "price": _pr1})
+        _save_pending()
+        _pd = ("시장가" if _mk else f"₩{_pr1:,.0f}" if _pr1 else "효율가(호가창 제안)") \
+            if not en else ("market" if _mk else f"₩{_pr1:,.0f}" if _pr1 else "efficient (book offer)")
+        if en:
+            return (f"💰 **Price: {_pd} — got it.** Step 2: how many shares?\n"
+                    f"· e.g. **\"{_adv1:,} shares\"** (my budget suggestion) · any number"
+                    + (f" · live ₩{_px2:,.0f}" if _px2 else ""))
+        return (f"💰 **가격: {_pd} — 확인했습니다.** 2단계: 몇 주 살까요?\n"
+                f"· 예: **\"{_adv1:,}주\"** (예산 기준 추천) · 원하시는 수량 아무거나"
+                + (f" · 현재가 ₩{_px2:,.0f}" if _px2 else ""))
     if re.search(r"시장가|\bmarket\b", t):
         return _make_preview(db, p["code"], p.get("name") or p["code"], "BUY",
                              int(p["qty"]), False, en, market_flag=True)

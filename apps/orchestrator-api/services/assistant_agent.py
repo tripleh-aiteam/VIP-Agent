@@ -825,7 +825,21 @@ def _all_stocks_in_query(transcript: Optional[str]) -> list[tuple[str, str]]:
     consumed = low
     for name in names:
         nl = name.lower()
-        if len(nl) >= 2 and nl in consumed:
+        if len(nl) < 2:
+            continue
+        # ASCII names need WORD BOUNDARIES — plain substring turned the 'kt'
+        # inside 'sktelecom' into the company KT, so 'I wanna buy Sktelecom'
+        # became a TWO-stock ₩19.9M market order (boss 2026-09-07)
+        if nl.isascii():
+            _pat9 = rf"(?<![a-z0-9]){_re.escape(nl)}(?![a-z0-9])"
+            if not _re.search(_pat9, consumed):
+                continue
+            code = str(_NAME_TO_TICKER[name])
+            if code.isdigit() and code not in seen:
+                seen.add(code)
+                out.append((code, name))
+            consumed = _re.sub(_pat9, " ", consumed)
+        elif nl in consumed:
             code = str(_NAME_TO_TICKER[name])
             if code.isdigit() and code not in seen:
                 seen.add(code)
