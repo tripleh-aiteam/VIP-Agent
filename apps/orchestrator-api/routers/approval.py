@@ -767,6 +767,11 @@ def whynot(db: Session = Depends(get_db)):
         pass
     held_codes = {str(h.get("code")) for h in _held_wn}
     pend_codes = {str(p.get("code")) for p in st.get("pending") or []}
+    # the RAW ledger and the answered marks — an all-passed card whose popup
+    # is lawfully silenced must SAY why (boss 2026-09-07 13:0x, 현대로템:
+    # "if all gates passed tell me why the popup is not coming")
+    _held_raw9 = {str(h.get("code")): h for h in st.get("held") or []}
+    _asked9 = st.get("asked") or {}
     # the same 20 the agent board watches
     stocks: list[tuple[str, str]] = []
     try:
@@ -1158,6 +1163,26 @@ def whynot(db: Session = Depends(get_db)):
             _g0 = next(g for g in r["gates"] if g["n"] == r["stopped_at"])
             r["verdict_ko"] = f"{r['stopped_at']}관문에서 멈춤 — " + _g0["ko"].split(" — ")[0]
             r["verdict_en"] = f"Stopped at gate {r['stopped_at']} — " + _g0["en"].split(" — ")[0]
+        elif str(r["code"]) in _held_raw9:
+            # all gates passed, but the desk REALLY still owns it — the row
+            # was only hidden from the screen (boss deleted the display row)
+            _lt9 = _held_raw9[str(r["code"])]
+            r["verdict_ko"] = (f"모든 관문 통과 — 하지만 이 종목은 이미 보유 중입니다 "
+                               f"({_lt9.get('at')}에 ₩{float(_lt9.get('price') or 0):,.0f} × "
+                               f"{int(_lt9.get('qty') or 0):,}주 매수, 기록은 화면에서 숨김). "
+                               f"종목당 한 손 법칙으로 추가 매수 팝업은 오지 않습니다 — "
+                               f"매도하면 다시 제안됩니다 (챗봇: \"{r['name']} 팔아줘\").")
+            r["verdict_en"] = (f"ALL gates passed — but the desk still OWNS this stock "
+                               f"(bought {_lt9.get('at')} at ₩{float(_lt9.get('price') or 0):,.0f} × "
+                               f"{int(_lt9.get('qty') or 0):,} sh; only the row was hidden). "
+                               f"The one-hand-per-stock law allows no second buy popup — "
+                               f"it is offered again after a sell (chat: \"sell {r['name']}\").")
+        elif _asked9.get(str(r["code"])):
+            r["verdict_ko"] = ("모든 관문 통과 — 하지만 오늘 이 종목의 제안에 이미 답하셨습니다. "
+                               "같은 날 같은 질문을 두 번 하지 않습니다 — 내일 다시 제안됩니다.")
+            r["verdict_en"] = ("ALL gates passed — but you already answered this stock's "
+                               "proposal today. The same question is not asked twice in a "
+                               "day — it is offered again tomorrow.")
         elif not mkt:
             r["verdict_ko"] = ("오늘 관문은 모두 열렸지만 매수 신호(바닥 반등 확인)가 "
                                "켜지지 않아 사지 않았습니다.")
