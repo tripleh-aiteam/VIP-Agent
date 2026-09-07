@@ -355,8 +355,10 @@ def pos_story(code: str, px: float, day: str, bar: float = 35.0,
     # the % formula, stated once and then WORKED OUT on the 1-week line with
     # the exact numbers (boss 2026-09-07: "start by showing 1 week — how you
     # calculate, with the formula and the exact calculation")
-    ko_l.append("각 %의 계산법: (지금 가격 − 그 기간 최저) ÷ (최고 − 최저) × 100")
-    en_l.append("How each % is computed: (price now − window low) ÷ (high − low) × 100")
+    ko_l.append("각 %의 계산법: (지금 가격 − 그 기간의 최저가) ÷ (그 기간의 최고가 − 그 기간의 최저가) × 100 "
+                "— 최저가·최고가는 모두 같은 기간 안의 값입니다.")
+    en_l.append("How each % is computed: (price now − that window's LOW) ÷ (that window's HIGH − "
+                "that window's LOW) × 100 — the high and the low both come from the same window.")
     for k, nk, ne in (("w", "1주일", "1 week"), ("m", "1개월", "1 month"),
                       ("q", "3개월", "3 months"), ("h", "6개월", "6 months")):
         lo, hi = hz.get(k + "_low"), hz.get(k + "_hi")
