@@ -81,6 +81,17 @@ def _save_scan(st: dict, seen_ids: set, seen_held: set | None = None) -> None:
     live = {p.get("id") for p in (cur.get("pending") or [])}
     st["pending"] = [p for p in (st.get("pending") or [])
                      if (p.get("id") not in seen_ids) or (p.get("id") in live)]
+    # AND A POPUP THAT APPEARED WHILE THE SCAN WAS THINKING MUST SURVIVE IT.
+    # The filter above only preserves cards the scan itself remembered, so any
+    # card written to disk during the scan - decide() putting one back when an
+    # order fails, or any other path - was silently erased on the next write.
+    # Caught 2026-09-07 by a lifecycle test: a card was gone 12 seconds after
+    # it appeared, on the very day the rule became "it stays until he answers".
+    # Same fault as the holdings race, in the third and last place it lived.
+    _have9 = {p.get("id") for p in st["pending"]}
+    for _p9 in (cur.get("pending") or []):
+        if _p9.get("id") not in _have9 and _p9.get("id") not in seen_ids:
+            st["pending"].append(_p9)
     # 3. holdings opened by an approval during the scan must survive - AND a
     #    holding CLOSED during the scan must stay closed. The first version
     #    only carried lots forward, so a lot sold or struck off while the scan
@@ -364,14 +375,38 @@ def chat_mirror(code: str, name: str, side: str, qty: int, fill: float) -> bool:
     we could buy or sell using chatbot also'). BUYs join the holding list,
     SELLs close the lot with the full round-trip fields; the history row is
     marked 💬 so the boards tell who ordered. Returns True when mirrored."""
-    try:
-        codes = {c for c, _n, _s in desk_codes()}
-    except Exception:
-        codes = {c for c, _n in SIX}
-    if str(code) not in codes:
-        return False
+    # EVERY chat fill reaches the board (boss 2026-09-07: "when we bought
+    # using the chatbot it should automatically go to our trading list; if
+    # we sold it should go to the trading history") — the old desk-codes
+    # filter silently dropped off-board experiments, so it is gone.
     st = _load()
     _trip: dict = {}
+    # 🚦 the gate verdict AT THIS MOMENT rides with the record (boss
+    # 2026-09-07: "in the reason it should explain this trade was done using
+    # the chatbot even though the conditions were not met, including the
+    # 갭상승 and the others")
+    _gko: list[str] = []
+    _gen: list[str] = []
+    if side == "BUY":
+        try:
+            from routers.approval import whynot_at
+            _wr9 = whynot_at(str(code), _hhmm(), name)
+            if _wr9 and _wr9.get("stopped_at"):
+                _gko.append("⚠️ 이 시점에 매수 관문이 막혀 있었지만, 사장님이 챗봇으로 "
+                            "직접 승인하신 실험 매매입니다. 그 시각의 관문:")
+                _gen.append("⚠️ The buy gates were BLOCKED at this moment, but the boss "
+                            "approved it directly in chat — an experiment trade. The "
+                            "gates at that minute:")
+                for _g9 in _wr9.get("gates") or []:
+                    _mk9 = "✅" if _g9.get("passed") else "⛔"
+                    _gko.append(f"{_mk9} {_g9['n']}. {_g9['ko']}")
+                    _gen.append(f"{_mk9} {_g9['n']}. {_g9['en']}")
+            elif _wr9:
+                _gko.append("✅ 매매 시점에 관문이 모두 열려 있었습니다 — 규칙과 같은 방향의 매수입니다.")
+                _gen.append("✅ All gates were open at the moment of the trade — a buy in "
+                            "the same direction as the rule.")
+        except Exception:
+            pass
     if side == "BUY":
         try:                   # the chatbot's buys join the collector too
             from services.kiwoom_tape import ensure_watched
@@ -399,11 +434,14 @@ def chat_mirror(code: str, name: str, side: str, qty: int, fill: float) -> bool:
                      "pnl_pct": round((float(fill) / _bp9 - 1) * 100, 2),
                      "pnl_won": round((float(fill) - _bp9) * int(qty))}
         st["held"] = [h for h in st.get("held") or [] if h["code"] != code]
+    if side == "SELL" and not _gko:
+        _gko.append("데스크의 -1% 매도 규칙과 무관하게, 사장님의 지시로 실행된 매도입니다.")
+        _gen.append("Sold on the boss's own order, independent of the desk's -1% sell rule.")
     st.setdefault("log", []).append(
         {"id": int(time.time() * 1000) % 10**9, "ts": time.time(),
          "hhmm": _hhmm(), "code": code, "name": name, "side": side,
-         "reasons": ["💬 챗봇 주문 — 사장님이 채팅으로 직접 지시하셨습니다."],
-         "reasons_en": ["💬 Chatbot order — the boss ordered it in chat."],
+         "reasons": ["💬 챗봇 주문 — 사장님이 채팅으로 직접 지시하셨습니다."] + _gko,
+         "reasons_en": ["💬 Chatbot order — the boss ordered it in chat."] + _gen,
          "price": float(fill), "qty": int(qty), "score": None, **_trip,
          "decision": "승인", "at": _hhmm(), "dealt": True, "fill": float(fill),
          "via": "chat"})
@@ -458,7 +496,10 @@ def _enrich_log_rows(st: dict) -> None:
             sc_ko = f" — 오늘 {sc}점." if sc is not None else "."
             sc_en = f" — today {sc} pts." if sc is not None else "."
             l["_rv"] = 5
-            if l.get("side") == "BUY" and (
+            if l.get("side") == "BUY" and l.get("via") != "chat" and (
+                    # a 💬 chat row keeps its OWN story — "bought by the boss's
+                    # order though the gates were blocked" must never be
+                    # repainted into the standard buy narrative (boss 2026-09-07)
                     len(l.get("reasons") or []) <= 2
                     or sum(1 for x in l.get("reasons") or [] if "📋" in str(x)) > 1
                     # rows saved before the ⑥ news line / true-gap story rebuild once
@@ -1145,6 +1186,10 @@ def scan(db) -> dict:
             _p9["stale_en"] = ("⚠️ The condition this was raised on has passed. "
                                "The card stays because the decision is yours; "
                                "approving sends a MARKET order at today's price.")
+            _keep9.append(_p9)          # ... and KEEP it. Marking a card and
+            # then forgetting to keep it is how "it stays until you answer"
+            # quietly became "it disappears after three checks" - the lifecycle
+            # test caught it 44 seconds in.
         elif _sd9 == "SELL" and _c9 not in _ourc9:
             # the ONE case a card is still taken away: a sell for a stock we no
             # longer hold cannot be acted on at all - approving it would only
@@ -1160,6 +1205,19 @@ def scan(db) -> dict:
                  "dealt": None,
                  "why_gone": "조건이 사라져 제안을 거둡니다 / condition no longer true"})
         st["log"] = st["log"][-200:]
+    # 🚦 POPUPS ONLY WHEN THE FULL CASCADE PASSES (boss 2026-09-07: "it keeps
+    # asking buy popups even though I did not try — the popup must come only
+    # when ALL gates pass"). The brain's lane test predates the weekly-
+    # position gate, so a stock the proof menu itself marks BLOCKED could
+    # still raise a popup. The scanner now also asks the whynot cascade —
+    # the very verdicts the proof menu shows — and proposes nothing blocked.
+    _wn_pass9 = None
+    try:
+        from routers.approval import whynot as _wnf9
+        _wn_pass9 = {str(x.get("code")) for x in (_wnf9(db).get("rows") or [])
+                     if not x.get("stopped_at")}
+    except Exception:
+        _wn_pass9 = None
     for code, name, score in _rooms9:
         try:
             px, chg, _t, _s = fast_price(code)
@@ -1256,6 +1314,12 @@ def scan(db) -> dict:
             st.setdefault("why_skip", {})[code] = (
                 "lane=" + (_ln9 or "?") + (" -> popup" if _ln9 == "BUY" else ""))
             if _ln9 != "BUY":
+                st.setdefault("streak", {})[code] = 0
+                continue
+            # the proof menu's own cascade has the final word — no popup for
+            # a stock it marks blocked (boss 2026-09-07)
+            if _wn_pass9 is not None and str(code) not in _wn_pass9:
+                st.setdefault("why_skip", {})[code] = "whynot cascade blocked — no popup"
                 st.setdefault("streak", {})[code] = 0
                 continue
             try:
