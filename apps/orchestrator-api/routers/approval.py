@@ -1097,19 +1097,25 @@ def chart(code: str, mode: str = "min"):
             d = live_tape(code=code, period=60, tick=5, bars=400)
             for b in (d.get("bars") or []):
                 bars.append({"t": (b.get("hhmm") or "")[:5], "o": b.get("open"),
-                             "h": b.get("high"), "l": b.get("low"), "c": b.get("close")})
+                             "h": b.get("high"), "l": b.get("low"), "c": b.get("close"),
+                             "v": b.get("vol")})
         except Exception:
             bars = []
     else:
         try:
             from services.naver_stock import daily_history
-            n = 22 if mode == "month" else 250
+            # every window the chatbot's chart offers (boss 2026-09-07: "one
+            # click and we should see 1-minute, 1-day, 1-week, 1-month,
+            # 3-month, 6-month charts including the volume numbers")
+            n = {"week": 6, "month": 22, "month3": 66, "month6": 132,
+                 "year": 250}.get(mode, 22)
             rows = daily_history(code, days=n)
             for r in reversed(rows):            # oldest → newest for drawing
                 ds = str(r.get("date") or "")
-                bars.append({"t": ds[2:] if mode == "year" else ds[5:],
+                bars.append({"t": ds[2:] if mode in ("year", "month6", "month3") else ds[5:],
                              "o": r.get("open"), "h": r.get("high"),
-                             "l": r.get("low"), "c": r.get("close")})
+                             "l": r.get("low"), "c": r.get("close"),
+                             "v": r.get("volume")})
         except Exception:
             bars = []
     return {"ok": bool(bars), "mode": mode, "code": code, "bars": bars}
@@ -1741,11 +1747,11 @@ def _brain_compute():
                 continue
             e["lane"] = "BUY"
             e["lane_why"] = ("모든 관문 통과 — 팝업으로 승인 요청"
-                             + (" · 알고3도 진입" if e["code"] in _eng
-                                else " · 알고3는 진입 신호 대기 중"))
+                             + (" · 매매 엔진도 진입" if e["code"] in _eng
+                                else " · 진입 신호 대기 중"))
             e["lane_why_en"] = ("all gates passed - asking approval by popup"
-                                + (" · 알고3 is in too" if e["code"] in _eng
-                                   else " · 알고3 still waiting for its entry shape"))
+                                + (" · the engine is in too" if e["code"] in _eng
+                                   else " · waiting for the entry signal"))
     out["lanes"] = {k: [e["name"] for e in out["six"] + out["universe"]
                         if e.get("lane") == k]
                     for k in ("BUY", "DONE", "NOBUY", "HOLD", "SELL")}

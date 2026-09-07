@@ -7428,10 +7428,13 @@ def _run_agent_impl(
                         _rm9 = 5 - len(_row.get("gates") or [])
                         LW.append(f"(나머지 {_rm9}개 관문은 이 관문을 통과한 뒤에 검사합니다)" if _koq
                                   else f"(the remaining {_rm9} gate(s) are checked only after this one is passed)")
+                    from urllib.parse import quote as _q8
                     LW.append("")
-                    LW.append("📎 출처: 메뉴 3 관문 증명 — 챗봇과 보드가 같은 규칙, 같은 문장으로 말합니다."
+                    LW.append((f"[📈 차트 보기 — 1분·1일·1주·1개월·3개월·6개월 + 거래량]"
+                               f"(nav:/testing/chart/{_wc}?n={_q8(str(_wn or _wc))})")
                               if _koq else
-                              "📎 Source: Menu 3's gate proof — the chatbot and the board speak the same rule in the same sentences.")
+                              (f"[📈 See the chart — 1min·1day·1week·1/3/6 months + volume]"
+                               f"(nav:/testing/chart/{_wc}?n={_q8(str(_wn or _wc))})"))
                     return {"intent": "menu3_whynot_at", "language": lang,
                             "reply": "\n".join(LW), "action": None, "speak": True,
                             "transcript": transcript, "tool_used": "menu3_whynot_at"}
@@ -7486,10 +7489,13 @@ def _run_agent_impl(
                     for _x9 in (_pick.get("reasons") if _koq
                                 else (_pick.get("reasons_en") or _pick.get("reasons")) ) or []:
                         LY.append(str(_x9))
+                    from urllib.parse import quote as _q7
                     LY.append("")
-                    LY.append("📎 출처: 메뉴 3 매매 기록 — 팝업·기록과 한 글자까지 같은 이유입니다."
+                    LY.append((f"[📈 차트 보기 — 1분·1일·1주·1개월·3개월·6개월 + 거래량]"
+                               f"(nav:/testing/chart/{_yc}?n={_q7(str(_yn or _yc))})")
                               if _koq else
-                              "📎 Source: the Menu 3 trade record — the same reasons, word for word, as the popup and the history.")
+                              (f"[📈 See the chart — 1min·1day·1week·1/3/6 months + volume]"
+                               f"(nav:/testing/chart/{_yc}?n={_q7(str(_yn or _yc))})"))
                     return {"intent": "menu3_trade_why", "language": lang,
                             "reply": "\n".join(LY), "action": None, "speak": True,
                             "transcript": transcript, "tool_used": "menu3_trade_why"}
@@ -7515,8 +7521,11 @@ def _run_agent_impl(
             and not _re.search(r"줘|해\s*줘|주문|[0-9]+\s*주|얼마|현재가|가격만|price of|history"
                                r"|최고가|최저가|시가|종가|볼륨|주가 알려"
                                # imperative ORDERS go to the trade lane, which now
-                               # carries the gate verdict itself (boss 2026-09-07)
-                               r"|\d+\s*shares?|please\s+(buy|sell)|(buy|sell)\s+\d",
+                               # carries the gate verdict itself (boss 2026-09-07:
+                               # "I wanna buy skhynix right now" must make the order)
+                               r"|\d+\s*shares?|please\s+(buy|sell)|(buy|sell)\s+\d"
+                               r"|wanna\s+(buy|sell)|want\s+to\s+(buy|sell)"
+                               r"|사고\s*싶|팔고\s*싶|살래|팔래",
                                transcript, _re.IGNORECASE)):
         _adv = bool(_re.search(
             r"살까|살\s*까|살가|사까|사야|사도|매수|팔까|팔가|팔아야|매도|어때|어떄|추천"
@@ -7606,13 +7615,16 @@ def _run_agent_impl(
                                 L9.append(f"(나머지 {_rem9}개 관문은 이 관문을 통과한 뒤에 검사합니다)"
                                           if _koq else
                                           f"(the remaining {_rem9} gate(s) are checked only after this one is passed)")
+                        # one CLICK opens the proof chart (boss 2026-09-07: "no
+                        # need for the source — give a clickable chart: 1 min,
+                        # 1 day, 1 week, 1/3/6 months with the volume numbers")
+                        from urllib.parse import quote as _q9
                         L9.append("")
-                        L9.append("📎 출처: 메뉴 3 '아직 왜 안 사나' 관문 증명 + 실시간 모니터링 — 챗봇과 보드가 같은 데이터, 같은 규칙으로 말합니다."
+                        L9.append((f"[📈 차트 보기 — 1분·1일·1주·1개월·3개월·6개월 + 거래량]"
+                                   f"(nav:/testing/chart/{_ac}?n={_q9(str(_row['name']))})")
                                   if _koq else
-                                  "📎 Source: Menu 3's 'Why Not Buying Yet' gate proof + Real Time Monitoring — the chatbot and the board speak from the same data and the same rule.")
-                        L9.append("📈 차트: 메뉴 3에서 종목 카드를 클릭하면 분·월·년 차트와 관문 차트가 열립니다."
-                                  if _koq else
-                                  "📈 Chart: click the stock's card on Menu 3 for the minute/month/year and gate charts.")
+                                  (f"[📈 See the chart — 1min·1day·1week·1/3/6 months + volume]"
+                                   f"(nav:/testing/chart/{_ac}?n={_q9(str(_row.get('name_en') or _row['name']))})"))
                     else:
                         L9.append((f"🧭 {_an} ({_ac}) — 메뉴 3 감시 20종목에 없습니다. 관문 판정은 감시 종목에만 적용되어, "
                                    f"이 종목은 매수/매도 제안 대상이 아닙니다. 감시 종목 편입을 원하시면 말씀해 주세요."
