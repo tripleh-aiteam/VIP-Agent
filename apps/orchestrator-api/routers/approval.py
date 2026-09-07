@@ -464,6 +464,9 @@ def gate_chart(code: str, tf: int = 1):
 
 _WHYNOT9 = {"t": 0.0, "v": None}
 
+# the two names that always lead the Why-Not list (boss 2026-09-07)
+_WN_PIN = {"000660": 0, "005930": 1}
+
 
 def whynot_at(code: str, hhmm: str, name: str = "") -> dict | None:
     """THE GATES AS THEY STOOD AT ONE MINUTE (boss 2026-09-07: "after trading
@@ -700,9 +703,12 @@ def whynot(db: Session = Depends(get_db)):
             snaps = {}
         hit = snaps.get(day) or (snaps.get(max(snaps)) if snaps else None)
         if hit and hit.get("rows"):
+            # SK하이닉스 and 삼성전자 always lead the list (boss 2026-09-07) —
+            # old snapshots re-order at serve time
+            _rows_h = sorted(hit["rows"], key=lambda x: _WN_PIN.get(str(x.get("code")), 2))
             res = {"ok": True, "market_open": False, "remembered": True,
                    "as_of": hit.get("at"), "day": hit.get("day") or day,
-                   "rows": hit["rows"]}
+                   "rows": _rows_h}
             _WHYNOT9["t"], _WHYNOT9["v"] = _t.time(), res
             return res
         # no memory of today — fall through and RECONSTRUCT from the tape
@@ -1053,6 +1059,10 @@ def whynot(db: Session = Depends(get_db)):
             r["verdict_en"] = ("ALL gates passed — waiting for the entry signal (bottom "
                                "rebound confirmation). The popup comes the moment it fires.")
     _hh9 = _t.strftime("%H:%M", _t.gmtime(_t.time() + 9 * 3600))
+    # THE MENU ALWAYS STARTS WITH SK하이닉스 AND 삼성전자 (boss 2026-09-07:
+    # "inside the app this menu should always start from SK hynix and
+    # Samsung 전자") — a stable sort, so everyone else keeps their order.
+    out_rows.sort(key=lambda x: _WN_PIN.get(str(x.get("code")), 2))
     res = {"ok": True, "market_open": mkt, "rows": out_rows}
     if not mkt:
         res["remembered"] = True
