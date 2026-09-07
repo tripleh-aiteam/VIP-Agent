@@ -921,21 +921,30 @@ def whynot(db: Session = Depends(get_db)):
                   "위치 — 기간별 자료 수집 중, 막는 근거 없음. 2관문 통과.",
                   "Position — window data still collecting, nothing blocking. "
                   "Gate 2 passed.")
-        elif _bl <= 35.0:
-            _gate(2, "position", True,
-                  f"위치 — {' · '.join(_parts_k)}. 네 구간을 더해 4로 나누면 "
-                  f"{_bl:.0f}%이고 35% 이하라 살 수 있는 낮은 자리입니다. 2관문 통과.",
-                  f"Position — {' · '.join(_parts_e)}. Adding the four and dividing "
-                  f"by 4 gives {_bl:.0f}%, which is 35% or less — a low place to buy. "
-                  f"Gate 2 passed.")
         else:
-            _gate(2, "position", False,
-                  f"위치가 높습니다 — 지금 {W(px)}. {' · '.join(_parts_k)}. 네 구간을 "
-                  f"더해 4로 나누면 {_bl:.0f}%이고, 35% 이하일 때만 삽니다 → 더 "
-                  f"내려오기를 기다립니다.",
-                  f"The POSITION is high — now {W(px)}. {' · '.join(_parts_e)}. "
-                  f"Adding the four and dividing by 4 gives {_bl:.0f}%, and we buy "
-                  f"only at 35% or less → we wait for it to come down.")
+            # THE VERDICT AND THE SUM FIRST, THE FOUR WINDOWS AFTER (boss
+            # 2026-09-07: "concisely explain about our formula — like, the
+            # average of weekly, monthly, 3 month and 6 month is higher than 35
+            # so we do not buy — and show the formula also"). He should be able
+            # to read the arithmetic in one line, and only then, if he wants
+            # it, the four windows the numbers came from.
+            _sum = " + ".join(f"{x:.0f}" for x in _ps)
+            _ok2 = _bl <= 35.0
+            _head_k = ("위치 — 주·월·3개월·6개월 평균이 35% 이하라 살 수 있는 자리입니다."
+                       if _ok2 else
+                       "위치 — 주·월·3개월·6개월 평균이 35%보다 높아 사지 않습니다.")
+            _head_e = ("Position — the average of week / month / 3-month / 6-month "
+                       "is 35% or less, so this is a place we can buy."
+                       if _ok2 else
+                       "Position — the average of week / month / 3-month / 6-month "
+                       "is ABOVE 35%, so we do not buy.")
+            _calc_k = (f"계산: ({_sum}) ÷ 4 = {_bl:.0f}%  "
+                       f"(35% 이하일 때만 매수 · 지금 {W(px)})")
+            _calc_e = (f"Formula: ({_sum}) ÷ 4 = {_bl:.0f}%  "
+                       f"(buy only at 35% or less · price now {W(px)})")
+            _gate(2, "position", _ok2,
+                  _head_k + " " + _calc_k + " — " + " · ".join(_parts_k),
+                  _head_e + " " + _calc_e + " — " + " · ".join(_parts_e))
         # ③ 거래량 — judged by the PACE for the hour, not the whole day
         # (caught 2026-09-07, the silent morning: comparing one hour's
         # cumulative volume with a FULL day's average called every 10:00
@@ -1645,6 +1654,27 @@ def _brain_compute():
                 _items.append({"k": _k0, "en": _e0, "v": _v0, "ven": _ve0,
                                "s": _it.get("s"), "g": _gk,
                                "bad": (_it.get("s") or 0) < 40})
+        # THE CARD CARRIES THE NUMBERS NOW (boss 2026-09-07: "remove this
+        # part - instead give statistics like opening, current price and how
+        # many % increasing, put it in the 20 agents working at once menu").
+        # The ten-room strip repeated the same ten names one screen below the
+        # board with nothing the board did not already know except these three
+        # numbers, so the numbers move up and the strip goes away.
+        _px0 = _cg0 = _op0 = None
+        try:
+            from services.paper_desk import fast_price as _fp0
+            _q0 = _fp0(code) or (None, None, None, None)
+            _px0 = float(_q0[0]) if _q0[0] else None
+            _cg0 = float(_q0[1]) if _q0[1] is not None else None
+        except Exception:
+            pass
+        try:
+            from services.kiwoom_rules import _open_official as _oo0, _bars_for as _bf0
+            _cs0 = _bf0(code, 5, 60)
+            _op0 = _oo0(code, _kd(), (_cs0[0].get("open") if _cs0 else None))
+            _op0 = float(_op0) if _op0 else None
+        except Exception:
+            pass
         entry = {"code": code, "name": r.get("name"), "items": _items,
                  "score": r.get("score"), "score_100": r.get("score_100"),
                  "gates": gates, "pass": not blocked,
@@ -1656,7 +1686,9 @@ def _brain_compute():
                               if blocked else None,
                  "no_buy_short": blocked[0].get("short") if blocked else None,
                  "no_buy_short_en": blocked[0].get("short_en") if blocked else None,
-                 "blocked_n": len(blocked)}
+                 "blocked_n": len(blocked),
+                 "price": _px0, "chg": _cg0, "open": _op0,
+                 "zone": r.get("zone"), "zone_pos": r.get("zone_pos")}
         if code in SIX:
             out["six"].append(entry)
         else:

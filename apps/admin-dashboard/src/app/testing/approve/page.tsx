@@ -99,7 +99,10 @@ export default function ApprovePage() {
                     no_buy_short?: string | null; no_buy_short_en?: string | null;
                     blocked_n?: number; chosen?: boolean; verdict?: string; lane?: string;
                     lane_why?: string | null; lane_why_en?: string | null; pnl?: number | null;
-                    items?: ChkItem[]; tradeable?: boolean };
+                    items?: ChkItem[]; tradeable?: boolean;
+                    price?: number | null; chg?: number | null;
+                    open?: number | null; zone?: string | null;
+                    zone_pos?: number | null };
   type SellChk = { k: string; en: string; v: string; hit?: boolean; hold?: boolean };
   type SellRow = { code: string; name: string; buy_t: string; base: number; px: number;
                    pnl: number; peak: number; from_peak: number; qty?: number;
@@ -580,6 +583,29 @@ export default function ApprovePage() {
                             {u.pnl >= 0 ? "+" : ""}{u.pnl}%</b>
                         : <span style={{ fontSize: 10.5, opacity: 0.65 }}>{u.score}{t("점", "pts")}</span>}
                     </div>
+                    {/* THE DAY'S THREE NUMBERS - opening, now, and the move
+                        (boss 2026-09-07: "instead give statistics like opening,
+                        current price and how many % increasing, put it in the
+                        20 agents working at once menu"). Clicking the line
+                        still opens this stock's work screen, which is what the
+                        removed ten-room strip used to do. */}
+                    {(u.price != null || u.open != null) && (
+                      <div onClick={() => openRoom(u.code)}
+                           title={t("클릭하면 이 종목의 작업 화면(차트)이 열립니다", "click to open this stock's work screen (charts)")}
+                           style={{ fontSize: 11.5, marginTop: 4, cursor: "pointer",
+                                    display: "flex", gap: 6, alignItems: "center",
+                                    flexWrap: "wrap" }}>
+                        <span style={{ opacity: 0.7 }}>{t("시가", "open")} {W(u.open)}</span>
+                        <span style={{ opacity: 0.45 }}>→</span>
+                        <b>{W(u.price)}</b>
+                        {u.chg != null && (
+                          <span style={{ fontWeight: 700,
+                                         color: (u.chg || 0) >= 0 ? "#e53935" : "#1e88e5" }}>
+                            {(u.chg || 0) >= 0 ? "▲" : "▼"} {Math.abs(u.chg || 0).toFixed(2)}%</span>)}
+                        {u.zone && u.zone_pos != null &&
+                          zoneChip({ pos: u.zone_pos, zone: u.zone as "buy" | "sell" | "mid" })}
+                        <span style={{ fontSize: 10, opacity: 0.5 }}>📈</span>
+                      </div>)}
                     <div style={{ marginTop: 5 }}>
                       {STEP.map((s, i) => {
                         const g = (u.gates || [])[i];
@@ -686,43 +712,18 @@ export default function ApprovePage() {
             </div>
           </div>);
       })()}
-      {/* ─ the ten rooms — market hours only (boss 2026-09-03 19:4x: "these
-          things also no need after market") ─ */}
-      {feed?.market_open !== false && <>
-      {!feed && <div style={{ padding: "26px 0", fontSize: 13.5, opacity: 0.7 }}>
-        {t("⏳ 데스크를 깨우는 중입니다 — 10개 방을 준비하고 있어요… (첫 로딩은 몇 초 걸릴 수 있습니다)", "⏳ Waking the desk — preparing the 10 rooms… (the first load can take a few seconds)")}</div>}
-      {feed && (feed.rooms || []).length === 0 &&
-        <div style={{ padding: "26px 0", fontSize: 13.5, opacity: 0.7 }}>
-          {t("⏳ 에이전트가 첫 스캔을 돌리는 중 — 잠시 후 방이 나타납니다 (자동 새로고침).", "⏳ The agent is running its first scan — rooms appear shortly (auto-refresh).")}</div>}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(196px,1fr))", gap: 10 }}>
-        {(feed?.rooms || []).map((r) => (
-          <div key={r.code} onClick={() => openRoom(r.code)}
-               style={{ border: `1px solid ${open === r.code ? "#e6a817" : "rgba(128,128,128,0.35)"}`,
-                        borderRadius: 10, padding: "10px 12px", cursor: "pointer" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <b style={{ fontSize: 13.5 }}>{r.held ? "📦 " : ""}{r.name}</b>
-              {r.score != null && <span style={{ fontSize: 11, color: "#e6a817" }}>{r.score}{t("점", " pts")}</span>}
-            </div>
-            <div style={{ fontSize: 12.5, marginTop: 3 }}>
-              {W(r.price)} {r.chg != null &&
-                <span style={{ color: (r.chg || 0) >= 0 ? "#e53935" : "#1e88e5" }}>
-                  {(r.chg || 0) >= 0 ? "▲" : "▼"} {Math.abs(r.chg || 0).toFixed(2)}%</span>}
-            </div>
-            <div style={{ marginTop: 4, display: "flex", gap: 4, flexWrap: "wrap" }}>
-              {zoneChip(r.zone)}
-              {r.held && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8,
-                                        background: "#2e7d32", color: "#fff" }}>
-                {t("보유 ", "held ")}{(r.held.qty ?? 0).toLocaleString()}{t("주", " sh")} {r.pnl != null ? `(${r.pnl >= 0 ? "+" : ""}${r.pnl}%)` : ""}</span>}
-            </div>
-          </div>
-        ))}
-      </div>
-      </>}
-
+      {/* ─ the ten-room strip was REMOVED (boss 2026-09-07: "remove this part
+          - instead give statistics like opening, current price and how many %
+          increasing, put it in the 20 agents working at once menu"). It listed
+          the same ten names the board above already walks; its three numbers
+          now ride on each board card, and the card's price line still opens
+          the agent-at-work screen below. ─ */}
       {/* ─ the opened room: the agent at work ─ */}
       {open && (
         <div style={{ border: "1px solid #e6a817", borderRadius: 10, padding: 14, marginTop: 14 }}>
-          <b style={{ fontSize: 14 }}>🔍 {feed?.rooms.find((x) => x.code === open)?.name} {t(" — 에이전트 작업 화면", " — the agent at work")}</b>
+          <b style={{ fontSize: 14 }}>🔍 {feed?.rooms.find((x) => x.code === open)?.name
+              || [...(brain?.six || []), ...(brain?.universe || [])].find((x) => x.code === open)?.name
+              || open} {t(" — 에이전트 작업 화면", " — the agent at work")}</b>
           <div style={{ marginTop: 8 }}>
             {steps.slice(0, shown).map((s, i) => (
               <div key={i} style={{ fontSize: 13, padding: "4px 0", opacity: i === shown - 1 ? 1 : 0.85 }}>

@@ -132,10 +132,10 @@ export default function WhyNotPanel() {
                                 borderLeft: `3px solid ${g.passed ? "#2e7d32" : "#c62828"}`,
                                 fontWeight: !g.passed && g.n === r.stopped_at ? 700 : 400 }}>
                     {g.passed ? "✅" : "⛔"} <b>{g.n}. {t(
-                      ({ gap: "갭상승 관문", position: "주간 포지션 관문", bottom: "바닥 확인 관문",
+                      ({ gap: "갭상승 관문", position: "위치 관문 (주·월·3개월·6개월)", bottom: "바닥 확인 관문",
                          volume: "거래량 관문", news: "나쁜 뉴스 관문",
                          score: "100 체크리스트 관문" } as Record<string, string>)[g.key] || g.key,
-                      ({ gap: "Gap-up gate", position: "Weekly-position gate", bottom: "Bottom-check gate",
+                      ({ gap: "Gap-up gate", position: "Position gate (week·month·3m·6m)", bottom: "Bottom-check gate",
                          volume: "Volume gate", news: "Bad-news gate",
                          score: "100-checklist gate" } as Record<string, string>)[g.key] || g.key)}</b>
                     {" — "}{ko ? g.ko : g.en}
