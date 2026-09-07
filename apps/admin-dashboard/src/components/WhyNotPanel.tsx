@@ -130,6 +130,7 @@ export default function WhyNotPanel() {
                        style={{ padding: "6px 9px", borderRadius: 7, marginBottom: 5,
                                 background: g.passed ? "rgba(46,125,50,0.06)" : "rgba(198,40,40,0.07)",
                                 borderLeft: `3px solid ${g.passed ? "#2e7d32" : "#c62828"}`,
+                                whiteSpace: "pre-line",  // the position story is line-by-line
                                 fontWeight: !g.passed && g.n === r.stopped_at ? 700 : 400 }}>
                     {g.passed ? "✅" : "⛔"} <b>{g.n}. {t(
                       ({ gap: "갭상승 관문", position: "위치 관문 (주·월·3개월·6개월)", bottom: "바닥 확인 관문",

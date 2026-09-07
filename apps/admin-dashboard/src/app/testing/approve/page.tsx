@@ -33,7 +33,8 @@ type Stats = { trips: number; wins: number; losses: number; win_pct: number;
                worst?: { name: string; pct: number } | null };
 type Feed = { ok: boolean; market_open: boolean; rooms: Room[]; pending: Sug[];
               held: { code: string; name: string; qty: number; price: number; at: string;
-                      sug_at?: string; live?: number | null }[];
+                      sug_at?: string; live?: number | null;
+                      pos_story?: string; pos_story_en?: string }[];
               log: LogRow[]; stats?: Stats | null;
               pulse?: { sox?: number | null; nasdaq?: number | null;
                         kospi?: number | null; kospi_px?: string | null } | null;
@@ -1045,7 +1046,13 @@ export default function ApprovePage() {
                           holdKo.push(`① ➡️ 지금은 보합(옆으로 유지) 중입니다 — ${tale}`);
                           holdEn.push(`① ➡️ Price is holding steady right now — ${taleEn}`);
                         }
-                        if (z9?.zone === "buy") {
+                        if (h.pos_story) {
+                          // the SAME extended position story every surface tells
+                          // (boss 2026-09-07: "implement it to the holding case
+                          // also") — line-by-line windows, formula, reading
+                          holdKo.push(`② ${h.pos_story}`);
+                          holdEn.push(`② ${h.pos_story_en || h.pos_story}`);
+                        } else if (z9?.zone === "buy") {
                           holdKo.push(`② 매수구간(바닥권, 연중 ${posTxt})입니다 — 바닥권에서는 팔지 않습니다.`);
                           holdEn.push(`② It sits in the BUYING zone (${posTxt} of the year, near the bottom) — we do not sell the bottom.`);
                         } else if (z9?.zone === "sell") {
@@ -1104,7 +1111,7 @@ export default function ApprovePage() {
                                       background: "rgba(46,125,50,0.06)", padding: "6px 9px",
                                       fontSize: 12, lineHeight: 1.55 }}>
                           <b style={{ color: "#2e7d32" }}>🟢 {t("보유 이유 (지금 기준)", "Why we are holding (live)")}</b>
-                          {holdL.map((x, k2) => <div key={k2}>· {x}</div>)}
+                          {holdL.map((x, k2) => <div key={k2} style={{ whiteSpace: "pre-line" }}>· {x}</div>)}
                           {nw9?.link && <a href={nw9.link} target="_blank" rel="noreferrer"
                             style={{ fontWeight: 800, color: "#1565c0", fontSize: 11.5 }}>
                             📎 {t("뉴스 기사 전체 읽기", "read the full news article")}</a>}

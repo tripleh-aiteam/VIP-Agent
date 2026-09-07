@@ -311,6 +311,69 @@ def _hz_stats(code: str, day: str) -> dict:
     return out
 
 
+def pos_story(code: str, px: float, day: str, bar: float = 35.0,
+              context: str = "buy") -> dict | None:
+    """THE POSITION FORMULA, TOLD SO A PERSON CAN FOLLOW IT (boss 2026-09-07:
+    "we created the position formula last Friday but it is not easily
+    understandable — extend it and make it understandable, and implement it
+    to all other cases, buying and holding also"). One storyteller for every
+    surface — the whynot gate, the buy reasons, the holding reasons, the
+    chatbot — so the same numbers always wear the same words.
+
+    Returns {'ko','en','blend','ok','parts'} or None without data. `context`:
+    'buy' ends with the buy/no-buy verdict; 'hold' ends with the holding
+    reading (the -1% rule still decides the sell)."""
+    hz = _hz_stats(code, day) or {}
+    if not px:
+        return None
+    parts = []
+    ko_l = ["📍 위치 (주·월·3·6개월) — 지금 가격이 각 기간의 최저~최고 사이 어디쯤인지 봅니다. "
+            "0% = 그 기간 제일 쌌던 값(가장 싼 자리), 100% = 제일 비쌌던 값(가장 비싼 자리)."]
+    en_l = ["📍 POSITION (week·month·3m·6m) — where today's price sits between each "
+            "window's lowest and highest. 0% = the cheapest that window ever was, "
+            "100% = the most expensive."]
+    for k, nk, ne in (("w", "1주일", "1 week"), ("m", "1개월", "1 month"),
+                      ("q", "3개월", "3 months"), ("h", "6개월", "6 months")):
+        lo, hi = hz.get(k + "_low"), hz.get(k + "_hi")
+        if lo and hi and hi > lo:
+            v = max(0.0, min(100.0, (float(px) - lo) / (hi - lo) * 100))
+            parts.append(v)
+            tag_k = "싼 자리" if v < 35 else "중간" if v < 65 else "비싼 자리"
+            tag_e = "cheap" if v < 35 else "middle" if v < 65 else "expensive"
+            ko_l.append(f"· {nk}: 최저 ₩{lo:,.0f} ~ 최고 ₩{hi:,.0f} → 지금 ₩{px:,.0f}는 "
+                        f"{v:.0f}% 지점 ({tag_k})")
+            en_l.append(f"· {ne}: low ₩{lo:,.0f} ~ high ₩{hi:,.0f} → now ₩{px:,.0f} "
+                        f"sits at {v:.0f}% ({tag_e})")
+    if not parts:
+        return None
+    blend = sum(parts) / len(parts)
+    ok = blend <= bar
+    ssum = " + ".join(f"{x:.0f}" for x in parts)
+    # one decimal on the blend, so "35.5% > 35%" never reads as "35 > 35"
+    ko_l.append(f"공식: 네 기간의 평균 = ({ssum}) ÷ {len(parts)} = {blend:.1f}%")
+    en_l.append(f"Formula: the average of the four = ({ssum}) ÷ {len(parts)} = {blend:.1f}%")
+    if context == "hold":
+        ko_l.append(f"→ 지금 평균 {blend:.1f}% 지점입니다 (낮을수록 싼 자리). "
+                    f"보유 중의 매도는 이 위치가 아니라 -1% 규칙이 결정합니다.")
+        en_l.append(f"→ It sits at an average {blend:.1f}% (lower = cheaper). While "
+                    f"holding, the SELL is decided by the -1% rule, not this position.")
+    elif ok:
+        ko_l.append(f"규칙: 평균이 {bar:.0f}% 이하(아래쪽 싼 자리)일 때만 삽니다 → "
+                    f"{blend:.1f}% ≤ {bar:.0f}% ✔ 살 수 있는 자리입니다.")
+        en_l.append(f"Rule: we buy only when the average is {bar:.0f}% or less (the cheap "
+                    f"bottom side) → {blend:.1f}% ≤ {bar:.0f}% ✔ a place we can buy.")
+    else:
+        ko_l.append(f"규칙: 평균이 {bar:.0f}% 이하(아래쪽 싼 자리)일 때만 삽니다 → "
+                    f"{blend:.1f}% > {bar:.0f}% ✘ 아직 비싼 자리라 사지 않습니다. "
+                    f"평균이 {bar:.0f}% 아래로 내려오면 다시 삽니다.")
+        en_l.append(f"Rule: we buy only when the average is {bar:.0f}% or less (the cheap "
+                    f"bottom side) → {blend:.1f}% > {bar:.0f}% ✘ still too expensive, so "
+                    f"we do not buy. It becomes buyable when the average comes under "
+                    f"{bar:.0f}%.")
+    return {"ko": "\n".join(ko_l), "en": "\n".join(en_l),
+            "blend": round(blend, 1), "ok": ok, "parts": [round(p) for p in parts]}
+
+
 def _week_stats(code: str, day: str):
     """(low5, high5, avg5) over the five sessions before `day` — everything a
     'where is it in its week' test could want (boss 2026-09-04: "check with our

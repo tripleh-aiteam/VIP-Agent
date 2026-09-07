@@ -382,6 +382,20 @@ def feed(db: Session = Depends(get_db)):
                 except Exception:
                     _pv9 = None
             h["live"] = _pv9
+            # the POSITION story rides with every held lot too (boss
+            # 2026-09-07: "implement this to all other cases, buying and
+            # holding also") — hold context: the -1% rule decides the sell
+            if _pv9:
+                try:
+                    from services.kiwoom_rules import pos_story as _psh
+                    from services.kiwoom_tape import _day as _kdh
+                    _sth = _psh(str(h.get("code")), float(_pv9), _kdh(),
+                                context="hold")
+                    if _sth:
+                        h["pos_story"] = _sth["ko"]
+                        h["pos_story_en"] = _sth["en"]
+                except Exception:
+                    pass
     except Exception:
         pass
     return {"ok": True, "market_open": mkt, "rooms": rooms, "pulse": _pulse9,
@@ -564,41 +578,20 @@ def whynot_at(code: str, hhmm: str, name: str = "") -> dict | None:
     # "have you implemented these formula to all cases, all places including
     # chatbot?"). This helper answers "what were the gates at 10:23", and the
     # chatbot reads it, so it must judge by the rule the desk actually applies.
-    _bl9 = None
-    _pk9, _pe9 = [], []
+    _st9p = None
     try:
-        from services.kiwoom_rules import _hz_stats as _hz9f
-        _hzm = _hz9f(code, day) or {}
-        _ps9 = []
-        for _k, _nk, _ne in (("w", "주", "week"), ("m", "월", "month"),
-                             ("q", "3개월", "3mth"), ("h", "6개월", "6mth")):
-            _lo, _hi = _hzm.get(_k + "_low"), _hzm.get(_k + "_hi")
-            if px and _lo and _hi and _hi > _lo:
-                _v = max(0.0, min(100.0, (px - _lo) / (_hi - _lo) * 100))
-                _ps9.append(_v)
-                _pk9.append(f"{_nk} {_v:.0f}%")
-                _pe9.append(f"{_ne} {_v:.0f}%")
-        if _ps9:
-            _bl9 = sum(_ps9) / len(_ps9)
+        from services.kiwoom_rules import pos_story as _pstory9
+        _st9p = _pstory9(code, float(px or 0), day)
     except Exception:
-        pass
-    if _bl9 is None:
+        _st9p = None
+    if _st9p is None:
         _g(2, "position", True, "위치 자료 없음 — 막는 근거 없음. 2관문 통과.",
            "No position data — nothing blocking. Gate 2 passed.")
-    elif _bl9 <= 35.0:
-        _g(2, "position", True,
-           f"위치 — {hhmm} {W9(px)} 기준 {' · '.join(_pk9)} → 네 구간 평균 "
-           f"{_bl9:.0f}% (35% 이하). 2관문 통과.",
-           f"Position — at {hhmm}, {W9(px)}: {' · '.join(_pe9)} → averaging "
-           f"{_bl9:.0f}% across the four windows (35% or less). Gate 2 passed.")
     else:
-        _g(2, "position", False,
-           f"위치가 높았습니다 — {hhmm} {W9(px)} 기준 {' · '.join(_pk9)} → 네 구간 "
-           f"평균 {_bl9:.0f}%. 35% 이하일 때만 삽니다 — 그 시각은 살 자리가 "
-           f"아니었습니다.",
-           f"The POSITION was high — at {hhmm}, {W9(px)}: {' · '.join(_pe9)} → "
-           f"averaging {_bl9:.0f}%. We buy only at 35% or less — not a buying "
-           f"place at that minute.")
+        # the same line-by-line story, stamped with the asked minute
+        _g(2, "position", _st9p["ok"],
+           f"({hhmm} 그 시각 {W9(px)} 기준)\n" + _st9p["ko"],
+           f"(as of {hhmm}, {W9(px)})\n" + _st9p["en"])
     # ③ 거래량 PACE by that minute (cumulative vs a normal day by that hour)
     try:
         from services.kiwoom_rules import _vol5
@@ -916,35 +909,24 @@ def whynot(db: Session = Depends(get_db)):
         except Exception:
             pass
         r["pos_blend"] = round(_bl, 1) if _bl is not None else None
-        if _bl is None:
+        # THE STORY A PERSON CAN FOLLOW (boss 2026-09-07: "the formula is not
+        # easily understandable — extend it and make it understandable"): the
+        # shared storyteller lays the four windows out line by line, then the
+        # arithmetic, then the rule — the SAME text on every surface.
+        _st2 = None
+        try:
+            from services.kiwoom_rules import pos_story as _pstory
+            _st2 = _pstory(code, float(px or 0), day)
+        except Exception:
+            _st2 = None
+        if _st2 is None:
             _gate(2, "position", True,
                   "위치 — 기간별 자료 수집 중, 막는 근거 없음. 2관문 통과.",
                   "Position — window data still collecting, nothing blocking. "
                   "Gate 2 passed.")
         else:
-            # THE VERDICT AND THE SUM FIRST, THE FOUR WINDOWS AFTER (boss
-            # 2026-09-07: "concisely explain about our formula — like, the
-            # average of weekly, monthly, 3 month and 6 month is higher than 35
-            # so we do not buy — and show the formula also"). He should be able
-            # to read the arithmetic in one line, and only then, if he wants
-            # it, the four windows the numbers came from.
-            _sum = " + ".join(f"{x:.0f}" for x in _ps)
-            _ok2 = _bl <= 35.0
-            _head_k = ("위치 — 주·월·3개월·6개월 평균이 35% 이하라 살 수 있는 자리입니다."
-                       if _ok2 else
-                       "위치 — 주·월·3개월·6개월 평균이 35%보다 높아 사지 않습니다.")
-            _head_e = ("Position — the average of week / month / 3-month / 6-month "
-                       "is 35% or less, so this is a place we can buy."
-                       if _ok2 else
-                       "Position — the average of week / month / 3-month / 6-month "
-                       "is ABOVE 35%, so we do not buy.")
-            _calc_k = (f"계산: ({_sum}) ÷ 4 = {_bl:.0f}%  "
-                       f"(35% 이하일 때만 매수 · 지금 {W(px)})")
-            _calc_e = (f"Formula: ({_sum}) ÷ 4 = {_bl:.0f}%  "
-                       f"(buy only at 35% or less · price now {W(px)})")
-            _gate(2, "position", _ok2,
-                  _head_k + " " + _calc_k + " — " + " · ".join(_parts_k),
-                  _head_e + " " + _calc_e + " — " + " · ".join(_parts_e))
+            r["pos_blend"] = _st2["blend"]
+            _gate(2, "position", _st2["ok"], _st2["ko"], _st2["en"])
         # ③ 거래량 — judged by the PACE for the hour, not the whole day
         # (caught 2026-09-07, the silent morning: comparing one hour's
         # cumulative volume with a FULL day's average called every 10:00
@@ -1834,13 +1816,26 @@ def _brain_compute():
             _rk5 = next((i + 1 for i, x in enumerate(_elig5)
                          if x["code"] == e["code"]), None)
             e["lane"] = "NOBUY"
-            e["lane_why"] = (f"모든 관문 통과 — 하지만 오늘 통과 종목 {len(_elig5)}개 중 "
-                             f"점수 {e.get('score')}점({_rk5}등)이라 최고 5종목에 밀렸습니다. "
-                             f"점수가 낮으면 잡지 않고 더 좋은 종목을 고릅니다.")
-            e["lane_why_en"] = (f"all gates open — but among today's {len(_elig5)} "
-                                f"passers its score {e.get('score')} ranks #{_rk5}, "
-                                f"outside the best five. A low score is not taken; "
-                                f"we choose the better cases.")
+            # A RANK MUST BE A REAL RANK (boss 2026-09-07, the 현대로템 card:
+            # "0개 중 57.8점(None등)" - it was told it lost a competition
+            # among zero candidates, which is how the silenced-desk bug
+            # showed its face on the board. If the seat count cannot be
+            # stated, the card says the plain truth instead of a fake rank.)
+            if _rk5 is None or not _elig5:
+                e["lane_why"] = ("모든 관문 통과 — 오늘의 5자리 경쟁에 들어가지 "
+                                 "못했습니다(이미 답하신 종목이거나 보유 중). "
+                                 "매도 후 다시 경쟁에 들어갑니다.")
+                e["lane_why_en"] = ("all gates open — but it is not in today's "
+                                    "five-seat competition (already answered or "
+                                    "already held); it competes again after we sell.")
+            else:
+                e["lane_why"] = (f"모든 관문 통과 — 하지만 오늘 통과 종목 {len(_elig5)}개 중 "
+                                 f"점수 {e.get('score')}점({_rk5}등)이라 최고 5종목에 밀렸습니다. "
+                                 f"점수가 낮으면 잡지 않고 더 좋은 종목을 고릅니다.")
+                e["lane_why_en"] = (f"all gates open — but among today's {len(_elig5)} "
+                                    f"passers its score {e.get('score')} ranks #{_rk5}, "
+                                    f"outside the best five. A low score is not taken; "
+                                    f"we choose the better cases.")
         else:
             # ONE CONDITION FOR BOTH (boss 2026-09-03 14:3x: "make it BUY", and
             # "삼성전자 keeps saying BUY but the popup is not coming"). The board

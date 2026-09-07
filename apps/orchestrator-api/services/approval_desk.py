@@ -73,10 +73,38 @@ def _save_scan(st: dict, seen_ids: set, seen_held: set | None = None) -> None:
         st.pop("_desk_closed", None)
         _save(st)
         return
-    # 1. asked marks merge, and a mark made during the scan wins
+    # 1. asked marks merge, and a mark made during the scan wins — BUT ONLY
+    #    TODAY'S MARKS (boss 2026-09-07: "현대로템 and 한국전력 pass every gate
+    #    and the popup is not coming"). The daily reset above clears yesterday's
+    #    answers; this merge then read them straight back off disk and put them
+    #    all back, so 09-03's twenty answers had been silencing the desk ever
+    #    since. Every one of the twenty board stocks counted as "already
+    #    answered": the scanner skipped them all, and the board's five seats
+    #    had nobody eligible to fill them, which is why gate-passing stocks
+    #    were told they lost a competition among 0 candidates. An answer is
+    #    only an answer for the day it was given.
     merged = dict(st.get("asked") or {})
-    merged.update(cur.get("asked") or {})
+    _cur9 = dict(cur.get("asked") or {})
+    _today9 = None
+    try:
+        from services.kiwoom_tape import _day as _kd9
+        _today9 = str(_kd9())
+    except Exception:
+        pass
+    if _today9 and str(cur.get("asked_day") or "") != _today9:
+        _cur9 = {}                      # disk still holds another day's answers
+    merged.update(_cur9)
+    if _today9:
+        import datetime as _dt9
+        def _mark_today(_ts):
+            try:
+                return _dt9.datetime.fromtimestamp(float(_ts)).strftime("%Y%m%d") == _today9
+            except Exception:
+                return False
+        merged = {c: t for c, t in merged.items() if _mark_today(t)}
     st["asked"] = merged
+    if _today9:
+        st["asked_day"] = _today9
     # 2. a popup that vanished from disk during the scan was ANSWERED - drop it
     live = {p.get("id") for p in (cur.get("pending") or [])}
     st["pending"] = [p for p in (st.get("pending") or [])
@@ -2344,19 +2372,26 @@ def _why_buy(code: str, name: str, hold: dict):
                               f"→ 지금 ₩{_pxb:,.0f} = {_vb:.0f}%")
                 _rowse.append(f"     · {_nbe}: low ₩{_lob:,.0f} ~ high ₩{_hib:,.0f} "
                               f"→ now ₩{_pxb:,.0f} = {_vb:.0f}%")
-        if _ppb:
+        # ONE STORYTELLER FOR EVERY SURFACE (boss 2026-09-07: "the formula is
+        # not easily understandable — extend it and make it understandable,
+        # and implement it to all other cases, buying and holding also"):
+        # the same pos_story the whynot gate and the chatbot read.
+        from services.kiwoom_rules import pos_story as _psb
+        _stb = _psb(code, _pxb, _kdb()) if _pxb else None
+        if _stb:
+            _lk = _stb["ko"].split("\n")
+            _le = _stb["en"].split("\n")
+            R.append("① " + _lk[0])
+            R.extend("     " + x for x in _lk[1:])
+            E.append("① " + _le[0])
+            E.extend("     " + x for x in _le[1:])
+        elif _ppb:
             _blb = sum(_ppb) / len(_ppb)
-            R.append(f"① 위치 — 네 구간 평균 {_blb:.0f}% (35% 이하가 매수 자리). "
-                     f"각 구간의 최저~최고 사이에서 지금 가격의 위치입니다:")
+            R.append(f"① 위치 — 네 구간 평균 {_blb:.0f}% (35% 이하가 매수 자리).")
             R.extend(_rowsk)
-            R.append(f"     → ({' + '.join('%.0f' % x for x in _ppb)}) ÷ 4 = "
-                     f"{_blb:.0f}%")
             E.append(f"① POSITION — {_blb:.0f}% averaged across four windows "
-                     f"(35% or less is where we buy). Where today's price sits "
-                     f"between each window's low and high:")
+                     f"(35% or less is where we buy).")
             E.extend(_rowse)
-            E.append(f"     → ({' + '.join('%.0f' % x for x in _ppb)}) ÷ 4 = "
-                     f"{_blb:.0f}%")
     except Exception:
         pass
     if mid is not None and midy is not None:
