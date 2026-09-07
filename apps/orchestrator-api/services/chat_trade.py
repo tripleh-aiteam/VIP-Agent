@@ -529,6 +529,39 @@ def build_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
                          pct=cmd.get("pct"))
 
 
+def _gate_verdict(db, code: str):
+    """The Menu 3 whynot cascade for one stock, in the app's own sentences —
+    (ko_text, en_text, blocked). Shared by the STEP-1 ask and the final
+    confirmation (boss 2026-09-07: 'it should check FIRST whether it is a
+    buying case — all gates allowed — before anything else')."""
+    try:
+        from routers.approval import whynot as _wn9c
+        _rw9 = next((x for x in (_wn9c(db).get("rows") or [])
+                     if str(x.get("code")) == str(code)), None)
+        if not _rw9:
+            return None, None, False
+        if not _rw9.get("stopped_at"):
+            return ("🤖 메뉴 3 에이전트 판정: ✅ 모든 관문 통과 — "
+                    "메뉴 3 기준으로도 살 수 있는 자리입니다.",
+                    "🤖 Menu 3 agent's verdict: ✅ all gates passed — "
+                    "a place to buy by the desk's own rules too.", False)
+        _GN_KO = {"gap": "갭상승 관문", "position": "주간 포지션 관문",
+                  "volume": "거래량 관문", "news": "나쁜 뉴스 관문",
+                  "score": "100 체크리스트 관문"}
+        _GN_EN = {"gap": "Gap-up gate", "position": "Weekly-position gate",
+                  "volume": "Volume gate", "news": "Bad-news gate",
+                  "score": "100-checklist gate"}
+        _lk9 = ["🤖 메뉴 3 에이전트 판정 — 지금 규칙으로 이 매수는 막혀 있습니다:"]
+        _le9 = ["🤖 Menu 3 agent's verdict — this buy is BLOCKED by the running rule:"]
+        for _g9 in _rw9.get("gates") or []:
+            _mk = "✅" if _g9.get("passed") else "⛔"
+            _lk9.append(f"{_mk} {_g9['n']}. {_GN_KO.get(_g9.get('key'), _g9.get('key'))} — {_g9['ko']}")
+            _le9.append(f"{_mk} {_g9['n']}. {_GN_EN.get(_g9.get('key'), _g9.get('key'))} — {_g9['en']}")
+        return "\n".join(_lk9), "\n".join(_le9), True
+    except Exception:
+        return None, None, False
+
+
 def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
                   all_: bool, en: bool, price_asked: Optional[float] = None,
                   market_flag: bool = False,
@@ -617,15 +650,29 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
             _PENDING.update({"offer": True, "price_first": True, "side": "BUY",
                              "code": code, "name": name, "ts": time.time(), "en": en})
             _save_pending()
+            # THE VERDICT COMES BEFORE ANY QUESTION (boss 2026-09-07: "it
+            # should check FIRST whether it is a buying case — all gates
+            # allowed — SK텔레콤 is high in position so it will not buy"):
+            # the step-1 ask opens with the same gate cascade the app shows.
+            _vk0, _ve0, _blk0 = _gate_verdict(db, code)
+            _hd0 = ""
+            if _vk0:
+                _hd0 = (_ve0 if en else _vk0) + "\n"
+                _hd0 += (("**Still want to buy anyway (an experiment)?** Then — \n\n"
+                          if _blk0 else "\n")
+                         if en else
+                         ("**그래도 실험 매수를 원하시면** — \n\n" if _blk0 else "\n"))
             if en:
-                return (f"🛒 **{name}** — step 1 of 2: what PRICE would you like?\n"
+                return (_hd0 +
+                        f"🛒 **{name}** — step 1 of 2: what PRICE would you like?\n"
                         f"· **\"market\"** — fills instantly at the live price (₩{px:,.0f})\n"
                         f"· **\"efficient\"** — my order-book offer (queues at the best spot)\n"
                         f"· **\"smart\"** — today's-data suggestion, buys a small dip cheaper\n"
                         f"· or your own price: **\"at {int(px):,}\"**\n"
                         f"(then step 2 asks the quantity — budget suggestion {_adv:,} shares · "
                         f"or answer both at once: \"10 shares market\")")
-            return (f"🛒 **{name}** — 1단계/2단계: 어떤 **가격**으로 살까요?\n"
+            return (_hd0 +
+                    f"🛒 **{name}** — 1단계/2단계: 어떤 **가격**으로 살까요?\n"
                     f"· **\"시장가\"** — 현재가(₩{px:,.0f})로 즉시 체결\n"
                     f"· **\"효율가\"** — 호가창 기준 제가 제안하는 최적가\n"
                     f"· **\"추천가\"** — 오늘 데이터 기준, 살짝 눌릴 때 더 싸게\n"
@@ -711,38 +758,14 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
         # how the app explains it, THEN ask 'still do you want to buy
         # anyway?' — with the chatbot we need to experiment, so approving
         # buys it anyway"). The full whynot cascade rides in the preview.
-        try:
-            from routers.approval import whynot as _wn9c
-            _wd9 = _wn9c(db)
-            _rw9 = next((x for x in (_wd9.get("rows") or [])
-                         if str(x.get("code")) == code), None)
-            _GN_KO = {"gap": "갭상승 관문", "position": "주간 포지션 관문",
-                      "volume": "거래량 관문", "news": "나쁜 뉴스 관문",
-                      "score": "100 체크리스트 관문"}
-            _GN_EN = {"gap": "Gap-up gate", "position": "Weekly-position gate",
-                      "volume": "Volume gate", "news": "Bad-news gate",
-                      "score": "100-checklist gate"}
-            if _rw9:
-                if not _rw9.get("stopped_at"):
-                    m3_ko = ("🤖 메뉴 3 에이전트 판정: ✅ 모든 관문 통과 — "
-                             "메뉴 3 기준으로도 살 수 있는 자리입니다.")
-                    m3_en = ("🤖 Menu 3 agent's verdict: ✅ all gates passed — "
-                             "a place to buy by the desk's own rules too.")
-                else:
-                    _lk9, _le9 = ["🤖 메뉴 3 에이전트 판정 — 지금 규칙으로 이 매수는 막혀 있습니다:"], \
-                                 ["🤖 Menu 3 agent's verdict — this buy is BLOCKED by the running rule:"]
-                    for _g9 in _rw9.get("gates") or []:
-                        _mk = "✅" if _g9.get("passed") else "⛔"
-                        _lk9.append(f"{_mk} {_g9['n']}. {_GN_KO.get(_g9.get('key'), _g9.get('key'))} — {_g9['ko']}")
-                        _le9.append(f"{_mk} {_g9['n']}. {_GN_EN.get(_g9.get('key'), _g9.get('key'))} — {_g9['en']}")
-                    _lk9.append("**그래도 매수할까요?** 챗봇에서는 실험 매수가 가능합니다 — "
-                                "승인하시면 관문과 상관없이 삽니다.")
-                    _le9.append("**Still want to buy anyway?** The chatbot allows an "
-                                "experiment buy — approve and it buys regardless of the gates.")
-                    m3_ko = "\n".join(_lk9)
-                    m3_en = "\n".join(_le9)
-        except Exception:
-            pass
+        _vk9, _ve9, _blk9 = _gate_verdict(db, code)
+        if _vk9:
+            m3_ko, m3_en = _vk9, _ve9
+            if _blk9:
+                m3_ko += ("\n**그래도 매수할까요?** 챗봇에서는 실험 매수가 가능합니다 — "
+                          "승인하시면 관문과 상관없이 삽니다.")
+                m3_en += ("\n**Still want to buy anyway?** The chatbot allows an "
+                          "experiment buy — approve and it buys regardless of the gates.")
         if m3_ko is None:
             # fall back to the brain's short verdict if the whynot row is cold
             try:
