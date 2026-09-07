@@ -13,7 +13,9 @@ import { useLanguage } from "@/components/i18n";
 import { API } from "./api";
 
 type DistWin = { k: string; ko: string; en: string; n: number; below: number; pct: number };
-type Dist = { closes: number[]; px: number; windows: DistWin[]; rank_avg: number };
+type Dist = { closes: number[]; px: number; windows: DistWin[]; rank_avg: number;
+              plain?: number; weighted?: number; near?: number; near_pct?: number;
+              rank5?: number | null };
 type Gate = { n: number; key: string; passed: boolean; ko: string; en: string;
               link?: string | null; dist?: Dist | null };
 type Item = { k: string; en?: string; v: string; ven?: string; s?: number | null;
@@ -40,9 +42,43 @@ function DistStrip({ d, ko, t }: { d: Dist; ko: boolean;
                                    t: (a: string, b: string) => string }) {
   const rows = d.windows;
   const Wd = 560, rowH = 34, padL = 62, padR = 8;
+  // the WHOLE read leads: one row holding every day, recent days brighter —
+  // one analysis, not four chunks (boss 2026-09-07: "it should be analysed
+  // based, not chunk based"). The window cuts follow underneath as detail.
+  const all = d.closes;
+  const aLo = Math.min(...all, d.px), aHi = Math.max(...all, d.px);
+  const aX = (v: number) => padL + ((v - aLo) / Math.max(1e-9, aHi - aLo)) * (Wd - padL - padR);
   const H = rows.length * rowH + 16;
   return (
     <div style={{ overflowX: "auto", marginTop: 6 }}>
+      <svg width={Wd} height={54} style={{ display: "block" }}>
+        <text x={0} y={14} fontSize={10.5} fill="currentColor" opacity={0.85} fontWeight={700}>
+          {t(`전체 ${all.length}일`, `all ${all.length} days`)}</text>
+        <line x1={padL} x2={Wd - padR} y1={30} y2={30}
+              stroke="currentColor" strokeOpacity={0.18} strokeWidth={1} />
+        {all.map((c, k) => (
+          <line key={k} x1={aX(c)} x2={aX(c)} y1={30 - 11} y2={30 + 11}
+                stroke={c < d.px ? "#1e88e5" : "#9e9e9e"}
+                strokeOpacity={Math.max(0.16, Math.pow(0.5, k / 20) * 0.9)}
+                strokeWidth={1.6}>
+            <title>{`${k === 0 ? "yesterday" : k + " sessions ago"} · ₩${Math.round(c).toLocaleString()}`}</title>
+          </line>))}
+        <line x1={aX(d.px)} x2={aX(d.px)} y1={30 - 16} y2={30 + 16}
+              stroke="#e53935" strokeWidth={2.4} />
+        <text x={aX(d.px)} y={12} fontSize={10} fill="#e53935" textAnchor="middle" fontWeight={800}>
+          {d.plain != null ? `${d.plain}%` : ""}</text>
+        <text x={padL} y={49} fontSize={9.5} fill="currentColor" opacity={0.55}>
+          ₩{Math.round(aLo).toLocaleString()}</text>
+        <text x={Wd - padR} y={49} fontSize={9.5} fill="currentColor" opacity={0.55}
+              textAnchor="end">₩{Math.round(aHi).toLocaleString()}</text>
+      </svg>
+      <div style={{ fontSize: 11, opacity: 0.72, margin: "1px 0 6px" }}>
+        {t(`↑ 눈금 하나가 하루 종가입니다 — 최근일수록 진하게. 파란 눈금이 오늘보다 쌌던 날 (${d.plain ?? "-"}%), 최근 가중 ${d.weighted ?? "-"}%${d.near != null ? ` · 이 가격대에서 보낸 날 ${d.near}일` : ""}.`,
+           `↑ one tick = one day's close, brighter = more recent. Blue ticks are days cheaper than today (${d.plain ?? "-"}%), recency-weighted ${d.weighted ?? "-"}%${d.near != null ? ` · days spent at this price ${d.near}` : ""}.`)}
+      </div>
+      <div style={{ fontSize: 10.5, opacity: 0.6, marginBottom: 2 }}>
+        {t("같은 자료를 기간별로 잘라 본 모습:", "the same data, cut into windows:")}
+      </div>
       <svg width={Wd} height={H} style={{ display: "block" }}>
         {rows.map((w, i) => {
           const cl = d.closes.slice(0, w.n);

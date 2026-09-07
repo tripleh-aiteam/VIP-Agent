@@ -452,40 +452,86 @@ def pos_story(code: str, px: float, day: str, bar: float = 35.0,
     try:
         cl = closes120(code, day)
         if cl:
+            pxf = float(px)
+            n_all = len(cl)
+            # ── ONE CONTINUOUS READ, not four chunks averaged (boss
+            # 2026-09-07: "now it looks like separated analyses / chunk
+            # based - it should be analysed based"). Every day is counted
+            # exactly ONCE, weighted by how recent it is (half-life 20
+            # sessions), so there are no arbitrary window edges and no
+            # double counting of the days that sit in several windows.
+            below_all = sum(1 for x in cl if x < pxf)
+            plain = below_all / n_all * 100
+            wsum = bsum = 0.0
+            for i, x in enumerate(cl):            # i = 0 is yesterday
+                wt = 0.5 ** (i / 20.0)
+                wsum += wt
+                if x < pxf:
+                    bsum += wt
+            weighted = (bsum / wsum * 100) if wsum else plain
+            # the SHAPE: how much time this stock actually spent at this
+            # price - a shelf it knows, or thin air it passed through
+            near = sum(1 for x in cl if abs(x / pxf - 1) <= 0.015)
+            near_pct = near / n_all * 100
+            # the DIRECTION: where the same measure stood 5 sessions ago
+            prev5 = cl[4] if len(cl) > 4 else None
+            rank5 = (sum(1 for x in cl if x < prev5) / n_all * 100) if prev5 else None
             wins, ranks = [], []
             for k, n, nk, ne in (("w", 5, "1주일", "1 week"), ("m", 20, "1개월", "1 month"),
                                  ("q", 60, "3개월", "3 months"), ("h", 120, "6개월", "6 months")):
                 w9 = cl[:n]
                 if len(w9) >= max(3, n // 4):
-                    below = sum(1 for x in w9 if x < float(px))
+                    below = sum(1 for x in w9 if x < pxf)
                     pct = below / len(w9) * 100
                     ranks.append(pct)
                     wins.append({"k": k, "ko": nk, "en": ne, "n": len(w9),
                                  "below": below, "pct": round(pct)})
+            rank_avg = sum(ranks) / len(ranks) if ranks else plain
+            dist = {"closes": cl, "px": pxf, "windows": wins,
+                    "rank_avg": round(rank_avg, 1), "plain": round(plain, 1),
+                    "weighted": round(weighted, 1), "near": near,
+                    "near_pct": round(near_pct), "rank5": (round(rank5, 1) if rank5 else None)}
+            ko_l.append(f"📊 전체 분석 — 기간을 토막내지 않고 {n_all}일 전부를 한 번에 봅니다 "
+                        f"(각 날짜는 한 번만 세고, 최근일수록 크게 봅니다):")
+            en_l.append(f"📊 THE WHOLE READ — all {n_all} days at once, not four separate "
+                        f"chunks (each day counted once, recent days weighted more):")
+            ko_l.append(f"· 오늘 가격보다 쌌던 날: {n_all}일 중 {below_all}일 = 하위 {plain:.0f}%")
+            en_l.append(f"· Days cheaper than today: {below_all} of {n_all} = bottom {plain:.0f}%")
+            ko_l.append(f"· 최근 가중(최근 1개월에 절반의 무게): {weighted:.0f}% "
+                        f"— 6개월 전보다 지난달의 가격이 더 중요합니다")
+            en_l.append(f"· Recency-weighted (half the weight on the last month): {weighted:.0f}% "
+                        f"— last month's prices matter more than six-month-old ones")
+            ko_l.append(f"· 이 가격대(±1.5%)에서 실제로 보낸 날: {near}일 ({near_pct:.0f}%) — "
+                        + ("이 종목이 오래 머물렀던 익숙한 자리입니다."
+                           if near_pct >= 8 else "거의 머문 적 없는 드문 자리입니다."))
+            en_l.append(f"· Days actually spent at this price (±1.5%): {near} ({near_pct:.0f}%) — "
+                        + ("a shelf this stock knows well."
+                           if near_pct >= 8 else "a rare place it has hardly ever traded."))
+            if rank5 is not None:
+                _dir_k = ("점점 싸지고 있습니다" if plain < rank5 - 2 else
+                          "점점 비싸지고 있습니다" if plain > rank5 + 2 else "제자리입니다")
+                _dir_e = ("it is getting cheaper" if plain < rank5 - 2 else
+                          "it is getting more expensive" if plain > rank5 + 2 else "it is flat")
+                ko_l.append(f"· 방향: 5거래일 전 이 종목은 하위 {rank5:.0f}% 자리였고 지금 "
+                            f"{plain:.0f}%입니다 — {_dir_k}.")
+                en_l.append(f"· Direction: 5 sessions ago it stood at bottom {rank5:.0f}%, "
+                            f"today {plain:.0f}% — {_dir_e}.")
             if wins:
-                rank_avg = sum(ranks) / len(ranks)
-                dist = {"closes": cl, "px": float(px), "windows": wins,
-                        "rank_avg": round(rank_avg, 1)}
-                ko_l.append("📊 최고·최저 2개가 아니라 '모든 날'과도 비교했습니다 "
-                            "(우리가 보는 날 수: " + f"{len(cl)}일):")
-                en_l.append("📊 We also counted against EVERY day, not just the high and the "
-                            f"low (days we look at: {len(cl)}):")
-                for x in wins:
-                    ko_l.append(f"· {x['ko']}: {x['n']}일 중 {x['below']}일보다 쌉니다 "
-                                f"(하위 {x['pct']}%)")
-                    en_l.append(f"· {x['en']}: cheaper than {x['below']} of the {x['n']} days "
-                                f"(bottom {x['pct']}%)")
-                _agree = abs(rank_avg - blend) <= 7.0
-                ko_l.append(f"→ 모든 날 기준 평균 {rank_avg:.0f}% · 최저~최고 기준 {blend:.1f}% — "
-                            + ("두 방식이 같은 답을 줍니다 (판정 신뢰 ↑)." if _agree else
-                               "두 방식이 다릅니다 — 최고·최저가 한두 날의 극단값에 끌려간 자리입니다.")
-                            + " 지금 규칙은 최저~최고 방식으로 판정합니다.")
-                en_l.append(f"→ all-days average {rank_avg:.0f}% vs range method {blend:.1f}% — "
-                            + ("both methods agree, so the verdict is solid."
-                               if _agree else
-                               "they disagree, which means the high/low is being pulled by one "
-                               "or two extreme days.")
-                            + " The rule currently judges by the range method.")
+                ko_l.append("  (기간별로 잘라 보면: "
+                            + " · ".join(f"{x['ko']} {x['pct']}%" for x in wins) + ")")
+                en_l.append("  (cut into windows it reads: "
+                            + " · ".join(f"{x['en']} {x['pct']}%" for x in wins) + ")")
+            _agree = abs(weighted - blend) <= 7.0
+            ko_l.append(f"→ 전체 분석 {weighted:.0f}% · 규칙이 쓰는 최저~최고 방식 {blend:.1f}% — "
+                        + ("두 방식이 같은 답을 줍니다 (판정 신뢰 ↑)." if _agree else
+                           "두 방식이 다릅니다 — 최고·최저가 한두 날의 극단값에 끌려간 자리입니다.")
+                        + " 판정은 아래 규칙대로 합니다.")
+            en_l.append(f"→ whole-read {weighted:.0f}% vs the range method the rule uses "
+                        f"{blend:.1f}% — "
+                        + ("both agree, so the verdict is solid." if _agree else
+                           "they disagree, which means the high/low is being pulled by one or "
+                           "two extreme days.")
+                        + " The verdict below follows the rule.")
     except Exception:
         dist = None
     if context != "hold" and abs(bar - 35.0) < 0.01:
