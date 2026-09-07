@@ -855,7 +855,7 @@ def whynot(db: Session = Depends(get_db)):
         r.update({"yc": yc, "op": op, "px": px, "gap_pct": gap, "now_vs_yc": now9})
         W = lambda v: f"₩{v:,.0f}" if v else "?"
 
-        def _gate(n, key, passed, ko, en, link=None):
+        def _gate(n, key, passed, ko, en, link=None, dist=None):
             # EXPLANATIONS STOP AT THE FIRST BLOCKED GATE (boss 2026-09-04
             # 17:4x: "if it is not passed second gate, no need to add other
             # explanations — explanation need until passed gate"): once a
@@ -865,6 +865,8 @@ def whynot(db: Session = Depends(get_db)):
             g = {"n": n, "key": key, "passed": bool(passed), "ko": ko, "en": en}
             if link:
                 g["link"] = link
+            if dist:
+                g["dist"] = dist        # every daily close, for the picture
             r["gates"].append(g)
             if not passed:
                 r["stopped_at"] = n
@@ -967,7 +969,8 @@ def whynot(db: Session = Depends(get_db)):
                   "the data arrives.")
         else:
             r["pos_blend"] = _st2["blend"]
-            _gate(2, "position", _st2["ok"], _st2["ko"], _st2["en"])
+            _gate(2, "position", _st2["ok"], _st2["ko"], _st2["en"],
+                  dist=_st2.get("dist"))
         # ③ 거래량 — judged by the PACE for the hour, not the whole day
         # (caught 2026-09-07, the silent morning: comparing one hour's
         # cumulative volume with a FULL day's average called every 10:00

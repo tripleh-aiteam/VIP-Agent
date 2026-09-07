@@ -12,8 +12,10 @@ import { Fragment, useEffect, useState } from "react";
 import { useLanguage } from "@/components/i18n";
 import { API } from "./api";
 
+type DistWin = { k: string; ko: string; en: string; n: number; below: number; pct: number };
+type Dist = { closes: number[]; px: number; windows: DistWin[]; rank_avg: number };
 type Gate = { n: number; key: string; passed: boolean; ko: string; en: string;
-              link?: string | null };
+              link?: string | null; dist?: Dist | null };
 type Item = { k: string; en?: string; v: string; ven?: string; s?: number | null;
               w?: number | null; ctr?: number | null };
 type Row = { code: string; name: string; name_en?: string;
@@ -28,6 +30,55 @@ type Payload = { ok: boolean; market_open: boolean; rows: Row[];
                  as_of?: string; day?: string };
 
 const W = (n?: number | null) => (n == null ? "-" : "₩" + Math.round(n).toLocaleString());
+
+/* 📊 EVERY DAY, DRAWN — the proof that the gate does not live on 3 numbers
+   (boss 2026-09-07: "show that we are not caring only 3 numbers"). One tick
+   per trading day, placed by its closing price; blue = a day cheaper than
+   today, grey = dearer; the red line is today. Count the blue ones and you
+   have the percentage the text states. */
+function DistStrip({ d, ko, t }: { d: Dist; ko: boolean;
+                                   t: (a: string, b: string) => string }) {
+  const rows = d.windows;
+  const Wd = 560, rowH = 34, padL = 62, padR = 8;
+  const H = rows.length * rowH + 16;
+  return (
+    <div style={{ overflowX: "auto", marginTop: 6 }}>
+      <svg width={Wd} height={H} style={{ display: "block" }}>
+        {rows.map((w, i) => {
+          const cl = d.closes.slice(0, w.n);
+          const lo = Math.min(...cl, d.px), hi = Math.max(...cl, d.px);
+          const y = i * rowH + 20;
+          const x = (v: number) => padL + ((v - lo) / Math.max(1e-9, hi - lo)) * (Wd - padL - padR);
+          return (
+            <g key={w.k}>
+              <text x={0} y={y + 4} fontSize={10.5} fill="currentColor" opacity={0.8}>
+                {ko ? w.ko : w.en}</text>
+              <line x1={padL} x2={Wd - padR} y1={y} y2={y}
+                    stroke="currentColor" strokeOpacity={0.18} strokeWidth={1} />
+              {cl.map((c, k) => (
+                <line key={k} x1={x(c)} x2={x(c)} y1={y - 7} y2={y + 7}
+                      stroke={c < d.px ? "#1e88e5" : "#9e9e9e"}
+                      strokeOpacity={c < d.px ? 0.75 : 0.45} strokeWidth={1.5}>
+                  <title>{`₩${Math.round(c).toLocaleString()}`}</title>
+                </line>))}
+              <line x1={x(d.px)} x2={x(d.px)} y1={y - 12} y2={y + 12}
+                    stroke="#e53935" strokeWidth={2.2} />
+              <text x={padL} y={y + 21} fontSize={9.5} fill="currentColor" opacity={0.55}>
+                ₩{Math.round(lo).toLocaleString()}</text>
+              <text x={Wd - padR} y={y + 21} fontSize={9.5} fill="currentColor"
+                    opacity={0.55} textAnchor="end">₩{Math.round(hi).toLocaleString()}</text>
+              <text x={x(d.px)} y={y - 15} fontSize={9.5} fill="#e53935"
+                    textAnchor="middle" fontWeight={700}>
+                {w.below}/{w.n}</text>
+            </g>);
+        })}
+      </svg>
+      <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>
+        {t(`🔵 파란 눈금 = 오늘보다 쌌던 날 · ⚪ 회색 = 더 비쌌던 날 · 🔴 빨간 선 = 지금 가격 ₩${Math.round(d.px).toLocaleString()}. 눈금 하나가 하루입니다 — 직접 세어보실 수 있습니다 (모든 날 평균 ${d.rank_avg}%).`,
+           `🔵 blue tick = a day cheaper than today · ⚪ grey = dearer · 🔴 red line = now ₩${Math.round(d.px).toLocaleString()}. Every tick is one trading day — you can count them yourself (all-days average ${d.rank_avg}%).`)}
+      </div>
+    </div>);
+}
 
 export default function WhyNotPanel() {
   const { t } = useLanguage();
@@ -143,6 +194,7 @@ export default function WhyNotPanel() {
                     {g.link && <> <a href={g.link} target="_blank" rel="noreferrer"
                                      style={{ fontWeight: 800, color: "#1565c0" }}>
                       📎 {t("기사 읽기", "read the article")}</a></>}
+                    {g.dist && <DistStrip d={g.dist} ko={ko} t={t} />}
                   </div>))}
                 {/* the cascade stops at the first blocked gate (boss 2026-09-04
                     17:4x: "no need to add other explanations") */}

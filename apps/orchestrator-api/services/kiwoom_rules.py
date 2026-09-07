@@ -331,6 +331,45 @@ def _hz_stats(code: str, day: str) -> dict:
     return out
 
 
+_CL120_CACHE: dict = {}
+
+
+def closes120(code: str, day: str) -> list[float]:
+    """EVERY daily close before `day`, newest first (up to 120 sessions).
+
+    The position gate's range formula reads only two of these - the lowest
+    and the highest - so the boss asked to see the rest (2026-09-07: "a
+    6-month window holds ~120 days but only 2 matter; show that we are not
+    caring only 3 numbers"). This is the whole set, so the screen can count
+    them and draw them."""
+    key = (str(code), str(day))
+    hit = _CL120_CACHE.get(key)
+    if hit is not None:
+        return hit
+    cl: list[float] = []
+    try:
+        from services.daily_pick import _conn
+        cn = _conn(); cu = cn.cursor()
+        cu.execute("""SELECT close FROM raw_daily_prices
+                      WHERE ticker = %s AND date < %s AND close IS NOT NULL
+                      ORDER BY date DESC LIMIT 120""",
+                   (code, f"{day[:4]}-{day[4:6]}-{day[6:8]}"))
+        cl = [float(r[0]) for r in cu.fetchall()]
+        cn.close()
+    except Exception:
+        cl = []
+    if not cl:
+        try:
+            from services.naver_stock import daily_history
+            d_iso = f"{day[:4]}-{day[4:6]}-{day[6:8]}"
+            cl = [float(r["close"]) for r in (daily_history(code, days=130) or [])
+                  if r.get("close") and str(r.get("date"))[:10] < d_iso][:120]
+        except Exception:
+            cl = []
+    _CL120_CACHE[key] = cl
+    return cl
+
+
 def pos_story(code: str, px: float, day: str, bar: float = 35.0,
               context: str = "buy") -> dict | None:
     """THE POSITION FORMULA, TOLD SO A PERSON CAN FOLLOW IT (boss 2026-09-07:
@@ -405,6 +444,50 @@ def pos_story(code: str, px: float, day: str, bar: float = 35.0,
                     f"bottom side) → {blend:.1f}% > {bar:.0f}% ✘ still too expensive, so "
                     f"we do not buy. It becomes buyable when the average comes under "
                     f"{bar:.0f}%.")
+    # 📊 COUNTED AGAINST EVERY DAY (boss 2026-09-07: "show that we are not
+    # caring only 3 numbers, and that our work is helping"): the range
+    # formula above reads two days per window; this reads them ALL, and the
+    # screen draws every one of them under the card.
+    dist = None
+    try:
+        cl = closes120(code, day)
+        if cl:
+            wins, ranks = [], []
+            for k, n, nk, ne in (("w", 5, "1주일", "1 week"), ("m", 20, "1개월", "1 month"),
+                                 ("q", 60, "3개월", "3 months"), ("h", 120, "6개월", "6 months")):
+                w9 = cl[:n]
+                if len(w9) >= max(3, n // 4):
+                    below = sum(1 for x in w9 if x < float(px))
+                    pct = below / len(w9) * 100
+                    ranks.append(pct)
+                    wins.append({"k": k, "ko": nk, "en": ne, "n": len(w9),
+                                 "below": below, "pct": round(pct)})
+            if wins:
+                rank_avg = sum(ranks) / len(ranks)
+                dist = {"closes": cl, "px": float(px), "windows": wins,
+                        "rank_avg": round(rank_avg, 1)}
+                ko_l.append("📊 최고·최저 2개가 아니라 '모든 날'과도 비교했습니다 "
+                            "(우리가 보는 날 수: " + f"{len(cl)}일):")
+                en_l.append("📊 We also counted against EVERY day, not just the high and the "
+                            f"low (days we look at: {len(cl)}):")
+                for x in wins:
+                    ko_l.append(f"· {x['ko']}: {x['n']}일 중 {x['below']}일보다 쌉니다 "
+                                f"(하위 {x['pct']}%)")
+                    en_l.append(f"· {x['en']}: cheaper than {x['below']} of the {x['n']} days "
+                                f"(bottom {x['pct']}%)")
+                _agree = abs(rank_avg - blend) <= 7.0
+                ko_l.append(f"→ 모든 날 기준 평균 {rank_avg:.0f}% · 최저~최고 기준 {blend:.1f}% — "
+                            + ("두 방식이 같은 답을 줍니다 (판정 신뢰 ↑)." if _agree else
+                               "두 방식이 다릅니다 — 최고·최저가 한두 날의 극단값에 끌려간 자리입니다.")
+                            + " 지금 규칙은 최저~최고 방식으로 판정합니다.")
+                en_l.append(f"→ all-days average {rank_avg:.0f}% vs range method {blend:.1f}% — "
+                            + ("both methods agree, so the verdict is solid."
+                               if _agree else
+                               "they disagree, which means the high/low is being pulled by one "
+                               "or two extreme days.")
+                            + " The rule currently judges by the range method.")
+    except Exception:
+        dist = None
     if context != "hold" and abs(bar - 35.0) < 0.01:
         # WHY 35 (boss 2026-09-07: "why are we taking 35? It should have a
         # reason — like 35 was the best winning % among the others"): the
@@ -421,7 +504,8 @@ def pos_story(code: str, px: float, day: str, bar: float = 35.0,
                     "over above it — the bar that earned the most with the same worst "
                     "trade, so 35% is the rule.")
     return {"ko": "\n".join(ko_l), "en": "\n".join(en_l),
-            "blend": round(blend, 1), "ok": ok, "parts": [round(p) for p in parts]}
+            "blend": round(blend, 1), "ok": ok, "parts": [round(p) for p in parts],
+            "dist": dist}
 
 
 def _week_stats(code: str, day: str):
