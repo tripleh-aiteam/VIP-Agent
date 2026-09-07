@@ -1598,10 +1598,42 @@ def _turn_shape(code: str, bars: list | None = None) -> tuple:
             _TURNC[_key] = out
         return out
     if wlo and (whi - wlo) / wlo * 100 < d["chop"]:
+        # THE DAY-SCALE DOOR (boss 2026-09-07 15:1x, six all-passed stocks
+        # asking "why still no popup"): his law reads across the DAY — these
+        # stocks fell earlier today (that is exactly why the gates opened),
+        # the fall has STOPPED (this flat base), and when the rise begins he
+        # wants the popup. The 30-minute window had forgotten the morning
+        # fall, so a flat base blocked forever. If the DAY shows a real fall
+        # into this base and 3 consecutive 1-minute rises now stand at it,
+        # the turn is confirmed — 내렸고, 멈췄고, 오르기 시작했다.
+        try:
+            _dhi = max(b["high"] for b in bars)
+            _dfall = (_dhi - px) / _dhi * 100 if _dhi else 0.0
+        except Exception:
+            _dfall = 0.0
+        _c4 = [b["close"] for b in w[-4:]]
+        _r3 = (len(_c4) == 4 and _c4[1] > _c4[0]
+               and _c4[2] > _c4[1] and _c4[3] > _c4[2])
+        if (_dfall >= d["drop"] and _r3
+                and px <= wlo * (1 + d["chase"] / 100)):
+            _hm3 = str(w[-1].get("hhmm") or "")[:5]
+            out = (True,
+                   f"진입 신호 확인 (하루 흐름) — 오늘 고점 대비 {_dfall:.2f}% 내린 뒤 "
+                   f"하락이 멈춰 횡보했고(30분 폭 {(whi - wlo) / wlo * 100:.2f}%), "
+                   f"{_hm3}에 3연속 상승이 섰습니다 (₩{px:,.0f})",
+                   f"entry signal confirmed (day-scale) — fell {_dfall:.2f}% from today's "
+                   f"high, the fall stopped into a flat base "
+                   f"({(whi - wlo) / wlo * 100:.2f}% over 30 min), and 3 consecutive "
+                   f"rises stand at {_hm3} (₩{px:,.0f})",
+                   _hm3)
+            if _live:
+                _TURNC[_key] = out
+            return out
         return _no(f"움직임이 거의 없는 평평한 흐름입니다 (30분 폭 {(whi - wlo) / wlo * 100:.2f}%) — "
-                   f"내렸다 돌아서는 모양이 아니라 사지 않습니다",
-                   f"a flat tape - {(whi - wlo) / wlo * 100:.2f}% of range over 30 minutes; there is no "
-                   f"fall to stop and no turn to confirm, so we do not buy")
+                   f"오늘 내린 뒤 멈춘 자리라면, 여기서 3연속 상승이 서는 순간 신호가 켜집니다",
+                   f"a flat tape - {(whi - wlo) / wlo * 100:.2f}% of range over 30 minutes; if this "
+                   f"is the stopped base after today's fall, the signal fires the moment 3 "
+                   f"consecutive rises stand here")
     if fall < d["drop"]:
         return _no(f"하락이 이미 회복됐습니다 — 고점 대비 {fall:.2f}%뿐이라 "
                    f"살 만한 눌림이 아닙니다",
