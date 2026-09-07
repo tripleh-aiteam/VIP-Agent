@@ -519,6 +519,53 @@ def pos_story(code: str, px: float, day: str, bar: float = 35.0,
                             f"{plain:.0f}%입니다 — {_dir_k}.")
                 en_l.append(f"· Direction: 5 sessions ago it stood at bottom {rank5:.0f}%, "
                             f"today {plain:.0f}% — {_dir_e}.")
+            # ── HOW BIG IS A MOVE IN THIS STOCK? (boss 2026-09-07: "in the
+            # historical data there are different LENGTHS of increase and
+            # decrease - Friday's decrease can be smaller than today's move
+            # between 12 and 13 - should we implement this?"). A percentage
+            # means nothing until you know what a normal day looks like for
+            # this particular stock, so the read now carries the yardstick:
+            # the typical daily move, how far today sits from the middle
+            # measured in THOSE units, and how big today's own move is.
+            import statistics as _st9
+            chg = [abs(cl[i] / cl[i + 1] - 1) * 100
+                   for i in range(min(len(cl) - 1, 60)) if cl[i + 1]]
+            typ = _st9.median(chg) if chg else None
+            mid = _st9.median(cl)
+            if typ and typ > 0:
+                steps = (mid - pxf) / (pxf * typ / 100.0)
+                today_mv = ((pxf / cl[0] - 1) * 100) if cl and cl[0] else None
+                ko_l.append(f"· 이 종목의 '보통 하루' 움직임: ±{typ:.2f}% "
+                            f"(최근 60일 중앙값) — 같은 1%도 종목마다 크기가 다릅니다.")
+                en_l.append(f"· What a NORMAL day looks like for this stock: ±{typ:.2f}% "
+                            f"(median of the last 60 days) — the same 1% means different "
+                            f"things on different stocks.")
+                _mid_k = ("아래" if steps > 0 else "위")
+                _mid_e = ("below" if steps > 0 else "above")
+                ko_l.append(f"· 120일 한가운데 가격은 ₩{mid:,.0f}이고, 지금은 그보다 "
+                            f"{abs(steps):.1f} '보통 하루'만큼 {_mid_k}입니다 "
+                            + ("— 하루 이틀 움직임이면 닿는 거리라 크게 싼 자리는 아닙니다."
+                               if abs(steps) < 2 else
+                               "— 보통 며칠치 움직임만큼 떨어진, 의미 있는 거리입니다."))
+                en_l.append(f"· The middle price of the 120 days is ₩{mid:,.0f}; today sits "
+                            f"{abs(steps):.1f} normal days' move {_mid_e} it"
+                            + (" — a distance one or two ordinary days can cover, so not "
+                               "deeply cheap." if abs(steps) < 2 else
+                               " — a real distance, several ordinary days' worth."))
+                if today_mv is not None:
+                    _rt = abs(today_mv) / typ
+                    ko_l.append(f"· 오늘 움직임: {today_mv:+.2f}% = 보통 하루의 {_rt:.1f}배"
+                                + (" — 오늘은 평소보다 큰 날입니다." if _rt >= 1.5 else
+                                   " — 오늘은 평소보다 조용한 날입니다." if _rt <= 0.6 else
+                                   " — 평소와 비슷한 크기입니다."))
+                    en_l.append(f"· Today's own move: {today_mv:+.2f}% = {_rt:.1f}× a normal day"
+                                + (" — a big day for this stock." if _rt >= 1.5 else
+                                   " — a quiet day for this stock." if _rt <= 0.6 else
+                                   " — an ordinary-sized day."))
+                dist["typ_move"] = round(typ, 2)
+                dist["steps_from_mid"] = round(steps, 1)
+                dist["mid"] = round(mid)
+                dist["today_move"] = (round(today_mv, 2) if today_mv is not None else None)
             if wins:
                 ko_l.append("  (기간별로 잘라 보면: "
                             + " · ".join(f"{x['ko']} {x['pct']}%" for x in wins) + ")")
