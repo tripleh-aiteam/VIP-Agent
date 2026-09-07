@@ -2395,6 +2395,29 @@ def init_scheduler():
         max_instances=1, coalesce=True,
     )
 
+    # ── THE DESK MUST WATCH WHETHER OR NOT HE IS WATCHING (boss 2026-09-07:
+    #    the turn is a MINUTE - "once they stopped decreasing and in the 3 red
+    #    then we should buy"). The scan only ever ran on a page poll, so with
+    #    Menu 3 closed nothing scanned, and a signal that stands for one minute
+    #    was gone before anyone asked. His popups already wait for him; now the
+    #    watching does too. scan_async throttles itself (5s) and skips while a
+    #    scan is still running, so this costs no more than an open page.
+    def _desk_watch_tick():
+        try:
+            from services.approval_desk import scan_async, can_propose
+            if can_propose():
+                scan_async()
+        except Exception as e:
+            log.warning(f"desk watch tick: {str(e)[:100]}")
+
+    _scheduler.add_job(
+        _desk_watch_tick, "interval", seconds=20,
+        id="approval-desk-watch", replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+    log.info("scheduler: approval desk watch registered (20s tick, market hours only)",
+             extra={"action": "scheduler.desk_watch"})
+
     def _tournament_open_reset():
         from services.strategy_tournament import _reset_daily
         _reset_daily()
