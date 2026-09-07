@@ -29,12 +29,29 @@ import httpx
 # Maps friendly model names ??(provider, real_model_id)
 MODEL_CATALOG = {
     # --- Claude (newest first) — auto-discovery below also adds any NEWER Claude models ---
+    "claude-fable-5-1":  ("anthropic", "claude-fable-5-1"),   # the chatbot's own model
     "claude-fable-5":    ("anthropic", "claude-fable-5"),
     "claude-opus-4-8":   ("anthropic", "claude-opus-4-8"),
     "claude-opus-4-7":   ("anthropic", "claude-opus-4-5"),
     "claude-sonnet-4-6": ("anthropic", "claude-sonnet-4-5"),
     "claude-haiku-4-5":  ("anthropic", "claude-haiku-4-5"),
-    # --- OpenAI (5.x lineup — newest, updated 2026-06-16) ---
+    # --- OpenAI (newest first, checked against the live /models list 2026-09-07) ---
+    "gpt-6-astra":  ("openai", "gpt-6-astra"),     # GPT-6. MEASURED on this desk
+    #   2026-09-07, two benchmarks against claude-fable-5-1:
+    #     desk arithmetic (25 graded answers, 5 repeats each): 20/25 BOTH.
+    #       Identical answers, identical single failure - and that one was our
+    #       prompt's fault, not the model's: it said "35% 규칙" without saying
+    #       which side of 35 buys, and both models bought at 49%.
+    #     news impact vs the tape (50 stories): fable 16.7%/8.3% precision,
+    #       astra 14.3%/7.1%; on the "will not move" side fable 100%/69%,
+    #       astra 100%/64%. They never disagreed on a story the price answered.
+    #     speed: fable 8s where astra took 19s for the same 25 questions.
+    #   Equal in quality, slower to answer, so the chatbot default stays fable -
+    #   astra is registered to be PICKED, and as a second opinion.
+    "gpt-5.6-sol":  ("openai", "gpt-5.6-sol"),
+    "gpt-5.6-luna": ("openai", "gpt-5.6-luna"),
+    "gpt-5.6-terra": ("openai", "gpt-5.6-terra"),
+    "gpt-5.5-pro":  ("openai", "gpt-5.5-pro"),
     "gpt-5.5":      ("openai", "gpt-5.5"),         # flagship: complex multi-domain reasoning/coding, 1M context
     "gpt-5.4":      ("openai", "gpt-5.4"),         # prev-gen frontier
     "gpt-5.4-mini": ("openai", "gpt-5.4-mini"),    # fast/low-cost, multimodal, 400k context
