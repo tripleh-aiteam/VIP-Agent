@@ -2085,7 +2085,11 @@ def live_book(code: str = Query("005930")):
     return {"ok": bool(asks or bids), "code": code, "asks": asks, "bids": bids,
             "best_ask": ob.get("best_ask"), "best_bid": ob.get("best_bid"),
             "last": cp.get("price"), "prev_close": cp.get("prev_close"),
-            "change_pct": cp.get("change_pct"), "name": cp.get("name")}
+            "change_pct": cp.get("change_pct"), "name": cp.get("name"),
+            # which book this is, so the screen can never again be compared
+            # against a different one without noticing (boss 2026-09-07)
+            "market": ob.get("market"), "tot_ask": ob.get("tot_ask"),
+            "tot_bid": ob.get("tot_bid")}
 
 
 @router.get("/live/execs")

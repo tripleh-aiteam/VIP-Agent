@@ -599,7 +599,22 @@ def order_book(code: str, ttl: float | None = None) -> Optional[dict]:
     code = str(code).strip().zfill(6)
 
     def _f():
-        d = _request("ka10004", {"stk_cd": code}, path="/api/dostk/mrkcond")
+        # THE UNIFIED BOOK, WHICH IS WHAT HIS SCREEN SHOWS (boss 2026-09-07:
+        # "in this menu the order book is not the same as Kiwoom - there is no
+        # 1,294,602 at 270,000"). He was right and our pipe was innocent: our
+        # numbers matched the API level for level, but we were asking for the
+        # KRX book only, while Kiwoom's HTS shows 통합호가 - KRX plus NXT.
+        # Measured on 삼성전자 at 13:4x, the 270,000 ask level:
+        #     005930      (KRX)      649,087
+        #     005930_NX   (NXT)      649,025
+        #     005930_AL   (unified) 1,298,200   <- his number
+        # The suffix is the whole difference. Plain code kept as the fallback
+        # for anything the unified feed does not answer for.
+        d = _request("ka10004", {"stk_cd": code + "_AL"}, path="/api/dostk/mrkcond")
+        mkt = "AL"
+        if not isinstance(d, dict) or not d.get("sel_fpr_bid"):
+            d = _request("ka10004", {"stk_cd": code}, path="/api/dostk/mrkcond")
+            mkt = "KRX"
         if not isinstance(d, dict):
             return None
         tot_bid = _to_int(d.get("tot_buy_req"))
@@ -622,7 +637,7 @@ def order_book(code: str, ttl: float | None = None) -> Optional[dict]:
             "bid_qty": _to_int(d.get("buy_fpr_req")),
             "ask_qty": _to_int(d.get("sel_fpr_req")),
             "tot_bid": tot_bid, "tot_ask": tot_ask, "imbalance": imb,
-            "levels": levels,
+            "levels": levels, "market": mkt,
         }
     return _rt_cached(f"ob:{code}", _f, ttl=ttl)
 

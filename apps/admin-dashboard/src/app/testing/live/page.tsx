@@ -126,7 +126,7 @@ type Tape = { ok: boolean; code: string; name?: string; clock: string; ticks: nu
               off?: number; total_bars?: number };
 type Book = { ok: boolean; code: string; name?: string; asks: [number, number][];
               bids: [number, number][]; best_ask?: number; best_bid?: number;
-              last?: number; prev_close?: number; change_pct?: number };
+              last?: number; prev_close?: number; change_pct?: number; market?: string; tot_ask?: number; tot_bid?: number };
 type Execs = { ok: boolean; prev_close?: number; total: number;
                rows: { t: string; px: number; qty: number }[] };
 type RuleRow = { id: string; ko: string; en: string; dir: number; trips: number; wins: number;
@@ -5028,6 +5028,15 @@ export default function LiveDeskPage() {
           <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]" style={{ borderColor: "var(--border-default)" }}>
             <b className="text-[13px]" style={{ color: TEAL }}>
               📗 {t("실시간 호가 — 사려는 사람과 팔려는 사람", "live order book - buyers and sellers waiting")}
+              {/* WHOSE BOOK, AND WHICH BOOK (boss 2026-09-07: the table carried
+                  neither the stock's name nor the market, so it could be read
+                  as belonging to whatever card was above it, and compared
+                  against a Kiwoom screen showing the unified book) */}
+              {book?.name && <span className="ml-1">— {book.name} ({code})</span>}
+              {book?.market && (
+                <span className="ml-1 text-[10px] font-normal opacity-75">
+                  {book.market === "AL" ? t("통합호가 KRX+NXT (키움 HTS와 동일)", "unified book KRX+NXT (same as the Kiwoom HTS)")
+                                        : t("KRX 단독", "KRX only")}</span>)}
             </b>
             <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
               {t("사면 가장 싼 매도호가를, 팔면 가장 비싼 매수호가를 잡습니다 — 그 차이가 왕복 비용의 절반입니다.",
