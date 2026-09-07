@@ -936,24 +936,51 @@ def whynot(db: Session = Depends(get_db)):
                   f"The POSITION is high — now {W(px)}. {' · '.join(_parts_e)}. "
                   f"Adding the four and dividing by 4 gives {_bl:.0f}%, and we buy "
                   f"only at 35% or less → we wait for it to come down.")
-        # ③ 거래량
+        # ③ 거래량 — judged by the PACE for the hour, not the whole day
+        # (caught 2026-09-07, the silent morning: comparing one hour's
+        # cumulative volume with a FULL day's average called every 10:00
+        # "thin" and blocked everything that survived gates 1-2)
         try:
             r9v, tv9 = ad._vol_ratio(code)
         except Exception:
             r9v, tv9 = None, None
-        if r9v is not None and r9v < 0.6:
+        pace9 = None
+        if mkt and bars:
+            try:
+                from services.kiwoom_rules import _vol5 as _v59
+                _av9 = _v59(code, day)
+                _cum9 = sum(float(b.get("vol") or 0) for b in bars)
+                _tmL9 = str(bars[-1].get("hhmm") or "")[:5]
+                if _av9 and ":" in _tmL9:
+                    _mn9 = (int(_tmL9[:2]) - 9) * 60 + int(_tmL9[3:5])
+                    pace9 = _cum9 / (_av9 * max(2.0, min(381.0, _mn9 + 1)) / 381.0)
+                    tv9 = _cum9
+            except Exception:
+                pace9 = None
+        _vmul9 = pace9 if pace9 is not None else r9v
+        if _vmul9 is not None and _vmul9 < 0.6:
             _gate(3, "volume", False,
-                  f"거래가 매우 적습니다 — 오늘 {int(tv9 or 0):,}주, 20일 평균의 {r9v:.1f}배 "
-                  f"({(r9v - 1) * 100:+.0f}%). 거래가 적으면 원하는 가격에 사고팔기 어렵습니다.",
-                  f"Very FEW tradings — {int(tv9 or 0):,} shares today, {r9v:.1f}× the "
-                  f"20-day average ({(r9v - 1) * 100:+.0f}%). Thin trading makes it hard "
-                  f"to buy or sell at the price we want.")
+                  (f"거래가 매우 적습니다 — 지금까지 {int(tv9 or 0):,}주, 이 시각까지의 보통 "
+                   f"페이스의 {_vmul9:.1f}배. 거래가 적으면 원하는 가격에 사고팔기 어렵습니다."
+                   if pace9 is not None else
+                   f"거래가 매우 적습니다 — 오늘 {int(tv9 or 0):,}주, 20일 평균의 {_vmul9:.1f}배 "
+                   f"({(_vmul9 - 1) * 100:+.0f}%). 거래가 적으면 원하는 가격에 사고팔기 어렵습니다."),
+                  (f"Very FEW tradings — {int(tv9 or 0):,} shares so far, {_vmul9:.1f}× a "
+                   f"normal pace by this hour. Thin trading makes fills unreliable."
+                   if pace9 is not None else
+                   f"Very FEW tradings — {int(tv9 or 0):,} shares today, {_vmul9:.1f}× the "
+                   f"20-day average ({(_vmul9 - 1) * 100:+.0f}%). Thin trading makes it hard "
+                   f"to buy or sell at the price we want."))
         else:
             _gate(3, "volume", True,
-                  (f"거래량 충분 — 오늘 {int(tv9 or 0):,}주, 20일 평균의 {r9v:.1f}배. 3관문 통과."
-                   if r9v is not None else "거래량 자료 수집 중 — 막는 근거 없음. 3관문 통과."),
-                  (f"Enough volume — {int(tv9 or 0):,} shares today, {r9v:.1f}× the "
-                   f"20-day average. Gate 3 passed." if r9v is not None
+                  (f"거래량 충분 — 지금까지 {int(tv9 or 0):,}주, 이 시각 보통 페이스의 "
+                   f"{_vmul9:.1f}배. 3관문 통과." if pace9 is not None
+                   else f"거래량 충분 — 오늘 {int(tv9 or 0):,}주, 20일 평균의 {_vmul9:.1f}배. 3관문 통과."
+                   if _vmul9 is not None else "거래량 자료 수집 중 — 막는 근거 없음. 3관문 통과."),
+                  (f"Enough volume — {int(tv9 or 0):,} shares so far, {_vmul9:.1f}× a normal "
+                   f"pace by this hour. Gate 3 passed." if pace9 is not None
+                   else f"Enough volume — {int(tv9 or 0):,} shares today, {_vmul9:.1f}× the "
+                   f"20-day average. Gate 3 passed." if _vmul9 is not None
                    else "Volume data still collecting — nothing blocking. Gate 3 passed."))
         # ④ 나쁜 뉴스 (the veto's own 3h net; the remembered day reads the
         # WHOLE trading day's stamps, each line carrying its own clock)

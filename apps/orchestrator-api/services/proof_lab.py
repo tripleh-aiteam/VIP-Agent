@@ -2149,7 +2149,23 @@ def _vol_pace(s: dict, i: int):
             acc += float(x or 0)
             cum.append(acc)
         s["_cumv"] = cum
-    frac = (i + 1) / float(len(vols))
+    # ELAPSED-OF-SESSION BY THE BAR'S OWN CLOCK (caught 2026-09-07, the
+    # silent morning): dividing by len(vols) was right on STORED full days
+    # (the array holds the whole session) but on a LIVE day the array holds
+    # only the elapsed bars, so the newest bar always read frac≈1.0 — gate 3
+    # demanded a FULL day's volume by 10:00 and blocked every entry that
+    # survived gates 1-2 (현대로템 died here at "0.3×" that was really a
+    # normal morning pace). The clock makes 09:10 and 14:10 mean the same.
+    frac = None
+    try:
+        _tm9 = str((s.get("times") or [])[i])[:5]
+        if ":" in _tm9:
+            _mins9 = (int(_tm9[:2]) - 9) * 60 + int(_tm9[3:5])
+            frac = max(2.0, min(381.0, _mins9 + 1)) / 381.0
+    except Exception:
+        frac = None
+    if frac is None:
+        frac = (i + 1) / float(len(vols))
     expected = avg * frac
     return (cum[i] / expected) if expected > 0 else None
 
