@@ -1037,7 +1037,12 @@ def scan(db) -> dict:
         except Exception:
             pass
     # expire unanswered popups
-    st["pending"] = [p for p in st["pending"] if time.time() - p["ts"] < _EXPIRE]
+    # A QUESTION WAITS FOR ITS ANSWER (boss 2026-09-07: "if we are outside so we
+    # do not see the popup, it must keep stay until we approve or cancel").
+    # It used to die silently after ten minutes, so a proposal raised while he
+    # was away from the desk was gone before he ever saw it - and he could not
+    # tell that from the desk never having asked. Nothing expires now; only his
+    # answer, or the closing bell, removes a popup.
     # planted TEST rows never survive (boss 2026-09-03: 'remove this, it is old
     # and makes confusion' — a file cleanup raced a scan thread's stale copy
     # and the row resurrected; filtering here makes the removal stick)
@@ -1127,16 +1132,23 @@ def scan(db) -> dict:
         _mk9 = st.setdefault("miss", {})
         if _sd9 == "BUY":
             _mk9[_c9] = 0 if _gates_pass(_c9) else int(_mk9.get(_c9) or 0) + 1
+        # AND A LAPSED CONDITION MARKS THE CARD, IT NO LONGER TAKES IT AWAY.
+        # Withdrawing was the honest thing while popups also expired; now that
+        # a question waits for him, silently removing one is the very thing he
+        # asked us to stop. The card stays and says the condition has passed,
+        # so the choice is still his - and approving sends a MARKET order, so
+        # the fill is at today's price, never the stale one on the card.
         if _sd9 == "BUY" and int(_mk9.get(_c9) or 0) >= _HOLD_N:
-            # A POPUP LIVES ONLY WHILE ITS OWN REASON DOES - and its reason is
-            # the GATES, not 알고3's entry shape (boss 2026-09-03 15:3x: six
-            # popups appeared and were all swept away seconds later, then came
-            # back, then went again). This test used to ask whether the engine
-            # held the stock, which is a different question from the one the
-            # popup was raised on, so every correct proposal was withdrawn on
-            # the very next scan. It now asks the same question that raised it.
-            _drop9.append(_p9)
-        elif _sd9 == "SELL" and (_c9 not in _ourc9 or _c9 in _live9):
+            _p9["stale"] = True
+            _p9["stale_ko"] = "⚠️ 처음 제안한 조건은 지나갔습니다 — 그래도 결정은 "
+            _p9["stale_ko"] += "사장님 몫이라 카드를 남겨둡니다. 승인하시면 시장가로 나갑니다."
+            _p9["stale_en"] = ("⚠️ The condition this was raised on has passed. "
+                               "The card stays because the decision is yours; "
+                               "approving sends a MARKET order at today's price.")
+        elif _sd9 == "SELL" and _c9 not in _ourc9:
+            # the ONE case a card is still taken away: a sell for a stock we no
+            # longer hold cannot be acted on at all - approving it would only
+            # be refused. That is an impossible action, not a lapsed condition.
             _drop9.append(_p9)
         else:
             _keep9.append(_p9)

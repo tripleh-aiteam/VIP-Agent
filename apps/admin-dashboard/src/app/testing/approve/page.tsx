@@ -16,7 +16,8 @@ type Room = { code: string; name: string; score?: number | null; price?: number 
               news?: { stamp: string; title: string; link?: string | null } | null };
 type ChkItem = { k: string; v: string; s?: number | null; g?: string; bad?: boolean;
                  link?: string | null; en?: string; ven?: string };
-type Sug = { id: number; hhmm: string; code: string; name: string; side: "BUY" | "SELL";
+type Sug = {
+  stale?: boolean; stale_ko?: string; stale_en?: string; id: number; hhmm: string; code: string; name: string; side: "BUY" | "SELL";
              reasons: string[]; reasons_en?: string[]; price: number; qty: number; score?: number | null;
              check_items?: ChkItem[] };
 type LogRow = Sug & { decision: string; fill?: number | null; at: string; dealt?: boolean;
@@ -1497,6 +1498,16 @@ export default function ApprovePage() {
                   style={{ fontWeight: 800, color: "#1565c0", fontSize: 11.5, display: "block", marginBottom: 2 }}>
                   📎 {t("⑥ 뉴스 기사 전체 읽기", "⑥ read the full news article")}</a> : null; })()}
               {chkList(`p${p.id}`, p.check_items)}</div>
+            {/* A WAITING CARD SAYS SO (boss 2026-09-07: a popup must stay
+                until he approves or cancels — so one that outlives its own
+                condition has to admit it rather than sit there looking fresh). */}
+            {p.stale && (
+              <div style={{ margin: "6px 0 8px", padding: "7px 9px", borderRadius: 7,
+                            background: "#fff4e5", border: "1px solid #e8a33d",
+                            color: "#7a4a00", fontSize: 11.5, fontWeight: 600,
+                            lineHeight: 1.45 }}>
+                {t(p.stale_ko || "", p.stale_en || "")}
+              </div>)}
             {/* 📈 THE GATE CHART (boss 2026-09-04). One click opens it beside
                 the price; it redraws every 5s while open. The three lines are
                 the gates themselves, so he reads the verdict off the chart
