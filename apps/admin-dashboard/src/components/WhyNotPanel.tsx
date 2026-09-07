@@ -51,7 +51,19 @@ export default function WhyNotPanel() {
     return () => { dead = true; clearInterval(iv); };
   }, []);
 
-  const rows = data?.rows || [];
+  // HIS SIX COME FIRST, IN HIS ORDER (boss 2026-09-07: "please reorder these:
+  // 1. SK하이닉스 2. 삼성전자 3. 한화오션 4. 두산에너빌리티 5. SK텔레콤
+  // 6. NAVER, then the others"). These are his standing six, and he reads the
+  // board in that order every morning; everything else keeps the order the
+  // desk sent, which is by score.
+  const SIX_ORDER = ["000660", "005930", "042660", "034020", "017670", "035420"];
+  const rows = [...(data?.rows || [])].sort((a, b) => {
+    const ia = SIX_ORDER.indexOf(a.code), ib = SIX_ORDER.indexOf(b.code);
+    if (ia !== -1 && ib !== -1) return ia - ib;      // both his: his order
+    if (ia !== -1) return -1;                        // his six always above
+    if (ib !== -1) return 1;
+    return 0;                                        // the rest: unchanged
+  });
   const blocked = rows.filter((r) => !r.held && !r.pending && r.stopped_at);
   const ready = rows.filter((r) => !r.held && !r.pending && !r.stopped_at);
 

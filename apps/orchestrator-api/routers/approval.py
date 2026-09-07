@@ -853,39 +853,61 @@ def whynot(db: Session = Depends(get_db)):
                   f"{(gap if gap is not None else 0):+.2f}%). 1관문 통과.",
                   f"No gap-up at the open ({W(op)}, {(gap if gap is not None else 0):+.2f}% "
                   f"vs yesterday's close {W(yc)}). Gate 1 passed.")
-        # ② 주간 포지션 (boss 2026-09-04 18:0x: "2. Position (Weekly)") — the
-        # engine's own gate: we buy only at or under the past week's lowest
-        # close (the same low5 line the gate-chart draws)
+        # ② POSITION — THE BLENDED FOUR WINDOWS (boss 2026-09-07: "last week we
+        # created the formula using weekly, 1 month, 3 month, 6 month — here is
+        # proof it is considering only the old weekly rule. Check SK Telecom:
+        # there is no 갭상승 but weekly is higher than the minimum").
+        # He is right and it was a real inconsistency: the engine, the board
+        # gate and the send-time guard were all moved to the blend, and THIS
+        # page - the one he reads to learn why nothing is trading - was left
+        # explaining a rule the desk no longer applies. Same formula now:
+        #   BLEND = (week% + month% + 3month% + 6month%) / 4,  buy at <= 35%
         low5 = None
         try:
             from services.kiwoom_rules import _daily20
-            _d20 = _daily20(code, day)
-            low5 = float(_d20[2] or 0) or None
+            low5 = float((_daily20(code, day)[2]) or 0) or None
         except Exception:
             pass
         r["low5"] = low5
-        if low5 and px:
-            _dp = round((px / low5 - 1) * 100, 2)
-            if px <= low5 * 1.002:
-                _gate(2, "position", True,
-                      f"주간 포지션 — 현재 {W(px)}가 지난 1주 최저 종가 ₩{low5:,.0f} "
-                      f"부근/아래입니다 ({_dp:+.2f}%) — 살 수 있는 낮은 자리. 2관문 통과.",
-                      f"Weekly position — now {W(px)}, at or under the past week's "
-                      f"lowest close (₩{low5:,.0f}, {_dp:+.2f}%) — a low place to buy. "
-                      f"Gate 2 passed.")
-            else:
-                _gate(2, "position", False,
-                      f"주간 포지션이 높습니다 — 지난 1주 최저 종가 ₩{low5:,.0f}, 현재 "
-                      f"{W(px)} ({_dp:+.2f}% 위). 우리는 주간 저점 부근/아래에서만 삽니다 — "
-                      f"아직 살 자리가 아닙니다.",
-                      f"The weekly POSITION is high — the past week's lowest close is "
-                      f"₩{low5:,.0f} and price sits {W(px)} ({_dp:+.2f}% above it). "
-                      f"We buy only at or under the week's low — not a buying place yet.")
-        else:
+        _bl = None
+        _parts_k, _parts_e = [], []
+        try:
+            from services.kiwoom_rules import _hz_stats
+            _hz = _hz_stats(code, day) or {}
+            _ps = []
+            for _k, _nk, _ne in (("w", "주", "week"), ("m", "월", "month"),
+                                 ("q", "3개월", "3mth"), ("h", "6개월", "6mth")):
+                _lo, _hi = _hz.get(_k + "_low"), _hz.get(_k + "_hi")
+                if px and _lo and _hi and _hi > _lo:
+                    _v = max(0.0, min(100.0, (px - _lo) / (_hi - _lo) * 100))
+                    _ps.append(_v)
+                    _parts_k.append(f"{_nk} ₩{_lo:,.0f}~₩{_hi:,.0f} 중 {_v:.0f}%")
+                    _parts_e.append(f"{_ne} ₩{_lo:,.0f}~₩{_hi:,.0f} at {_v:.0f}%")
+            if _ps:
+                _bl = sum(_ps) / len(_ps)
+        except Exception:
+            pass
+        r["pos_blend"] = round(_bl, 1) if _bl is not None else None
+        if _bl is None:
             _gate(2, "position", True,
-                  "주간 포지션 — 주간 저점 자료 수집 중, 막는 근거 없음. 2관문 통과.",
-                  "Weekly position — week-low data still collecting, nothing blocking. "
+                  "위치 — 기간별 자료 수집 중, 막는 근거 없음. 2관문 통과.",
+                  "Position — window data still collecting, nothing blocking. "
                   "Gate 2 passed.")
+        elif _bl <= 35.0:
+            _gate(2, "position", True,
+                  f"위치 — {' · '.join(_parts_k)}. 네 구간을 더해 4로 나누면 "
+                  f"{_bl:.0f}%이고 35% 이하라 살 수 있는 낮은 자리입니다. 2관문 통과.",
+                  f"Position — {' · '.join(_parts_e)}. Adding the four and dividing "
+                  f"by 4 gives {_bl:.0f}%, which is 35% or less — a low place to buy. "
+                  f"Gate 2 passed.")
+        else:
+            _gate(2, "position", False,
+                  f"위치가 높습니다 — 지금 {W(px)}. {' · '.join(_parts_k)}. 네 구간을 "
+                  f"더해 4로 나누면 {_bl:.0f}%이고, 35% 이하일 때만 삽니다 → 더 "
+                  f"내려오기를 기다립니다.",
+                  f"The POSITION is high — now {W(px)}. {' · '.join(_parts_e)}. "
+                  f"Adding the four and dividing by 4 gives {_bl:.0f}%, and we buy "
+                  f"only at 35% or less → we wait for it to come down.")
         # ③ 거래량
         try:
             r9v, tv9 = ad._vol_ratio(code)
