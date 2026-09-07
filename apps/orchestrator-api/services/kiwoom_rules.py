@@ -352,6 +352,11 @@ def pos_story(code: str, px: float, day: str, bar: float = 35.0,
     en_l = ["📍 POSITION (week·month·3m·6m) — where today's price sits between each "
             "window's lowest and highest. 0% = the cheapest that window ever was, "
             "100% = the most expensive."]
+    # the % formula, stated once and then WORKED OUT on the 1-week line with
+    # the exact numbers (boss 2026-09-07: "start by showing 1 week — how you
+    # calculate, with the formula and the exact calculation")
+    ko_l.append("각 %의 계산법: (지금 가격 − 그 기간 최저) ÷ (최고 − 최저) × 100")
+    en_l.append("How each % is computed: (price now − window low) ÷ (high − low) × 100")
     for k, nk, ne in (("w", "1주일", "1 week"), ("m", "1개월", "1 month"),
                       ("q", "3개월", "3 months"), ("h", "6개월", "6 months")):
         lo, hi = hz.get(k + "_low"), hz.get(k + "_hi")
@@ -360,10 +365,18 @@ def pos_story(code: str, px: float, day: str, bar: float = 35.0,
             parts.append(v)
             tag_k = "싼 자리" if v < 35 else "중간" if v < 65 else "비싼 자리"
             tag_e = "cheap" if v < 35 else "middle" if v < 65 else "expensive"
-            ko_l.append(f"· {nk}: 최저 ₩{lo:,.0f} ~ 최고 ₩{hi:,.0f} → 지금 ₩{px:,.0f}는 "
-                        f"{v:.0f}% 지점 ({tag_k})")
-            en_l.append(f"· {ne}: low ₩{lo:,.0f} ~ high ₩{hi:,.0f} → now ₩{px:,.0f} "
-                        f"sits at {v:.0f}% ({tag_e})")
+            if k == "w":
+                ko_l.append(f"· {nk}: 최저 ₩{lo:,.0f} ~ 최고 ₩{hi:,.0f} → 계산: "
+                            f"(₩{px:,.0f} − ₩{lo:,.0f}) ÷ (₩{hi:,.0f} − ₩{lo:,.0f}) × 100 "
+                            f"= ₩{px - lo:,.0f} ÷ ₩{hi - lo:,.0f} × 100 = {v:.0f}% ({tag_k})")
+                en_l.append(f"· {ne}: low ₩{lo:,.0f} ~ high ₩{hi:,.0f} → worked out: "
+                            f"(₩{px:,.0f} − ₩{lo:,.0f}) ÷ (₩{hi:,.0f} − ₩{lo:,.0f}) × 100 "
+                            f"= ₩{px - lo:,.0f} ÷ ₩{hi - lo:,.0f} × 100 = {v:.0f}% ({tag_e})")
+            else:
+                ko_l.append(f"· {nk}: 최저 ₩{lo:,.0f} ~ 최고 ₩{hi:,.0f} → 같은 계산으로 "
+                            f"지금 ₩{px:,.0f}는 {v:.0f}% 지점 ({tag_k})")
+                en_l.append(f"· {ne}: low ₩{lo:,.0f} ~ high ₩{hi:,.0f} → same formula: "
+                            f"now ₩{px:,.0f} sits at {v:.0f}% ({tag_e})")
     if not parts:
         return None
     blend = sum(parts) / len(parts)
