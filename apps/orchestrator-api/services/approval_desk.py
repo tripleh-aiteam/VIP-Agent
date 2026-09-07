@@ -1210,7 +1210,7 @@ def scan(db) -> dict:
         if _sd9 == "BUY" and int(_mk9.get(_c9) or 0) >= _HOLD_N:
             _p9["stale"] = True
             _p9["stale_ko"] = "⚠️ 처음 제안한 조건은 지나갔습니다 — 그래도 결정은 "
-            _p9["stale_ko"] += "사장님 몫이라 카드를 남겨둡니다. 승인하시면 시장가로 나갑니다."
+            _p9["stale_ko"] += "사장님 몫이라 카드를 남겨둡니다. 승인하시면 지금 나온 값에 바로 나갑니다."
             _p9["stale_en"] = ("⚠️ The condition this was raised on has passed. "
                                "The card stays because the decision is yours; "
                                "approving sends a MARKET order at today's price.")
@@ -1975,7 +1975,7 @@ def apply_time_overrides(held: list, log: list) -> None:
                     f"₩{float(_sp):,.0f})에 닿은 {_sa}에 전량 매도합니다."
                     if _bp else f"🛑 -1% 규칙 — {_sa} 전량 매도.",
                     "⚠️ 원래 이 자리에서 팔았어야 했습니다. 팝업은 떴지만 지정가 주문이 "
-                    "체결되지 않아 매도가 늦어졌습니다 — 이제 승인은 시장가로 나갑니다.",
+                    "체결되지 않아 매도가 늦어졌습니다 — 이제 승인은 지금 값에 바로 나갑니다.",
                     f"📉 결과 {_pc:+.2f}%." if _pc is not None else ""]
                 row["reasons_en"] = [
                     f"🛑 THE -1% RULE — sold in full at {_sa}, the minute price "
@@ -2070,6 +2070,33 @@ LADDER_N = 5            # five slices of 20% (boss 2026-09-07)
 LADDER_STEP = 1         # one tick better per slice
 
 
+def _touch_price(code: str, side: str):
+    """The price a market order actually deals at right now: the cheapest ask
+    when we buy, the highest bid when we sell. Written on the first slice so a
+    person reads a number instead of the words 'market order'."""
+    try:
+        from services.kiwoom_tape import load_book, _day
+        snaps = load_book(code, _day()) or []
+        if snaps:
+            b = snaps[-1]
+            rows = (b.get("asks") or []) if side == "BUY" else (b.get("bids") or [])
+            px = [float(p) for p, q in rows if p and q]
+            if px:
+                return min(px) if side == "BUY" else max(px)
+    except Exception:
+        pass
+    try:
+        from services.paper_desk import fast_price
+        from services.kiwoom_rules import krx_tick
+        p0 = float((fast_price(code) or [None])[0] or 0)
+        if p0:
+            tk = krx_tick(p0) or 1
+            return float(int(round(p0 / tk)) * tk)
+    except Exception:
+        pass
+    return None
+
+
 def book_ladder(code: str, side: str, fallback: float, qty: int,
                 slices: int = LADDER_N) -> list[dict]:
     """ONE ORDER BECOMES A LADDER (boss 2026-09-07: "we are selling all with one
@@ -2099,7 +2126,15 @@ def book_ladder(code: str, side: str, fallback: float, qty: int,
     tk = krx_tick(base) or 1
     each = qty // slices
     first = qty - each * (slices - 1)          # the remainder rides the sure leg
-    out = [{"px": base, "qty": first, "kind": "market", "ko": ko, "en": en}]
+    # THE FIRST SLICE SHOWS ITS PRICE, NOT THE WORD "MARKET" (boss 2026-09-07:
+    # "just normal price I mean give number, because people may not understand
+    # what is market price"). It still goes out as a market order - that is what
+    # guarantees the fill - but the number written on it is the price it will
+    # actually deal at: the cheapest ask for a buy, the highest bid for a sell.
+    _now = _touch_price(code, side) or base
+    out = [{"px": float(_now), "qty": first, "kind": "market",
+            "ko": f"1번째 {first:,}주 — 지금 바로 체결되는 가격 ₩{_now:,.0f}. " + ko,
+            "en": f"slice 1, {first:,} sh at ₩{_now:,.0f} - the price it deals at right now. " + en}]
     for i in range(1, slices):
         px = base + (tk * LADDER_STEP * i if side == "SELL" else -tk * LADDER_STEP * i)
         if px <= 0:
@@ -2116,15 +2151,16 @@ def ladder_words(rows: list[dict], side: str) -> tuple:
     """The ladder as one sentence a person can check against the book."""
     if len(rows) < 2:
         return rows[0].get("ko", ""), rows[0].get("en", "")
-    _k = " · ".join(f"{r['qty']:,}주 " + ("시장가" if r["kind"] == "market" else f"₩{r['px']:,.0f}")
-                    for r in rows)
-    _e = " · ".join(f"{r['qty']:,}sh " + ("at market" if r["kind"] == "market" else f"₩{r['px']:,.0f}")
-                    for r in rows)
+    _k = " · ".join(f"{r['qty']:,}주 ₩{r['px']:,.0f}"
+                    + ("(지금 체결)" if r["kind"] == "market" else "") for r in rows)
+    _e = " · ".join(f"{r['qty']:,}sh ₩{r['px']:,.0f}"
+                    + (" (deals now)" if r["kind"] == "market" else "") for r in rows)
     return (f"{'매도' if side == 'SELL' else '매수'}를 {len(rows)}조각으로 나눕니다 — {_k}. "
-            f"첫 조각은 반드시 체결되게 시장가로 나가고, 나머지는 한 호가씩 유리한 자리에서 기다립니다.",
+            f"첫 조각은 지금 나온 값에 바로 체결되고, 나머지는 한 호가씩 "
+            f"{'비싼' if side == 'SELL' else '싼'} 자리에서 기다립니다.",
             f"the {'sell' if side == 'SELL' else 'buy'} goes out in {len(rows)} slices - {_e}. "
-            f"The first leg is a market order so the decision always executes; "
-            f"the rest wait one tick better each.")
+            f"The first deals immediately at the price shown; the rest wait one tick "
+            f"{'higher' if side == 'SELL' else 'lower'} each.")
 
 
 def _book_price(code: str, side: str, fallback: float):

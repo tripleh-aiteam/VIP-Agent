@@ -19,7 +19,8 @@ type ChkItem = { k: string; v: string; s?: number | null; g?: string; bad?: bool
 type Sug = {
   stale?: boolean; stale_ko?: string; stale_en?: string; id: number; hhmm: string; code: string; name: string; side: "BUY" | "SELL";
              reasons: string[]; reasons_en?: string[]; price: number; qty: number; score?: number | null;
-             check_items?: ChkItem[] };
+             check_items?: ChkItem[];
+             ladder?: { px: number; qty: number; kind: string }[] };
 type LogRow = Sug & { decision: string; fill?: number | null; at: string; dealt?: boolean;
                       gave_up?: boolean; giveup_note?: string;
                       converted?: boolean; conv_note?: string;
@@ -243,7 +244,7 @@ export default function ApprovePage() {
     setFeed((f) => f ? { ...f, pending: (f.pending || []).filter((p) => p.id !== sid) } : f);
     setToast(ok ? (edited
                     ? t("👆 승인 — 수정하신 지정가로 주문합니다", "👆 APPROVE — ordering at the price you set (limit)")
-                    : t("👆 승인 — 시장가로 즉시 체결합니다", "👆 APPROVE — market order, fills immediately)"))
+                    : t("👆 승인 — 지금 나온 값에 즉시 체결합니다", "👆 APPROVE — deals immediately at the price shown"))
                 : t("👆 취소 클릭됨 — 처리 중…", "👆 CANCEL clicked — processing…"));
     // APPROVE MEANS IT FILLS (boss 2026-09-03: "there is a popup message but
     // price not deal so we could not sell - so please use market price"). The
@@ -1184,7 +1185,7 @@ export default function ApprovePage() {
                                           color: (x.pct ?? 0) >= 0 ? "#e53935" : "#1e88e5" }}>
                                 {(x.pct ?? 0) >= 0 ? "+" : ""}{x.pct}%</b>
                               {x.conv && <span style={{ marginLeft: 6, fontSize: 10.5, opacity: 0.7 }}
-                                title={x.note || ""}>⚡{t("시장가 전환", "switched to market")}</span>}
+                                title={x.note || ""}>⚡{t("지금 값으로 전환", "switched to the live price")}</span>}
                             </div>);
                         })}</td>
                       {money3 && <td style={{ width: 110, textAlign: "right", verticalAlign: "top",
@@ -1331,7 +1332,7 @@ export default function ApprovePage() {
                       : (l.dealt === true || l.fill)
                         ? <span style={{ color: "#2e7d32" }} title={l.conv_note || ""}>
                             {l.converted
-                              ? t("✅ 체결 (⚡시장가 전환)", "✅ DEAL (⚡switched to market)")
+                              ? t("✅ 체결 (⚡지금 값으로 전환)", "✅ DEAL (⚡switched to the live price)")
                               : t("✅ 체결 완료", "✅ DEAL")}</span>
                         : l.gave_up
                           ? <span onClick={() => setGuOpen(guOpen === gK ? null : gK)}
@@ -1626,6 +1627,32 @@ export default function ApprovePage() {
               {p.score != null && <span style={{ marginLeft: 8, fontWeight: 700, color: "#8a6100" }}>
                 {t("체크리스트 ", "checklist ")}{p.score}{t("점", " pts")}</span>}
             </div>
+            {/* THE LADDER, AS A TABLE (boss 2026-09-07: "20% with this price
+                and another 20% another like this" — and then: show a NUMBER,
+                not the word 'market'). Only shown when the order will really
+                be split; an edited price sends one order and this disappears. */}
+            {!changed && (p.ladder || []).length > 1 && (
+              <div style={{ marginBottom: 9, padding: "7px 9px", borderRadius: 8,
+                            background: "rgba(106,27,154,0.07)",
+                            border: "1px solid rgba(106,27,154,0.35)" }}>
+                <div style={{ fontSize: 11.5, fontWeight: 800, color: "#6a1b9a", marginBottom: 3 }}>
+                  🪜 {t(`주문을 ${(p.ladder || []).length}조각으로 나눠서 냅니다`,
+                        `this order goes out in ${(p.ladder || []).length} slices`)}</div>
+                {(p.ladder || []).map((r, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, fontSize: 11.5,
+                                        padding: "1px 0", color: "#3c4753" }}>
+                    <span style={{ width: 16, opacity: 0.6 }}>{i + 1}</span>
+                    <span style={{ width: 74, textAlign: "right", fontWeight: 700 }}>
+                      {(r.qty || 0).toLocaleString()}{t("주", " sh")}</span>
+                    <b style={{ width: 92, textAlign: "right" }}>{W(r.px)}</b>
+                    <span style={{ opacity: 0.75 }}>
+                      {r.kind === "market"
+                        ? t("지금 이 값에 바로 체결", "deals right now at this price")
+                        : (p.side === "SELL"
+                            ? t("더 오르면 여기서 팔립니다", "sells here if it rises")
+                            : t("더 내리면 여기서 사집니다", "buys here if it dips"))}</span>
+                  </div>))}
+              </div>)}
             {/* TWO WAYS TO APPROVE (boss 2026-09-03 19:4x: "many tradings were
                 cancelled because of the price dealing — give 2 options: market
                 price and the efficient agent suggestion, with buttons; the
@@ -1635,8 +1662,17 @@ export default function ApprovePage() {
                 style={{ flex: 1.05, padding: "6px 2px", borderRadius: 8, border: "none",
                          fontWeight: 900, fontSize: 11.6, background: "#e53935",
                          color: "#fff", cursor: "pointer", lineHeight: 1.25 }}>
-                {t("✅ 시장가", "✅ MARKET")}<br />
-                <span style={{ fontWeight: 600, fontSize: 9.5 }}>{t("지금 바로 체결", "fills right now")}</span></button>
+                {/* A NUMBER, NOT A WORD (boss 2026-09-07: "just normal price,
+                    I mean give a number - people may not understand what is
+                    market price"): the live price this fills at, refreshed
+                    with the 5s feed. */}
+                {(() => {
+                  const now = feed?.rooms?.find((r) => r.code === p.code)?.price
+                            ?? p.ladder?.[0]?.px ?? p.price;
+                  return <>{t(`✅ ${W(now)}`, `✅ ${W(now)}`)}<br />
+                    <span style={{ fontWeight: 600, fontSize: 9.5 }}>
+                      {t("지금 이 값에 바로 체결", "deals right now at this price")}</span></>;
+                })()}</button>
               <button disabled={busy === p.id} onClick={() => decide(p.id, true, pv, qv, true)}
                 style={{ flex: 1.35, padding: "6px 2px", borderRadius: 8, border: "none",
                          fontWeight: 900, fontSize: 11.6, background: "#6a1b9a",
@@ -1689,7 +1725,7 @@ export default function ApprovePage() {
                 <button disabled={busy === -1}
                   onClick={() => {
                     setBusy(-1);
-                    setToast(t("👆 뉴스 판단 — 시장가로 주문합니다…", "👆 News call — ordering at market…"));
+                    setToast(t("👆 뉴스 판단 — 지금 값으로 주문합니다…", "👆 News call — ordering at the live price…"));
                     fetch(`${base}/approval/news-order?code=${o.code}&side=${o.side}`, { method: "POST" })
                       .then((r) => r.json())
                       .then((d) => { setToast(d?.ok
@@ -1705,8 +1741,8 @@ export default function ApprovePage() {
                            fontWeight: 900, fontSize: 14, cursor: "pointer", color: "#fff",
                            background: o.side === "BUY" ? "#c62828" : "#1565c0" }}>
                   {o.side === "BUY"
-                    ? t(`📈 네, 매수합니다 — ${o.qty.toLocaleString()}주 시장가`,
-                        `📈 Yes, BUY — ${o.qty.toLocaleString()} sh at market`)
+                    ? t(`📈 네, 매수합니다 — ${o.qty.toLocaleString()}주 지금 값으로`,
+                        `📈 Yes, BUY — ${o.qty.toLocaleString()} sh at the live price`)
                     : t(`⚠️ 네, 매도합니다 — ${o.qty.toLocaleString()}주 전량`,
                         `⚠️ Yes, SELL — all ${o.qty.toLocaleString()} sh`)}
                 </button>
