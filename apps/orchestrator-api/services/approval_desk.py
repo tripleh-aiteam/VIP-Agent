@@ -1597,6 +1597,23 @@ def _turn_shape(code: str, bars: list | None = None) -> tuple:
         if _live:
             _TURNC[_key] = out
         return out
+
+    def _rises(seq, first_prev):
+        """HIS OWN COUNT (boss 2026-09-07 10:2x, HD현대중공업: 10:23 ▲ · 10:24 ▲ ·
+        10:25 flat · 10:26 flat · 10:27 ▲ = "the 3rd red"). A flat minute
+        neither counts nor breaks the run; a blue deeper than 0.2% resets it.
+        Returns (rises, the clock of the one that completed the count)."""
+        _u, _prev, _third = 0, first_prev, None
+        for _b in seq:
+            _c = _b["close"]
+            if _c > _prev:
+                _u += 1
+                if _u == d["ups"] and _third is None:
+                    _third = str(_b.get("hhmm") or "")[:5]
+            elif _prev and (_prev - _c) / _prev * 100 > d["soft"]:
+                _u, _third = 0, None
+            _prev = _c
+        return _u, _third
     if wlo and (whi - wlo) / wlo * 100 < d["chop"]:
         # THE DAY-SCALE DOOR (boss 2026-09-07 15:1x, six all-passed stocks
         # asking "why still no popup"): his law reads across the DAY — these
@@ -1611,12 +1628,18 @@ def _turn_shape(code: str, bars: list | None = None) -> tuple:
             _dfall = (_dhi - px) / _dhi * 100 if _dhi else 0.0
         except Exception:
             _dfall = 0.0
-        _c4 = [b["close"] for b in w[-4:]]
-        _r3 = (len(_c4) == 4 and _c4[1] > _c4[0]
-               and _c4[2] > _c4[1] and _c4[3] > _c4[2])
-        if (_dfall >= d["drop"] and _r3
+        # ONE COUNT FOR BOTH DOORS (boss 2026-09-07 11:5x, pressing again on
+        # 한화오션 and five others: "all gates passed - why is the popup not
+        # coming"). This door demanded three CONSECUTIVE rising closes, and on
+        # the flat base it is built for, most minutes are flat - so the run was
+        # broken by a minute in which nothing happened. Measured over today's
+        # tape across fourteen names: the consecutive test opened ONCE all day
+        # (1 of 14 names), his own count opens for 13 of 14. It was not the
+        # market that was silent, it was the counting.
+        _u3, _hm3 = _rises(w[ti + 1:], w[ti]["close"])
+        if (_dfall >= d["drop"] and _u3 >= d["ups"]
                 and px <= wlo * (1 + d["chase"] / 100)):
-            _hm3 = str(w[-1].get("hhmm") or "")[:5]
+            _hm3 = _hm3 or str(w[-1].get("hhmm") or "")[:5]
             out = (True,
                    f"진입 신호 확인 (하루 흐름) — 오늘 고점 대비 {_dfall:.2f}% 내린 뒤 "
                    f"하락이 멈춰 횡보했고(30분 폭 {(whi - wlo) / wlo * 100:.2f}%), "
@@ -1629,11 +1652,12 @@ def _turn_shape(code: str, bars: list | None = None) -> tuple:
             if _live:
                 _TURNC[_key] = out
             return out
-        return _no(f"움직임이 거의 없는 평평한 흐름입니다 (30분 폭 {(whi - wlo) / wlo * 100:.2f}%) — "
-                   f"오늘 내린 뒤 멈춘 자리라면, 여기서 3연속 상승이 서는 순간 신호가 켜집니다",
-                   f"a flat tape - {(whi - wlo) / wlo * 100:.2f}% of range over 30 minutes; if this "
-                   f"is the stopped base after today's fall, the signal fires the moment 3 "
-                   f"consecutive rises stand here")
+        return _no(f"오늘 고점 대비 {_dfall:.2f}% 내린 뒤 멈춘 자리입니다 "
+                   f"(30분 폭 {(whi - wlo) / wlo * 100:.2f}%). 지금까지 상승 {_u3}개 — "
+                   f"{d['ups']}개가 서면 그 순간 제안드립니다",
+                   f"it fell {_dfall:.2f}% from today's high and has stopped here "
+                   f"({(whi - wlo) / wlo * 100:.2f}% of range over 30 min). {_u3} rise(s) "
+                   f"so far - the moment the {d['ups']}rd one stands, we ask")
     if fall < d["drop"]:
         return _no(f"하락이 이미 회복됐습니다 — 고점 대비 {fall:.2f}%뿐이라 "
                    f"살 만한 눌림이 아닙니다",
@@ -1652,16 +1676,7 @@ def _turn_shape(code: str, bars: list | None = None) -> tuple:
                    f"추격 매수는 하지 않습니다 (제1조)",
                    f"{(px - trough) / trough * 100:+.2f}% above the bottom (₩{trough:,.0f} at {at}) - "
                    f"we do not chase (제1조)")
-    ups, prev, third = 0, w[ti]["close"], None
-    for b in w[ti + 1:]:
-        c = b["close"]
-        if c > prev:
-            ups += 1
-            if ups == d["ups"] and third is None:
-                third = str(b.get("hhmm") or "")[:5]
-        elif prev and (prev - c) / prev * 100 > d["soft"]:
-            ups, third = 0, None
-        prev = c
+    ups, third = _rises(w[ti + 1:], w[ti]["close"])
     if ups < d["ups"]:
         return _no(f"하락 {fall:.2f}%는 충분하지만 {at} 바닥 이후 양봉이 {ups}개뿐입니다 — "
                    f"3번째 양봉이 서면 그때 삽니다",
