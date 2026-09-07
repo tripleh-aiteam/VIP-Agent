@@ -432,24 +432,22 @@ VARIANTS: list[dict] = [
      #   알고3   36 trips / 64% /   +8.64%  ->   35 / 63% /   +7.41%  (-1.23%)
      # It clearly helps 알고2 and slightly hurts 알고3; deployed to both at his
      # explicit order, with both numbers on record.
-     "gap_guard": GAP_PCT, "gap_wait": "prev3",
-     # ── HIS THREE GATES, IN HIS ORDER (boss 2026-09-04) ────────────────────
-     # 1 갭상승 : any open above yesterday's 19:59 price stops buying for the
-     #            day until price comes back to it (gap_guard/prev3, above)
-     # 2 위치   : buy only at or under the LOWEST close of the past week
-     # 3 거래량 : today's volume must be running at least at a normal week's
-     #            pace by this hour
-     # MEASURED over all 22 stored days, added in exactly this order:
+     # ── 알고2'S OWN BOOK IS BACK (boss 2026-09-07 11:2x: "In Menu 2, Algo 2
+     # is not working — according to that rule it should buy and sell many
+     # stocks. Even if there is a 갭상승 it must buy — for buying it should
+     # decrease and start to increase, and every +1% increase sell 10% of the
+     # stocks, like before. Fix Algo 2 and from 9 am back up and buy if the
+     # condition matches"). The three 09-04 gates came OFF 알고2 at his word:
+     # gap_guard None, week_low off, week_vol off. The dip door itself IS his
+     # entry law — a decrease that stops and turns up (3rd red). The gates'
+     # measured value stays on record below; 알고3 keeps all three gates.
+     # MEASURED over all 22 stored days when the gates were added (09-04):
      #   알고2  gate1 281tr 48%% -54.54%%  -> +g2 84tr 52%% -5.63%%
      #                                   -> +g3 49tr 65%% +7.94%%
      #   알고3  gate1  32tr 59%%  +1.07%%  -> +g2 20tr 60%% -0.52%%
      #                                   -> +g3 14tr 79%% +4.95%%
-     # 알고2 turns POSITIVE for the first time in the whole court. Gate 2 alone
-     # is not the win - it cuts the bleeding; gate 3 is what makes both algos
-     # profitable, which is the opposite of what the ranking test said about
-     # volume and worth saying plainly: volume is a poor way to CHOOSE a stock
-     # and a good way to REFUSE a moment.
-     "week_low": True, "week_vol": 1.0,
+     "gap_guard": None, "gap_wait": "prev3",
+     "week_low": False, "week_vol": 0,
      # THE PATIENT PAIR (boss 2026-09-03 evening: "even if they decreased -1%
      # do not sell and keep holding, because they are already decreased many %,
      # so -1 is not a big deal"). MEASURED over all 22 stored days first:
