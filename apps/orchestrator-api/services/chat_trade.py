@@ -698,26 +698,66 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
     # stock rides in the confirmation, so chat and board speak with one voice.
     m3_ko = m3_en = None
     if side == "BUY":
+        # THE GATES SPEAK FIRST, IN THE APP'S OWN SENTENCES (boss 2026-09-07:
+        # "if we ask 'please buy SK hynix' the chatbot should FIRST say
+        # whether it is allowed — passed all gates — and explain it exactly
+        # how the app explains it, THEN ask 'still do you want to buy
+        # anyway?' — with the chatbot we need to experiment, so approving
+        # buys it anyway"). The full whynot cascade rides in the preview.
         try:
-            from routers.approval import _BRAIN_CACHE
-            _bd = (_BRAIN_CACHE or {}).get("data") or {}
-            _ent = next((e for e in (_bd.get("six") or []) + (_bd.get("universe") or [])
-                         if str(e.get("code")) == code), None)
-            if _ent:
-                if _ent.get("pass"):
-                    m3_ko = ("🤖 메뉴3 에이전트 의견: ✅ 모든 관문 통과 — "
-                             "메뉴3 기준으로도 살 수 있는 자리입니다.")
-                    m3_en = ("🤖 Menu 3 agent's view: ✅ all gates passed — "
+            from routers.approval import whynot as _wn9c
+            _wd9 = _wn9c(db)
+            _rw9 = next((x for x in (_wd9.get("rows") or [])
+                         if str(x.get("code")) == code), None)
+            _GN_KO = {"gap": "갭상승 관문", "position": "주간 포지션 관문",
+                      "volume": "거래량 관문", "news": "나쁜 뉴스 관문",
+                      "score": "100 체크리스트 관문"}
+            _GN_EN = {"gap": "Gap-up gate", "position": "Weekly-position gate",
+                      "volume": "Volume gate", "news": "Bad-news gate",
+                      "score": "100-checklist gate"}
+            if _rw9:
+                if not _rw9.get("stopped_at"):
+                    m3_ko = ("🤖 메뉴 3 에이전트 판정: ✅ 모든 관문 통과 — "
+                             "메뉴 3 기준으로도 살 수 있는 자리입니다.")
+                    m3_en = ("🤖 Menu 3 agent's verdict: ✅ all gates passed — "
                              "a place to buy by the desk's own rules too.")
                 else:
-                    _sh9 = _ent.get("no_buy_short") or "관문 미통과"
-                    _she9 = _ent.get("no_buy_short_en") or _sh9
-                    m3_ko = (f"🤖 메뉴3 에이전트 의견: ⛔ {_sh9} — "
-                             f"그래도 진행할지는 사장님의 결정입니다.")
-                    m3_en = (f"🤖 Menu 3 agent's view: ⛔ {_she9} — "
-                             f"proceeding anyway is your call.")
+                    _lk9, _le9 = ["🤖 메뉴 3 에이전트 판정 — 지금 규칙으로 이 매수는 막혀 있습니다:"], \
+                                 ["🤖 Menu 3 agent's verdict — this buy is BLOCKED by the running rule:"]
+                    for _g9 in _rw9.get("gates") or []:
+                        _mk = "✅" if _g9.get("passed") else "⛔"
+                        _lk9.append(f"{_mk} {_g9['n']}. {_GN_KO.get(_g9.get('key'), _g9.get('key'))} — {_g9['ko']}")
+                        _le9.append(f"{_mk} {_g9['n']}. {_GN_EN.get(_g9.get('key'), _g9.get('key'))} — {_g9['en']}")
+                    _lk9.append("**그래도 매수할까요?** 챗봇에서는 실험 매수가 가능합니다 — "
+                                "승인하시면 관문과 상관없이 삽니다.")
+                    _le9.append("**Still want to buy anyway?** The chatbot allows an "
+                                "experiment buy — approve and it buys regardless of the gates.")
+                    m3_ko = "\n".join(_lk9)
+                    m3_en = "\n".join(_le9)
         except Exception:
             pass
+        if m3_ko is None:
+            # fall back to the brain's short verdict if the whynot row is cold
+            try:
+                from routers.approval import _BRAIN_CACHE
+                _bd = (_BRAIN_CACHE or {}).get("data") or {}
+                _ent = next((e for e in (_bd.get("six") or []) + (_bd.get("universe") or [])
+                             if str(e.get("code")) == code), None)
+                if _ent:
+                    if _ent.get("pass"):
+                        m3_ko = ("🤖 메뉴3 에이전트 의견: ✅ 모든 관문 통과 — "
+                                 "메뉴3 기준으로도 살 수 있는 자리입니다.")
+                        m3_en = ("🤖 Menu 3 agent's view: ✅ all gates passed — "
+                                 "a place to buy by the desk's own rules too.")
+                    else:
+                        _sh9 = _ent.get("no_buy_short") or "관문 미통과"
+                        _she9 = _ent.get("no_buy_short_en") or _sh9
+                        m3_ko = (f"🤖 메뉴3 에이전트 의견: ⛔ {_sh9} — "
+                                 f"그래도 진행할지는 사장님의 결정입니다.")
+                        m3_en = (f"🤖 Menu 3 agent's view: ⛔ {_she9} — "
+                                 f"proceeding anyway is your call.")
+            except Exception:
+                pass
     # ⚠️ LOSS WARNING on sells below break-even (2026-08-26: a whole-position sell
     # queued BELOW the average cost and the bot never said a word)
     be_ko = be_en = None

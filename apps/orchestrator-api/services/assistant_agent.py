@@ -7513,7 +7513,11 @@ def _run_agent_impl(
     # and the chart named.
     if (not confirmed_tool and not attachment_ids and transcript and len(transcript) <= 120
             and not _re.search(r"줘|해\s*줘|주문|[0-9]+\s*주|얼마|현재가|가격만|price of|history"
-                               r"|최고가|최저가|시가|종가|볼륨|주가 알려", transcript, _re.IGNORECASE)):
+                               r"|최고가|최저가|시가|종가|볼륨|주가 알려"
+                               # imperative ORDERS go to the trade lane, which now
+                               # carries the gate verdict itself (boss 2026-09-07)
+                               r"|\d+\s*shares?|please\s+(buy|sell)|(buy|sell)\s+\d",
+                               transcript, _re.IGNORECASE)):
         _adv = bool(_re.search(
             r"살까|살\s*까|살가|사까|사야|사도|매수|팔까|팔가|팔아야|매도|어때|어떄|추천"
             r"|전망|분석|판단|보류|살만|사면|팔면|언제\s*사|언제\s*팔|사는\s*게|사는게"
