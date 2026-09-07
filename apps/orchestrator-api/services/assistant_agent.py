@@ -8420,25 +8420,24 @@ def _run_agent_impl(
                       or _re.search(r"▲\s*(\d{1,2}:\d{2})", transcript))
             if _mt_er:
                 _tm_er = _mt_er.group(1).zfill(5)
-            # a HOLDING row is not history yet (boss 2026-09-01: pasted
-            # "holding — not sold yet" and asked to delete — "it can ask should
-            # I sell or delete"): offer BOTH, and arm the sell for his "네"
-            if (any(k in _t_er for k in ("holding", "not sold", "보유"))
-                    and not any(k in _t_er for k in ("숨겨", "hide", "기록만"))):
-                try:
-                    from services.chat_trade import stash_offer as _so_er
-                    _so_er(_ec, _en_nm or _ec, _en_er, side="SELL")
-                except Exception:
-                    pass
-                _rep_er = ((f"🤔 **{_en_nm}** — 이 항목은 아직 **보유 중**(미매도)입니다. 어떻게 할까요?\n"
-                            f"· **팔기** — \"네\" 또는 \"팔아줘\"라고 하시면 매도 주문을 띄웁니다\n"
-                            f"· **기록만 숨기기** — \"{_en_nm} 기록만 숨겨줘\"라고 하시면 보유는 그대로, "
-                            f"화면에서만 사라집니다") if not _en_er else
-                           (f"🤔 **{_en_nm}** — this row is still **HELD** (not sold yet). "
-                            f"What do you want?\n"
-                            f"· **Sell it** — reply \"yes\" or \"sell it\" and I'll bring the order\n"
-                            f"· **Hide the row only** — say \"hide {_en_nm} row only\" and the "
-                            f"position stays, only the board row disappears"))
+            # a HOLDING row: DO WHAT HE SAID, then tell him what that means
+            # (boss 2026-09-07, after the bot answered his 'remove this' with a
+            # sell-or-hide QUESTION: "I wanted delete/remove but it asked —
+            # make our chatbot a clever assistant"). Remove = hide the display
+            # row NOW; the position stays alive and the reply says so plainly,
+            # with the sell phrase and the undo phrase ready. This replaces
+            # the 09-01 ask-first behavior at his newer word.
+            if any(k in _t_er for k in ("holding", "not sold", "보유")):
+                _te.hide(_day_er, _ec, _tm_er or "")
+                _rep_er = ((f"🗑 **{_en_nm}** — 말씀하신 대로 매매 기록 화면에서 지웠습니다.\n"
+                            f"⚠️ 참고: 이 종목은 아직 **보유 중**입니다 — 기록만 숨겼고 포지션은 "
+                            f"그대로 살아 있습니다. 매도까지 원하시면 \"{_en_nm} 팔아줘\", "
+                            f"되돌리려면 \"삭제한 기록 복원\"이라고 말씀하세요.") if not _en_er else
+                           (f"🗑 **{_en_nm}** — removed from the trading history view, "
+                            f"as you asked.\n"
+                            f"⚠️ Note: this stock is still **HELD** — only the row was "
+                            f"hidden, the position stays alive. Say \"sell {_en_nm}\" to "
+                            f"also sell it, or \"restore deleted history\" to undo."))
                 return {"intent": "trip_erase", "language": lang, "reply": _rep_er,
                         "action": None, "speak": True, "transcript": transcript,
                         "tool_used": "trip_eraser"}
