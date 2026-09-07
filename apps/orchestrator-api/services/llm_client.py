@@ -46,8 +46,25 @@ MODEL_CATALOG = {
     #       astra 14.3%/7.1%; on the "will not move" side fable 100%/69%,
     #       astra 100%/64%. They never disagreed on a story the price answered.
     #     speed: fable 8s where astra took 19s for the same 25 questions.
-    #   Equal in quality, slower to answer, so the chatbot default stays fable -
-    #   astra is registered to be PICKED, and as a second opinion.
+    #   Equal in quality, slower to answer, so the chatbot default stays what
+    #   .env sets - astra is registered to be PICKED, and as a second opinion.
+    #
+    #   THE SMARTNESS ROUND (boss 2026-09-07: "how about smartness?"). Six
+    #   multi-step problems from this week's own desk: gemini 5/6, astra 5/6,
+    #   fable 5/6, gpt-5.6-sol 5/6, opus-4-8 4/6. One problem separated them -
+    #   compute our four position windows and say which one distorts the
+    #   average. FOUR OF FIVE collapsed it to a single window and answered
+    #   18.6% where the truth is 34.7%; on this desk that difference turns a
+    #   refusal into a buy. Only gemini did the four separately.
+    #   Then the same question was asked five times with the procedure spelled
+    #   out - "네 구간 각각의 (현재가-저가)/(고가-저가)×100 을 구한 뒤 그 넷의
+    #   평균" - and ALL FIVE answered correctly 5/5.
+    #   So it was never intelligence, it was prompt compression, and it is the
+    #   second time in one day the same lesson arrived (the "35% 규칙" answer
+    #   that every model got backwards until the direction was stated). Any
+    #   prompt on this desk that names a rule must name its whole procedure -
+    #   and the trading verdict itself is never asked of a model at all:
+    #   chat_trade runs the cascade in code and the model only speaks it.
     "gpt-5.6-sol":  ("openai", "gpt-5.6-sol"),
     "gpt-5.6-luna": ("openai", "gpt-5.6-luna"),
     "gpt-5.6-terra": ("openai", "gpt-5.6-terra"),
