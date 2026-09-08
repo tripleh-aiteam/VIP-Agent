@@ -1977,3 +1977,274 @@ def giveup_table():
     from the year study; other stocks default to 4 ticks of their price band."""
     from services.giveup_rule import GIVEUP_WON, DEFAULT_TICKS, table
     return {"ok": True, "rows": table(), "default_ticks": DEFAULT_TICKS}
+
+
+# ── 회장님 지시 일괄 매수 · 갭상승 관문 면제 (boss 2026-09-08 09:5x) ──────────
+# "오늘 갭 상승 조건 때문에 주문 갯수가 너무 적으니까, 지금 당장 갭상승 gate만
+#  무시하고 나머지 조건만 따져서 전 종목에 대하여 따진 다음에 주문을 일괄로
+#  한번 넣어."
+#
+# THE STANDING LAW DOES NOT MOVE. Gate ① is waived HERE AND ONLY HERE, for the
+# batch the boss asks for by hand; the scanner, the board and verify_now keep
+# refusing gapped stocks on their own clock exactly as before. This re-judges
+# the same 20 the board watches on the REMAINING gates — ②위치 ③거래량 ④악재
+# ⑤점수 — using the very helpers /whynot uses, so it is that cascade with one
+# gate removed and not a second opinion. Every survivor is then bought through
+# the desk's OWN approval path (_mk_sug → decide), which is why each buy still
+# gets its lot, its log row, its chat mirror and the -1% selling law.
+
+def _gates_after_gap(code: str, day: str, mkt: bool) -> tuple:
+    """Gates ②③④ for one stock — the /whynot cascade minus gate ①.
+    Returns (ok, gate_key, ko, en)."""
+    from services import approval_desk as ad
+    px, bars = None, []
+    try:
+        from routers.paper_desk import live_tape
+        bars = (live_tape(code=code, period=60, tick=5, bars=400) or {}).get("bars") or []
+        if bars:
+            px = float(bars[-1].get("close") or 0) or None
+    except Exception:
+        pass
+    if px is None:
+        try:
+            from services.paper_desk import fast_price
+            _p9 = (fast_price(code) or [None])[0]
+            px = float(_p9) if _p9 else None
+        except Exception:
+            pass
+
+    # ② 위치 — the blended four windows (주·월·3개월·6개월), buy at ≤ 35%
+    try:
+        from services.kiwoom_rules import pos_story as _pstory
+        _st2 = _pstory(code, float(px or 0), day)
+    except Exception:
+        _st2 = None
+    if _st2 is None:
+        # 판정 불가는 통과가 아닙니다 (boss 2026-09-07, 삼성중공업)
+        return (False, "position",
+                "② 위치 — 기간별 시세 자료를 가져오지 못해 판정할 수 없습니다. 판정 불가는 통과가 아닙니다.",
+                "② Position — the window history could not be loaded; unjudgeable is NOT a pass.")
+    if not _st2.get("ok"):
+        return False, "position", "② " + str(_st2.get("ko") or ""), "② " + str(_st2.get("en") or "")
+
+    # ③ 거래량 — the PACE for this hour, not the whole day
+    try:
+        r9v, tv9 = ad._vol_ratio(code)
+    except Exception:
+        r9v, tv9 = None, None
+    pace9 = None
+    if mkt and bars:
+        try:
+            from services.kiwoom_rules import _vol5 as _v59
+            _av9 = _v59(code, day)
+            _cum9 = sum(float(b.get("vol") or 0) for b in bars)
+            _tmL9 = str(bars[-1].get("hhmm") or "")[:5]
+            if _av9 and ":" in _tmL9:
+                _mn9 = (int(_tmL9[:2]) - 9) * 60 + int(_tmL9[3:5])
+                pace9 = _cum9 / (_av9 * max(2.0, min(381.0, _mn9 + 1)) / 381.0)
+                tv9 = _cum9
+        except Exception:
+            pace9 = None
+    _vmul9 = pace9 if pace9 is not None else r9v
+    if _vmul9 is None:
+        return (False, "volume",
+                "③ 거래량 — 비교 자료를 가져오지 못해 판정할 수 없습니다. 판정 불가는 통과가 아닙니다.",
+                "③ Volume — the comparison data could not be loaded; unjudgeable is NOT a pass.")
+    if _vmul9 < 0.6:
+        return (False, "volume",
+                f"③ 거래가 매우 적습니다 — 지금까지 {int(tv9 or 0):,}주, 이 시각 보통 페이스의 {_vmul9:.1f}배.",
+                f"③ Very FEW tradings — {int(tv9 or 0):,} sh so far, {_vmul9:.1f}x a normal pace by this hour.")
+
+    # ④ 나쁜 뉴스 — the danger veto (a stock's OWN story only, 2026-09-08)
+    try:
+        from services.checklist_advice import _fresh_stamps
+        _bad = [s for s in _fresh_stamps(code, limit=3, max_age_min=180 if mkt else 600)
+                if str(s.get("stamp")) in ("위험", "악재")]
+    except Exception:
+        _bad = []
+    if _bad:
+        _b0 = _bad[-1]
+        _t0 = str(_b0.get("title"))[:44]
+        return (False, "news",
+                "④ 가격을 누르는 나쁜 뉴스가 있습니다: " + _t0,
+                "④ BAD news pressing the price: " + _t0)
+
+    return (True, None,
+            f"② 위치 {_st2.get('blend')}% — 오늘의 위치 관문(꼭대기만 거부, 기준 65점 이하) 통과 · ③ 거래량 보통 페이스의 {_vmul9:.1f}배 · "
+            f"④ 최근 악재 없음 — 갭상승 관문을 제외한 모든 관문 통과.",
+            f"② position {_st2.get('blend')}% — gate 2 open (it refuses only the TOP, bar 65) · ③ volume {_vmul9:.1f}x a normal pace · "
+            f"④ no bad news — every gate except the waived gap-up gate is open.")
+
+
+@router.post("/bulk-buy")
+def bulk_buy(dry: int = Query(1), budget: int = Query(10_000_000),
+             include_answered: int = Query(0), db: Session = Depends(get_db)):
+    """일괄 매수 — 갭상승 관문만 면제. dry=1 은 미리보기, dry=0 이 실제 주문.
+
+    ONE MARKET ORDER PER NAME, not the five-slice ladder. The ladder is the
+    standing law for a single considered popup; a batch of this size cannot use
+    it — the desk caps orders at 20/minute and resting limits at 30 open, and
+    ~8 names x 5 slices breaks both. A whole market order also guarantees the
+    fill, which is what puts the lot in the book and under the -1% selling law
+    the same minute. Reported to the boss as the deviation it is."""
+    from services import approval_desk as ad
+    try:
+        from services.kiwoom_tape import market_open, _day as _kd9
+        mkt, day = market_open(), _kd9()
+    except Exception:
+        mkt, day = True, ""
+    st = ad._load() or {}
+    held_codes = {str(h.get("code")) for h in (st.get("held") or [])}
+    pend_codes = {str(p.get("code")) for p in (st.get("pending") or [])}
+    answered = set((st.get("asked") or {}).keys())
+
+    # the same 20 the board watches (six first, then the rotating names)
+    stocks, have = [], set()
+    try:
+        b9 = _BRAIN_CACHE.get("data") or {}
+        for u in ((b9.get("six") or []) + (b9.get("universe") or [])):
+            c0 = str(u["code"])
+            if c0 not in have:
+                stocks.append((c0, str(u["name"])))
+                have.add(c0)
+    except Exception:
+        pass
+    for c0, n0, _s0 in ad.desk_codes():
+        if c0 not in have:
+            stocks.append((c0, n0))
+            have.add(c0)
+    stocks = stocks[:20]
+
+    # EVERY NAME MUST CARRY A SCORE, OR GATE ⑤ IS NOT JUDGED AT ALL.
+    # _ranking() DROPS a stock that is on a rising run, and the cascade then
+    # waves it through gate ⑤ as "점수 집계 중". That is harmless when gate ①
+    # has already refused most of the board; in THIS batch, where gate ① is
+    # waived, it would hand six unscored names a free seat and the best-five
+    # race would be decided by list order instead of by score. The same
+    # scorer's own daily-pick row fills the gap, so the competition is real.
+    try:
+        from services.checklist_reco import _ranking
+        score_by = {str(r.get("code")): r.get("score")
+                    for r in ((_ranking() or {}).get("rows") or [])
+                    if r.get("score") is not None}
+    except Exception:
+        score_by = {}
+    try:
+        from routers.paper_desk import daily_pick_today
+        # explicit args: called in-process, FastAPI's Query() defaults are
+        # objects, not values, and pick() chokes on them silently
+        _dp0 = daily_pick_today(day="", refresh=0, force=0, db=db) or {}
+        for r0 in (_dp0.get("rows") or []):
+            c0, s0 = str(r0.get("code")), r0.get("score")
+            if s0 is not None and score_by.get(c0) is None:
+                score_by[c0] = s0
+    except Exception:
+        pass
+
+    _SIX9 = {"000660", "005930", "035420", "017670", "042660", "034020"}
+    judged = []
+    for code, name in stocks:
+        r = {"code": code, "name": name, "score": score_by.get(code),
+             "six": code in _SIX9, "ok": False, "gate": None}
+        if code in held_codes:
+            r["why"] = "이미 보유 중 — 종목당 한 손 법칙으로 추가 매수는 없습니다."
+            r["why_en"] = "Already held — one hand per stock, no adding."
+            judged.append(r)
+            continue
+        if code in pend_codes:
+            r["why"] = "승인 팝업이 이미 떠 있습니다."
+            r["why_en"] = "A popup is already waiting."
+            judged.append(r)
+            continue
+        if code in answered and not include_answered:
+            r["why"] = "오늘 이미 답하신 종목입니다 — 일괄 매수에서 제외했습니다."
+            r["why_en"] = "Already answered today — left out of the batch."
+            judged.append(r)
+            continue
+        if ad._working_order(db, code):
+            r["why"] = "우리 주문이 아직 호가에 살아 있습니다."
+            r["why_en"] = "One of our orders is still working in the book."
+            judged.append(r)
+            continue
+        ok, key, ko, en = _gates_after_gap(code, day, mkt)
+        r.update({"ok": ok, "gate": key, "why": ko, "why_en": en})
+        judged.append(r)
+
+    # ⑤ 점수 — the BEST-FIVE competition among the survivors; the six fixed are
+    # outside it and trade on their gates alone (boss 2026-09-04 18:2x)
+    comp = sorted([x for x in judged if x["ok"] and not x["six"]],
+                  key=lambda x: -(x.get("score") or 0))
+    chosen5 = {x["code"] for x in comp[:5]}
+    names5 = ", ".join(x["name"] for x in comp[:5]) or "-"
+    for x in judged:
+        if x["ok"] and not x["six"] and x["code"] not in chosen5:
+            rk = next(i + 1 for i, y in enumerate(comp) if y["code"] == x["code"])
+            x.update({"ok": False, "gate": "score",
+                      "why": (f"⑤ 갭상승 외 관문은 모두 통과 — 그러나 통과한 {len(comp)}종목 중 "
+                              f"점수 {x.get('score')}점 {rk}등으로 오늘의 최고 5종목"
+                              f"({names5})에 밀렸습니다."),
+                      "why_en": (f"⑤ Every remaining gate open — but among the {len(comp)} "
+                                 f"passers its score {x.get('score')} ranks #{rk}, outside "
+                                 f"today's best five ({names5}).")})
+
+    buys, orders = [x for x in judged if x["ok"]], []
+    if not dry:
+        from services.paper_desk import fast_price
+        for r in buys:
+            code, name = r["code"], r["name"]
+            try:
+                px = float((fast_price(code) or [None])[0] or 0)
+            except Exception:
+                px = 0.0
+            if not px:
+                r.update({"ok": False, "gate": "price",
+                          "why": "실시간 가격을 읽지 못해 주문하지 않았습니다.",
+                          "why_en": "No live price could be read — not ordered."})
+                continue
+            try:
+                _bp, _pko, _pen = ad._book_price(code, "BUY", px)
+            except Exception:
+                _bp, _pko, _pen = px, "현재가", "live price"
+            qty = int(budget // _bp) if _bp else 0
+            if qty < 1:
+                r.update({"ok": False, "gate": "qty",
+                          "why": f"예산 ₩{budget:,}으로는 1주도 살 수 없습니다 (₩{_bp:,.0f}).",
+                          "why_en": f"Budget ₩{budget:,} cannot buy even one share (₩{_bp:,.0f})."})
+                continue
+            try:
+                reasons, reasons_en = ad._why_buy(code, name, {})
+            except Exception:
+                reasons, reasons_en = [], []
+            reasons.insert(0, "🧾 회장님 지시 일괄 매수 — 오늘 갭상승 관문 때문에 주문이 너무 적어, "
+                              "갭상승 관문만 면제하고 나머지 관문을 모두 따져 통과한 종목입니다.")
+            reasons_en.insert(0, "🧾 The boss's bulk order — too few orders were getting through "
+                                 "today's gap-up gate, so that gate ALONE was waived and every "
+                                 "other gate was judged and passed.")
+            reasons.append("✅ " + str(r.get("why") or ""))
+            reasons_en.append("✅ " + str(r.get("why_en") or ""))
+            _qko, _qen = ad._why_qty(_bp, qty, budget)
+            reasons.append("💰 왜 이 가격인가 — " + _pko)
+            reasons_en.append("💰 WHY THIS PRICE — " + _pen)
+            reasons.append("🔢 왜 이 수량인가 — " + _qko)
+            reasons_en.append("🔢 WHY THIS QUANTITY — " + _qen)
+            reasons.append("🪜 일괄 주문이라 5분할 사다리 대신 한 번에 시장가로 나갑니다 "
+                           "(데스크 주문 한도 분당 20건·미체결 30건).")
+            reasons_en.append("🪜 A batch goes out whole at market instead of the 5-slice ladder "
+                              "(the desk caps orders at 20/min and resting limits at 30).")
+            st2 = ad._load()
+            sug = ad._mk_sug(st2, code, name, "BUY", reasons, _bp, qty,
+                             r.get("score"), reasons_en=reasons_en)
+            sug["via"] = "bulk"
+            sug["urgent"] = True          # whole, at market — see the docstring
+            ad._save(st2)
+            res = ad.decide(db, sug["id"], True)
+            r["order"] = res
+            orders.append({"code": code, "name": name, "qty": qty,
+                           "price": _bp, "ok": bool(res.get("ok")),
+                           "fill": res.get("fill"), "error": res.get("error")})
+
+    return {"ok": True, "dry": bool(dry), "day": day, "market_open": mkt,
+            "gap_gate": "WAIVED — 회장님 지시 (2026-09-08), this batch only",
+            "budget_per_name": budget,
+            "n_judged": len(judged), "n_buy": len([x for x in judged if x["ok"]]),
+            "best_five": names5, "rows": judged, "orders": orders}
