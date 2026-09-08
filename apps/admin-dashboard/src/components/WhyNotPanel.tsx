@@ -10,6 +10,7 @@
    its true item weights. Explanations stop at the first blocked gate. */
 import { Fragment, useEffect, useState } from "react";
 import { useLanguage } from "@/components/i18n";
+import LiveBookTape from "@/components/LiveBookTape";
 import { API } from "./api";
 
 type DistWin = { k: string; ko: string; en: string; n: number; below: number; pct: number };
@@ -123,6 +124,12 @@ export default function WhyNotPanel() {
   const [open, setOpen] = useState<string | null>(null);      // stable: the code
   const [itemsOpen, setItemsOpen] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // 📗 THE LIVE WINDOWS, OVER THIS BOARD (boss 2026-09-08: "기존 설명은 있는
+  // 그대로 띄우고, 실시간 호가 창과 실시간 체결 창은 팝업 형태로"). The gate
+  // explanation below is untouched; this only adds the live pair on top of it.
+  // ONE stock at a time on purpose - every poll is a real Kiwoom REST call on a
+  // shared session, and LiveBookTape stops polling the moment this closes.
+  const [popCode, setPopCode] = useState<string | null>(null);
 
   useEffect(() => {
     let dead = false;
@@ -137,6 +144,13 @@ export default function WhyNotPanel() {
     const iv = setInterval(pull, 15000);
     return () => { dead = true; clearInterval(iv); };
   }, []);
+
+  useEffect(() => {
+    if (!popCode) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setPopCode(null); };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [popCode]);
 
   // HIS SIX COME FIRST, IN HIS ORDER (boss 2026-09-07: "please reorder these:
   // 1. SK하이닉스 2. 삼성전자 3. 한화오션 4. 두산에너빌리티 5. SK텔레콤
@@ -157,8 +171,8 @@ export default function WhyNotPanel() {
   return (
     <div>
       <p style={{ fontSize: 12.5, opacity: 0.7, margin: "0 0 10px", lineHeight: 1.5 }}>
-        {t("관문이 있으니 기회는 적습니다 — 팝업이 안 오는 시간 동안, 종목마다 어느 관문에서 왜 멈춰 있는지 실제 숫자로 증명합니다. 종목을 클릭하세요.",
-           "The gates make chances few — while no popup comes, this proves with real numbers which gate each stock is stopped at. Click a stock.")}
+        {t("관문이 있으니 기회는 적습니다 — 팝업이 안 오는 시간 동안, 종목마다 어느 관문에서 왜 멈춰 있는지 실제 숫자로 증명합니다. 종목을 클릭하면 관문 판정이 펼쳐지고, 📗 버튼을 누르면 그 종목의 실시간 호가·체결 창이 이 화면 위에 뜹니다.",
+           "The gates make chances few — while no popup comes, this proves with real numbers which gate each stock is stopped at. Click a stock for its gate verdicts; press 📗 for its live order book and execution tape, over this page.")}
       </p>
 
       {!data && !err && <div style={{ fontSize: 13, opacity: 0.6 }}>{t("불러오는 중…", "loading…")}</div>}
@@ -203,7 +217,16 @@ export default function WhyNotPanel() {
                 {W(r.px)}{r.now_vs_yc != null && <> ({r.now_vs_yc >= 0 ? "+" : ""}{r.now_vs_yc}% {t("vs 어제", "vs yesterday")})</>}
                 {r.score != null && <> · {r.score}{t("점", " pts")}{r.rank != null && ` · ${r.rank}/${r.tot}`}</>}
               </span>
-              <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.5 }}>{isOpen ? "▲" : "▼"}</span>
+              {/* the live pair for THIS stock — never toggles the card */}
+              <button onClick={(e) => { e.stopPropagation(); setPopCode(r.code); }}
+                      title={t("실시간 호가·체결 창 열기", "open the live order book and execution tape")}
+                      style={{ marginLeft: "auto", fontSize: 11, fontWeight: 800,
+                               padding: "3px 9px", borderRadius: 999, cursor: "pointer",
+                               border: "1.5px solid #00838f", background: "transparent",
+                               color: "#00838f" }}>
+                📗 {t("실시간 호가·체결", "live book & tape")}
+              </button>
+              <span style={{ fontSize: 11, opacity: 0.5 }}>{isOpen ? "▲" : "▼"}</span>
             </div>
             <div style={{ fontSize: 12, marginTop: 3, opacity: 0.85 }}>
               {ko ? r.verdict_ko : r.verdict_en}
@@ -297,6 +320,50 @@ export default function WhyNotPanel() {
           </div>
           </Fragment>);
       })}
+
+      {/* 📗📼 the live pair, over the board — the exact section from the live
+          desk (/testing/live), rendered from the one shared component so the
+          two screens can never drift apart */}
+      {popCode && (() => {
+        const r = rows.find((x) => x.code === popCode);
+        const nm = r ? (ko ? r.name : (r.name_en || r.name)) : popCode;
+        return (
+          <div onClick={() => setPopCode(null)}
+               style={{ position: "fixed", inset: 0, zIndex: 9000, overflowY: "auto",
+                        background: "rgba(0,0,0,0.55)", display: "flex",
+                        alignItems: "flex-start", justifyContent: "center",
+                        padding: "3vh 2vw" }}>
+            <div onClick={(e) => e.stopPropagation()}
+                 style={{ width: "min(1180px, 96vw)", borderRadius: 14, cursor: "default",
+                          background: "var(--bg-card, #fff)", color: "var(--text-primary)",
+                          border: "2px solid #00838f", padding: "12px 14px 14px",
+                          boxShadow: "0 18px 60px rgba(0,0,0,0.45)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10,
+                            flexWrap: "wrap", marginBottom: 10 }}>
+                <b style={{ fontSize: 15, color: "#00838f" }}>
+                  📗 {nm} ({popCode}) — {t("실시간 호가 · 실시간 체결", "live order book · live executions")}
+                </b>
+                {r && (
+                  <span style={{ fontSize: 11.5, opacity: 0.75 }}>
+                    {W(r.px)}{r.now_vs_yc != null && <> ({r.now_vs_yc >= 0 ? "+" : ""}{r.now_vs_yc}% {t("vs 어제", "vs yesterday")})</>}
+                    {" · "}{ko ? r.verdict_ko : r.verdict_en}
+                  </span>)}
+                <button onClick={() => setPopCode(null)}
+                        style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800,
+                                 padding: "4px 12px", borderRadius: 8, cursor: "pointer",
+                                 border: "1px solid rgba(128,128,128,0.45)",
+                                 background: "transparent", color: "inherit" }}>
+                  {t("닫기 ✕ (ESC)", "close ✕ (ESC)")}
+                </button>
+              </div>
+              <LiveBookTape code={popCode} />
+              <div style={{ fontSize: 10.5, opacity: 0.6, marginTop: 8 }}>
+                {t("3초마다 새로 받아옵니다. 창을 닫으면 조회도 멈춥니다 — 한 번에 한 종목만 봅니다.",
+                   "refreshed every 3 seconds; closing this stops the polling — one stock at a time.")}
+              </div>
+            </div>
+          </div>);
+      })()}
     </div>
   );
 }

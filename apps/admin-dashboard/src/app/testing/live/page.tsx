@@ -17,6 +17,7 @@ import { usePathname } from "next/navigation";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
+import LiveBookTape from "@/components/LiveBookTape";
 
 /** What each column of the stock-picking table means, in plain words — the boss reads
  *  this table every morning and should never have to ask what "flex" is. Order in each
@@ -127,8 +128,6 @@ type Tape = { ok: boolean; code: string; name?: string; clock: string; ticks: nu
 type Book = { ok: boolean; code: string; name?: string; asks: [number, number][];
               bids: [number, number][]; best_ask?: number; best_bid?: number;
               last?: number; prev_close?: number; change_pct?: number; market?: string; tot_ask?: number; tot_bid?: number };
-type Execs = { ok: boolean; prev_close?: number; total: number;
-               rows: { t: string; px: number; qty: number }[] };
 type RuleRow = { id: string; ko: string; en: string; dir: number; trips: number; wins: number;
                  vs?: number | null; vs_trips?: number | null;
                  net_won?: number | null; per_trade_won?: number | null;
@@ -1534,13 +1533,6 @@ export default function LiveDeskPage() {
   const [clockIn, setClockIn] = useState("");
   const [tape, setTape] = useState<Tape | null>(null);
   const [book, setBook] = useState<Book | null>(null);
-  // THE LADDER, DRAWN ON THIS BOOK (boss 2026-09-07: "implement the above idea
-  // to this place as a demo"). Same endpoint the desk prices real orders with.
-  type Lad = { ok: boolean; side: string; qty: number; price: number;
-               slices: { px: number; qty: number; kind: string }[]; ko: string; en: string };
-  const [lad, setLad] = useState<Lad | null>(null);
-  const [ladSide, setLadSide] = useState<"BUY" | "SELL">("BUY");
-  const [execs, setExecs] = useState<Execs | null>(null);
   const [st, setSt] = useState<Status | null>(null);
   const [rank, setRank] = useState<Rank | null>(null);
   const [sel, setSel] = useState<string | null>(null);
@@ -1946,7 +1938,6 @@ export default function LiveDeskPage() {
   const dfToRef = useRef("");
 
   const codeRef = useRef(code); codeRef.current = code;
-  const ladSideRef = useRef(ladSide); ladSideRef.current = ladSide;
   const perRef = useRef(period); perRef.current = period;
   const tickRef = useRef(tick); tickRef.current = tick;
 
@@ -2335,9 +2326,6 @@ export default function LiveDeskPage() {
     if (chartOn9Ref.current)
       api<Tape>(`/paper-desk/live/tape?code=${c}&${q}&bars=${chartBarsRef.current}`).then(setTape).catch(() => {});
     api<Book>(`/paper-desk/live/book?code=${c}`).then(setBook).catch(() => {});
-    api<Lad>(`/paper-desk/live/ladder?code=${c}&side=${ladSideRef.current}`)
-      .then((d) => setLad(d?.ok ? d : null)).catch(() => setLad(null));
-    api<Execs>(`/paper-desk/live/execs?code=${c}&n=120`).then(setExecs).catch(() => {});
     api<Rank>(`/paper-desk/live/rules?${q}&gate=${showBlockedRef.current ? 0 : 1}&day=${ruleDayRef.current}`
       + `&auto=${dayTouchedRef.current && !ruleDayRef.current ? 0 : 1}`
       + `&codes=${encodeURIComponent(deskCodesRef.current)}`
@@ -5051,154 +5039,11 @@ export default function LiveDeskPage() {
       </div>
       )}
 
-      <div className="mt-3 grid gap-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
-        {/* 호가 — who is waiting to buy and to sell */}
-        <div className="rounded-xl border overflow-hidden" style={{ borderColor: TEAL }}>
-          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]" style={{ borderColor: "var(--border-default)" }}>
-            <b className="text-[13px]" style={{ color: TEAL }}>
-              📗 {t("실시간 호가 — 사려는 사람과 팔려는 사람", "live order book - buyers and sellers waiting")}
-              {/* WHOSE BOOK, AND WHICH BOOK (boss 2026-09-07: the table carried
-                  neither the stock's name nor the market, so it could be read
-                  as belonging to whatever card was above it, and compared
-                  against a Kiwoom screen showing the unified book) */}
-              {book?.name && <span className="ml-1">— {book.name} ({code})</span>}
-              {book?.market && (
-                <span className="ml-1 text-[10px] font-normal opacity-75">
-                  {book.market === "AL" ? t("통합호가 KRX+NXT (키움 HTS와 동일)", "unified book KRX+NXT (same as the Kiwoom HTS)")
-                                        : t("KRX 단독", "KRX only")}</span>)}
-            </b>
-            <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
-              {t("사면 가장 싼 매도호가를, 팔면 가장 비싼 매수호가를 잡습니다 — 그 차이가 왕복 비용의 절반입니다.",
-                 "a buy takes the cheapest ask, a sell takes the highest bid - that gap is half the round-trip cost.")}
-            </div>
-            {/* THE LADDER DEMO (boss 2026-09-07): the same split the desk uses
-                when he approves, drawn on THIS book so he can see where each
-                20% would stand among the waiting orders. */}
-            <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-              <span className="text-[10.5px] font-bold" style={{ color: "#6a1b9a" }}>
-                🪜 {t("1,000만원을 5조각으로 나누면", "₩10m split into 5 slices")}</span>
-              {(["BUY", "SELL"] as const).map((sd) => (
-                <button key={sd} onClick={() => setLadSide(sd)}
-                  className="text-[10px] px-2 py-[1px] rounded-full border"
-                  style={{ borderColor: "#6a1b9a",
-                           background: ladSide === sd ? "#6a1b9a" : "transparent",
-                           color: ladSide === sd ? "#fff" : "var(--text-primary)" }}>
-                  {sd === "BUY" ? t("살 때", "buying") : t("팔 때", "selling")}</button>))}
-              {lad && <span className="text-[10px] text-[var(--text-muted)]">
-                {lad.qty.toLocaleString()}{t("주", " sh")} · {t("아래 표에 🪜로 표시", "marked 🪜 in the table below")}</span>}
-            </div>
-          </div>
-          <table className="w-full text-[11.5px] tabular-nums">
-            <thead><tr className="text-[10px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
-              <th className="text-right px-3 py-1" style={{ color: BLUE }}>
-                {t("매도 잔량 (파는 사람)", "sellers waiting")}</th>
-              <th className="text-center px-2">{t("호가", "price")}</th>
-              <th className="text-left px-3" style={{ color: RED }}>
-                {t("매수 잔량 (사는 사람)", "buyers waiting")}</th>
-            </tr></thead>
-            <tbody>
-              <tr><td colSpan={3} className="px-3 pt-1 text-[9.5px] font-bold"
-                      style={{ color: BLUE }}>
-                {t("▲ 위쪽 = 파는 사람들이 기다리는 자리 (매도호가) — 위로 갈수록 비쌉니다",
-                   "▲ above = where sellers are waiting (asks) - dearer as it goes up")}</td></tr>
-              {(book?.asks ?? []).slice().reverse().map(([p, q], i) => {
-                // ONE SLICE, ONE BLOCK. A price can exist on both sides at the
-                // same instant (삼성전자 sat locked at ₩268,500 while this was
-                // written), so a slice matched on price alone printed twice. The
-                // leg that deals now belongs to the side it trades INTO - a buy
-                // lifts an ask, a sell hits a bid - and the resting legs belong
-                // where they will actually wait.
-                const sl = (lad?.slices || []).find((x) => Math.abs(x.px - p) < 0.5
-                  && (ladSide === "BUY" ? x.kind === "market" : x.kind === "limit"));
-                // OUR slice sits in OUR column: a buy order of ours belongs among
-                // the buyers (right), a sell of ours among the sellers (left) -
-                // whatever price row it happens to stand on (boss 2026-09-07)
-                const mark = sl ? `🪜 ${sl.qty.toLocaleString()}${t("주", "sh")}${sl.kind === "market" ? t(" 지금 체결", " deals now") : ""}` : "";
-                const mine = ladSide === "BUY";
-                return (
-                <tr key={"a" + i} className="border-t border-[var(--border-default)]/30"
-                    style={sl ? { background: "rgba(106,27,154,0.10)" } : undefined}>
-                  <td className="text-right px-3 py-[2px]" style={{ color: mark && !mine ? "#6a1b9a" : BLUE }}>
-                    {mark && !mine ? mark : fmt(q)}</td>
-                  <td className="text-center px-2 font-bold" style={{ color: BLUE }}>
-                    ₩{fmt(p)}{p === book?.best_ask && <span className="text-[9px]"> {t("← 여기서 사면 바로 체결", "← buying here deals now")}</span>}
-                  </td>
-                  <td className="text-left px-3 text-[10px]" style={{ color: "#6a1b9a" }}>
-                    {mark && mine ? mark : ""}</td>
-                </tr>);
-              })}
-              <tr><td colSpan={3} className="px-3 pt-1 text-[9.5px] font-bold"
-                      style={{ color: RED }}>
-                {t("▼ 아래쪽 = 사는 사람들이 기다리는 자리 (매수호가) — 아래로 갈수록 쌉니다",
-                   "▼ below = where buyers are waiting (bids) - cheaper as it goes down")}</td></tr>
-              {(book?.bids ?? []).map(([p, q], i) => {
-                const sl = (lad?.slices || []).find((x) => Math.abs(x.px - p) < 0.5
-                  && (ladSide === "SELL" ? x.kind === "market" : x.kind === "limit"));
-                const mark = sl ? `🪜 ${sl.qty.toLocaleString()}${t("주", "sh")}${sl.kind === "market" ? t(" 지금 체결", " deals now") : ""}` : "";
-                const mine = ladSide === "BUY";
-                return (
-                <tr key={"b" + i} className="border-t border-[var(--border-default)]/30"
-                    style={sl ? { background: "rgba(106,27,154,0.10)" } : undefined}>
-                  <td className="text-right px-3 text-[10px]" style={{ color: "#6a1b9a" }}>
-                    {mark && !mine ? mark : ""}</td>
-                  <td className="text-center px-2 font-bold" style={{ color: RED }}>
-                    ₩{fmt(p)}{p === book?.best_bid && <span className="text-[9px]"> {t("← 여기서 팔면 바로 체결", "← selling here deals now")}</span>}
-                  </td>
-                  <td className="text-left px-3 py-[2px]" style={{ color: mark && mine ? "#6a1b9a" : RED }}>
-                    {mark && mine ? mark : fmt(q)}</td>
-                </tr>);
-              })}
-            </tbody>
-          </table>
-          {lad && (
-            <div className="px-4 py-2 text-[10.5px] border-t"
-                 style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
-              {t(lad.ko, lad.en)}
-            </div>)}
-        </div>
-
-        {/* 체결 — the deals themselves, with their time */}
-        <div className="rounded-xl border overflow-hidden" style={{ borderColor: GOLD }}>
-          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]" style={{ borderColor: "var(--border-default)" }}>
-            <b className="text-[13px]" style={{ color: GOLD }}>
-              📼 {t("실시간 체결 — 체결 시각과 가격", "live executions - deal time and price")}
-            </b>
-            <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
-              {t(`같은 초에 여러 건이 찍힙니다. 위 차트의 봉은 바로 이 체결들을 묶은 것입니다 — 지금까지 ${fmt(execs?.total)}건 수집.`,
-                 `several print within one second. The bars above are these very executions grouped - ${fmt(execs?.total)} collected so far.`)}
-            </div>
-          </div>
-          <div className="overflow-y-auto" style={{ maxHeight: 300 }}>
-            <table className="w-full text-[11.5px] tabular-nums">
-              <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0" style={{ background: "var(--bg-elevated)" }}>
-                <th className="text-left px-3 py-1">{t("체결시각", "time")}</th>
-                <th className="text-right px-2">{t("체결가", "price")}</th>
-                <th className="text-right px-2">{t("전일대비", "vs prev close")}</th>
-                <th className="text-right px-3">{t("체결량", "qty")}</th>
-              </tr></thead>
-              <tbody>
-                {(execs?.rows ?? []).map((r, i) => {
-                  const prev = (execs?.rows ?? [])[i + 1];
-                  const up = prev && prev.px < r.px;
-                  const dn = prev && prev.px > r.px;
-                  const d = execs?.prev_close ? Math.round(r.px - execs.prev_close) : null;
-                  return (
-                    <tr key={i} className="border-t border-[var(--border-default)]/30">
-                      <td className="px-3 py-[2px] text-[var(--text-muted)]">{r.t}</td>
-                      <td className="text-right px-2 font-bold" style={{ color: up ? RED : dn ? BLUE : "var(--text-secondary)" }}>
-                        ₩{fmt(r.px)} {up ? "▲" : dn ? "▼" : ""}
-                      </td>
-                      <td className="text-right px-2 font-bold" style={{ color: d == null ? "var(--text-muted)" : d > 0 ? RED : d < 0 ? BLUE : "var(--text-muted)" }}>
-                        {d == null ? "-" : d === 0 ? "0" : `${d > 0 ? "▲" : "▼"} ${fmt(Math.abs(d))}`}
-                      </td>
-                      <td className="text-right px-3">{fmt(r.qty)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      {/* the two live windows now live in ONE file, because Menu 3 opens the
+          SAME pair in a popup over the gate board (boss 2026-09-08) and two
+          copies of a screen he checks against his Kiwoom HTS would drift */}
+      <div className="mt-3">
+        <LiveBookTape code={code} />
       </div>
 
       {/* THE HISTORICAL RECORD (boss 2026-08-11): the daily table the agent actually
