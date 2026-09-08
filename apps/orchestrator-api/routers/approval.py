@@ -871,8 +871,19 @@ def whynot(db: Session = Depends(get_db)):
             if not passed:
                 r["stopped_at"] = n
 
-        # ① 갭상승
-        if gap is not None and gap >= 0.3:
+        # ① 갭상승 — lifted for one named day (boss 2026-09-08), and the row
+        # still SAYS so with the gap it would have refused, so the proof menu
+        # never claims a gapped day was clean. Tomorrow this branch is dead.
+        from services.kiwoom_rules import gap_gate_waived as _gwv9
+        if gap is not None and gap >= 0.3 and _gwv9(day):
+            _gate(1, "gap", True,
+                  f"갭상승 +{gap}%으로 출발 — 원래대로면 1관문에서 막혔을 자리입니다. "
+                  f"회장님 지시로 오늘 하루만 갭상승 관문을 면제했고, 아래 나머지 "
+                  f"관문은 평소와 똑같이 판정했습니다. 내일부터 정상 작동합니다.",
+                  f"Opened with a gap-up (+{gap}%) — normally refused right here at "
+                  f"gate 1. The boss lifted the gap-up gate for TODAY ONLY; every "
+                  f"gate below was judged exactly as usual. Back in force tomorrow.")
+        elif gap is not None and gap >= 0.3:
             back = now9 is not None and now9 <= 0.15
             if not mkt:
                 # the remembered day: did it EVER come back to yesterday's line?
@@ -1488,17 +1499,37 @@ def _brain_compute():
         # read one, so asking unconditionally is safe and covers everything we
         # have data for.
         gv, gbad = _gap(code)
+        # THE WAIVER IS SHOWN, NEVER SILENT (boss 2026-09-08, today only): a
+        # gate that was lifted must still appear on the card saying so, with
+        # the gap it would have refused - a card that simply stopped mentioning
+        # 갭상승 would read as "no gap today", which is the lie he caught us in
+        # on 09-03. Tomorrow this branch is dead and the gate speaks again.
+        from services.kiwoom_rules import gap_gate_waived as _gwv9
+        _gwaive9 = _gwv9(_kd()) and bool(gbad)
+        if _gwaive9:
+            gbad = False
         # (stocks outside the collector are scored but never tape-read here)
         gates.append({
             "k": "갭상승", "en": "gap-up open",
             "v": (f"{gv:+.1f}%" if gv is not None else "대기/wait"),
             "bad": bool(gbad),
-            "short": "갭상승 출발 → 대기", "short_en": "Gap-up open → WAIT",
-            "why": (f"⚡ 갭상승입니다! 오늘 시가가 어제 종가보다 {gv:+.1f}% 높게 "
+            "waived": _gwaive9,
+            "short": ("갭상승이지만 오늘은 면제" if _gwaive9 else "갭상승 출발 → 대기"),
+            "short_en": ("Gap-up, waived today" if _gwaive9 else "Gap-up open → WAIT"),
+            "why": (f"🪪 갭상승 {gv:+.1f}% — 원래대로면 여기서 막혔을 자리입니다. "
+                    f"회장님 지시로 오늘 하루만 갭상승 관문을 면제했고, 나머지 "
+                    f"관문은 그대로 판정했습니다. 내일부터 정상 작동합니다."
+                    if _gwaive9 else
+                    f"⚡ 갭상승입니다! 오늘 시가가 어제 종가보다 {gv:+.1f}% 높게 "
                     f"출발했습니다. 아직 비싼 자리입니다 → 어제 종가까지 "
                     f"내려오고, 하락이 멈추고, 양봉 3개가 나오면 그때 삽니다."
                     if gbad else ""),
-            "why_en": (f"⚡ GAP-UP! It opened {gv:+.1f}% above yesterday's close - "
+            "why_en": (f"🪪 Gap-up {gv:+.1f}% — this is where it would normally be "
+                       f"refused. The boss lifted the gap-up gate for TODAY ONLY; "
+                       f"every other gate was judged as usual. It is back in force "
+                       f"tomorrow."
+                       if _gwaive9 else
+                       f"⚡ GAP-UP! It opened {gv:+.1f}% above yesterday's close - "
                        f"still an expensive place. We buy only after it comes "
                        f"back DOWN to yesterday's close, the fall stops, and "
                        f"three red candles confirm." if gbad else "")})
@@ -1984,19 +2015,28 @@ def giveup_table():
 #  무시하고 나머지 조건만 따져서 전 종목에 대하여 따진 다음에 주문을 일괄로
 #  한번 넣어."
 #
-# THE STANDING LAW DOES NOT MOVE. Gate ① is waived HERE AND ONLY HERE, for the
-# batch the boss asks for by hand; the scanner, the board and verify_now keep
-# refusing gapped stocks on their own clock exactly as before. This re-judges
-# the same 20 the board watches on the REMAINING gates — ②위치 ③거래량 ④악재
-# ⑤점수 — using the very helpers /whynot uses, so it is that cascade with one
-# gate removed and not a second opinion. Every survivor is then bought through
-# the desk's OWN approval path (_mk_sug → decide), which is why each buy still
-# gets its lot, its log row, its chat mirror and the -1% selling law.
+# WHAT THIS IS AND IS NOT. It is the batch: judge the same 20 the board
+# watches, gate by gate, using the very helpers /whynot uses, and buy every
+# survivor in one go. It is NOT a waiver - it carries none of its own. Gate ①
+# is applied here like everywhere else and steps aside only on a day
+# kiwoom_rules.gap_gate_waived() names, which is the ONE switch the board, the
+# cascade and the send-time guard all read (boss 2026-09-08: today only, normal
+# from tomorrow). So this endpoint can never buy a gapped stock on a day the
+# rest of the desk is refusing one.
+#
+# Every survivor is bought through the desk's OWN approval path (_mk_sug →
+# decide), which is why each buy still gets its lot, its log row, its chat
+# mirror and the -1% selling law.
 
 def _gates_after_gap(code: str, day: str, mkt: bool) -> tuple:
-    """Gates ②③④ for one stock — the /whynot cascade minus gate ①.
-    Returns (ok, gate_key, ko, en)."""
+    """The /whynot gate cascade for one stock, gate by gate.
+
+    Gate ① is applied here exactly as the cascade applies it, EXCEPT on a day
+    the boss lifted it by hand (gap_gate_waived) - this endpoint does not carry
+    a waiver of its own, so it can never wave a gapped stock through on a day
+    the rest of the desk is refusing one. Returns (ok, gate_key, ko, en)."""
     from services import approval_desk as ad
+    from services.kiwoom_rules import gap_gate_waived as _gwv9
     px, bars = None, []
     try:
         from routers.paper_desk import live_tape
@@ -2012,6 +2052,26 @@ def _gates_after_gap(code: str, day: str, mkt: bool) -> tuple:
             px = float(_p9) if _p9 else None
         except Exception:
             pass
+
+    # ① 갭상승 — same numbers and same 0.3% / 0.15% lines as the cascade
+    if not _gwv9(day):
+        _yc9 = _op9 = None
+        try:
+            from services.kiwoom_rules import _gap_ref
+            _yc9 = float(_gap_ref(code, day) or 0) or None
+        except Exception:
+            pass
+        if bars:
+            _op9 = float(bars[0].get("open") or 0) or None
+        if _yc9 and _op9 and px:
+            _g9 = (_op9 / _yc9 - 1) * 100
+            _n9 = (px / _yc9 - 1) * 100
+            if _g9 >= 0.3 and _n9 > 0.15:
+                return (False, "gap",
+                        f"① 갭상승 +{_g9:.1f}%로 출발해 아직 어제 가격(₩{_yc9:,.0f})까지 "
+                        f"내려오지 않았습니다 (현재 {_n9:+.2f}%).",
+                        f"① Gapped up +{_g9:.1f}% and has not come back to yesterday's "
+                        f"price (₩{_yc9:,.0f}) — now {_n9:+.2f}%.")
 
     # ② 위치 — the blended four windows (주·월·3개월·6개월), buy at ≤ 35%
     try:
@@ -2243,8 +2303,10 @@ def bulk_buy(dry: int = Query(1), budget: int = Query(10_000_000),
                            "price": _bp, "ok": bool(res.get("ok")),
                            "fill": res.get("fill"), "error": res.get("error")})
 
+    from services.kiwoom_rules import gap_gate_waived as _gwv0
     return {"ok": True, "dry": bool(dry), "day": day, "market_open": mkt,
-            "gap_gate": "WAIVED — 회장님 지시 (2026-09-08), this batch only",
+            "gap_gate": ("WAIVED for this day by the boss — back in force tomorrow"
+                         if _gwv0(day) else "IN FORCE"),
             "budget_per_name": budget,
             "n_judged": len(judged), "n_buy": len([x for x in judged if x["ok"]]),
             "best_five": names5, "rows": judged, "orders": orders}

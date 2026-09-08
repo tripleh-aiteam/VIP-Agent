@@ -806,6 +806,38 @@ def _open_official(code: str, day: str, fallback=None):
     return out or fallback
 
 
+# ── 갭상승 관문 면제, 날짜로 못박은 하루 (boss 2026-09-08) ──────────────────
+# "오늘 한정으로 갭상승 관문 하나만 제외하고 판정 및 작동하도록 하고, 내일부터
+#  다시 갭상승 관문 정상작동 하도록 해."
+#
+# A waiver that has to be REMEMBERED is a waiver that gets forgotten - and a
+# forgotten one buys gapped stocks every morning after. So it is not a flag
+# anyone has to switch back: it is a DATE, and the day itself ends it. Tomorrow
+# this function returns False on its own, with no restart, no edit and nobody
+# needing to recall that today was special.
+#
+# It is read at CALL time by every place the gate actually acts - the board
+# gate, the whynot cascade, the send-time guard and the bulk order - so all
+# four say the same thing on the same day and cannot drift apart.
+#
+# NOT waived: checklist item 49 (과도한 갭 시가가 아닌가) which only scores and
+# never blocks, and the engines' own gap guards in proof_lab. He asked for the
+# 관문 - the gate that refuses a buy - not for the scoring to be rewritten.
+GAP_WAIVER_DAYS = ("20260908",)
+
+
+def gap_gate_waived(day: str | None = None) -> bool:
+    """True only on a day the boss lifted the 갭상승 gate by hand. Every other
+    day - including tomorrow - the gate is in force exactly as before."""
+    try:
+        if not day:
+            from services.kiwoom_tape import _day as _d9
+            day = _d9()
+    except Exception:
+        return False
+    return str(day or "") in GAP_WAIVER_DAYS
+
+
 def _gap_ref(code: str, day: str) -> float:
     """The price an overnight gap is measured FROM (boss 2026-09-03 evening:
     "we have to compare with the 9am price and one day before 20:00 price").

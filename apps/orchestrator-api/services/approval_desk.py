@@ -2283,7 +2283,16 @@ def verify_now(code: str, side: str = "BUY", day: str = "",
         gap = (op / ref - 1) * 100
         snap["gap"] = round(gap, 2)
         from services.proof_lab import GAP_PCT
-        if gap >= GAP_PCT:
+        # THE SEND-TIME GUARD HONOURS THE SAME ONE-DAY WAIVER as the board and
+        # the cascade (boss 2026-09-08). It must, or the card would say BUY and
+        # the popup would still refuse to go out - the exact divergence between
+        # board and popup he caught on 09-03. The snapshot the popup carries
+        # records that the gate was lifted, so a replay of today can never be
+        # mistaken for a day the gap simply was not there.
+        from services.kiwoom_rules import gap_gate_waived as _gwv9
+        if gap >= GAP_PCT and _gwv9(_d0):
+            snap["gap_waived"] = True
+        elif gap >= GAP_PCT:
             _tlo9 = min(b["low"] for b in bars)
             try:
                 from services.kiwoom_rules import _low_official
