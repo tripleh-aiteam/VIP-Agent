@@ -145,6 +145,77 @@ def _save_scan(st: dict, seen_ids: set, seen_held: set | None = None) -> None:
     _save(st)
 
 
+LOG_MAX = 200
+
+
+def _row_day(l: dict) -> str:
+    """The KST day a log row belongs to, read from its own clock."""
+    try:
+        return time.strftime("%Y%m%d", time.gmtime(float(l.get("ts") or 0) + 9 * 3600))
+    except Exception:
+        return str(l.get("day") or "")
+
+
+def _fold_notes(st: dict) -> bool:
+    """ONE STANDING REFUSAL IS ONE ROW, NOT SIXTY-SEVEN.
+
+    The send-time guard writes a 보류 row every time it refuses a stock, and it
+    refuses on EVERY scan cycle for as long as the reason holds. A stock the
+    guard blocked all morning therefore left 67 identical rows (한화오션,
+    2026-09-08), 54 more for 한화시스템, 46 for 한화에어로. The refusal is one
+    fact that persisted, not sixty-seven events.
+
+    Rows are folded per (day, code, reason): the NEWEST keeps its place and its
+    clock, the older copies collapse into `repeat` so nothing about how long
+    the refusal stood is lost."""
+    log = st.get("log") or []
+    first, keep, changed = {}, [], False
+    for l in reversed(log):                       # newest first
+        if l.get("decision") != "보류":
+            keep.append(l)
+            continue
+        key = (_row_day(l), str(l.get("code")), str(l.get("why_gone") or "")[:80])
+        p9 = first.get(key)
+        if p9 is None:
+            first[key] = l
+            keep.append(l)
+        else:
+            p9["repeat"] = int(p9.get("repeat") or 1) + int(l.get("repeat") or 1)
+            changed = True
+    if changed:
+        st["log"] = list(reversed(keep))
+    return changed
+
+
+def _trim_log(st: dict) -> None:
+    """THE LOG IS THE RECORD OF MONEY MOVING. NOISE MAY NEVER EVICT IT.
+
+    Boss 2026-09-08 13:1x: "오늘 매수를 한 다음에 매도한 기록이 있어서 보여야
+    하는데 안 보이는거 같다." He was right and the rows were not lost - they
+    were pushed out. Two Menu 3 round trips closed today (LIG넥스원 3주
+    09:51→11:10 +1.43%, HD현대중공업 22주 10:44→12:00 +0.11%) and both had
+    been written to this log. Then 199 보류 rows for stocks we never traded
+    filled the 200-row window, and a plain `log[-200:]` threw the trades away
+    oldest-first. A record of a decision he made must outlive a note about a
+    decision the machine declined to make.
+
+    So: fold the repeats first, then trim - and trim the INFORMATIONAL rows.
+    Executed and cancelled rows (승인/취소) are dropped only when they alone
+    overflow the cap, which is the trim this was always meant to be."""
+    _fold_notes(st)
+    log = st.get("log") or []
+    if len(log) <= LOG_MAX:
+        return
+    kept = {i for i, l in enumerate(log) if l.get("decision") in ("승인", "취소")}
+    if len(kept) >= LOG_MAX:
+        st["log"] = [l for i, l in enumerate(log) if i in kept][-LOG_MAX:]
+        return
+    room = LOG_MAX - len(kept)
+    noise = [i for i in range(len(log)) if i not in kept]
+    kept |= set(noise[-room:])
+    st["log"] = [l for i, l in enumerate(log) if i in kept]
+
+
 def can_propose(now=None) -> bool:
     """May the desk ask for a decision RIGHT NOW? (boss 2026-09-03 16:4x: the
     watch note was still speaking at 16:40 - "make sure after 15:20 it should
@@ -473,7 +544,7 @@ def chat_mirror(code: str, name: str, side: str, qty: int, fill: float) -> bool:
          "price": float(fill), "qty": int(qty), "score": None, **_trip,
          "decision": "승인", "at": _hhmm(), "dealt": True, "fill": float(fill),
          "via": "chat"})
-    st["log"] = st["log"][-200:]
+    _trim_log(st)
     _save(st)
     return True
 
@@ -760,7 +831,7 @@ def _reconcile_positions(db, st) -> bool:
         changed = True
     if changed:
         st["held"] = keep
-        st["log"] = st["log"][-200:]
+        _trim_log(st)
     return changed
 
 
@@ -1078,7 +1149,7 @@ def _flat_close(db, st: dict) -> None:
             log.warning(f"flat close {lot.get('code')}: {str(e)[:80]}")
             continue
         st["held"] = [h for h in st["held"] if h is not lot]
-    st["log"] = st["log"][-200:]
+    _trim_log(st)
     _save(st)
 
 
@@ -1153,7 +1224,7 @@ def scan(db) -> dict:
                     {**_p9, "decision": "자동 취소", "at": _hhmm(), "dealt": None,
                      "why_gone": "장 마감 — 제안을 거둡니다 / market closed"})
             st["pending"] = []
-            st["log"] = st["log"][-200:]
+            _trim_log(st)
         _save_scan(st, _seen0, _seenh0)
         return st
     # NO SUGGESTIONS AFTER 15:20 (boss 2026-09-03 18:1x: "after 15:20 our
@@ -1232,7 +1303,7 @@ def scan(db) -> dict:
                 {**_p9, "decision": "자동 취소", "at": _hhmm(),
                  "dealt": None,
                  "why_gone": "조건이 사라져 제안을 거둡니다 / condition no longer true"})
-        st["log"] = st["log"][-200:]
+        _trim_log(st)
     # 🚦 POPUPS ONLY WHEN THE FULL CASCADE PASSES (boss 2026-09-07: "it keeps
     # asking buy popups even though I did not try — the popup must come only
     # when ALL gates pass"). The brain's lane test predates the weekly-
@@ -1448,7 +1519,7 @@ def scan(db) -> dict:
                      "reasons": ["🛡 발송 직전 재확인에서 걸렸습니다 — " + _vk9],
                      "reasons_en": ["🛡 Stopped by the check run at the moment "
                                     "of sending - " + _ve9]})
-                st["log"] = st["log"][-200:]
+                _trim_log(st)
                 continue
             # A POPUP MEANS A CHANCE THAT HELD, NOT A FLICKER (boss 2026-09-04:
             # "agent suggested to buy 기아 and I approved using market price,
@@ -3008,7 +3079,7 @@ def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
         # board never shows BUY without one.
         st.setdefault("asked", {})[p["code"]] = time.time()
         st.setdefault("log", []).append({**p, "decision": "취소", "at": _hhmm()})
-        st["log"] = st["log"][-200:]
+        _trim_log(st)
         _save(st)
         return {"ok": True, "decision": "cancelled"}
     # the boss may edit the agent's numbers before approving (2026-09-03 09:4x)
@@ -3122,7 +3193,7 @@ def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
                                      "dealt": (not queued),
                                      "fill": (fill if not queued else None),
                                      "oid": res.get("id") or res.get("order_id")})
-    st["log"] = st["log"][-200:]
+    _trim_log(st)
     _save(st)
     if queued:
         return {"ok": True, "decision": "queued",
