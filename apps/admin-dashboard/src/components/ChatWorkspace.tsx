@@ -1701,17 +1701,26 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                     </div>
                   );
                 }
-                // Assistant turn
+                // Assistant turn.
+                // A watchdog alert is a DESK NOTIFICATION pushed by /chat/alerts —
+                // it is not a reply to anything the boss asked. Rendered in the
+                // same bubble as a real answer it reads as one: on 2026-09-09 he
+                // asked "should we sell SK hynix or not?" and the fill alert for
+                // an EARLIER 12:34 buy landed underneath it, so the chatbot looked
+                // like it had bought the opposite of what he asked about.
+                const isAlert = t.intent === "watchdog";
                 return (
                   <div key={i} className="flex justify-start gap-3">
-                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-violet-500 text-white flex items-center justify-center text-[15px] shrink-0 mt-6 shadow-sm">
-                      🤖
+                    <div className={`w-9 h-9 rounded-full text-white flex items-center justify-center text-[15px] shrink-0 mt-6 shadow-sm ${isAlert ? "bg-gradient-to-br from-amber-400 to-orange-500" : "bg-gradient-to-br from-blue-500 to-violet-500"}`}>
+                      {isAlert ? "🔔" : "🤖"}
                     </div>
                     <div className="flex flex-col items-start gap-1.5 max-w-[85%] min-w-[120px] flex-1">
-                      <div className="flex items-center gap-2 text-[10px] font-bold tracking-wide text-gray-400 uppercase">
-                        <span>{(agentLabel || agentId)} · Answer</span>
+                      <div className={`flex items-center gap-2 text-[10px] font-bold tracking-wide uppercase ${isAlert ? "text-amber-600" : "text-gray-400"}`}>
+                        <span>{isAlert
+                          ? "🔔 Desk notification — not an answer to your question"
+                          : `${agentLabel || agentId} · Answer`}</span>
                       </div>
-                      <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-md px-4 py-3 text-[15px] leading-relaxed text-gray-900 shadow-sm w-full">
+                      <div className={`rounded-2xl rounded-tl-md px-4 py-3 text-[15px] leading-relaxed shadow-sm w-full ${isAlert ? "bg-amber-50 border border-amber-300 text-amber-900" : "bg-white border border-gray-200 text-gray-900"}`}>
                         {t.datasource && <DataSourceTrace ds={t.datasource} ts={t.ts} />}
                         {t.process && (t.process.mode === "advice"
                           ? <AdviceSimulation process={t.process} ts={t.ts} />
