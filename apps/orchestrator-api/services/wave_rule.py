@@ -546,16 +546,18 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
                            f"slice, {q:,} sh at ₩{px:,.0f}, comes off. When the fall stops and "
                            f"the 3rd rise stands we buy the first lot back.", "stoprung")
 
-    # ③-a THE ONE THING THAT ENDS THE PATIENCE. While his two names are sitting
-    # through a fast fall nothing sheds - that is what patience means - but the
-    # forgiveness is not unlimited: at -2% the position leaves whole, and from
-    # the next minute the ordinary rungs apply like everywhere else.
+    # ③-a THE PATIENCE ENDS, THE POSITION DOES NOT (boss 2026-09-10: "do not sell
+    # all if price decrease -1% in the SKhynix and Samsung and other stocks also,
+    # just sell 20%, and if price start to increase and 3rd then buy again").
+    # NOTHING on this desk sells a whole position on a falling price any more -
+    # not the pair, not the others, not at -2%. -2% only ends the fast-fall
+    # patience early; the ordinary 20% rungs take it from there, one slice per
+    # -1%, and every slice can be bought back on the next 3rd red. Five rungs
+    # still empties a position that keeps falling - it just does it in pieces
+    # he can buy back instead of one exit at the worst price of the day.
     if protected and pnl <= cfg["hard_stop"]:
-        return out("SELL", st["qty"],
-                   f"손절 — 평균 매수가 ₩{st['avg_px']:,.0f} 대비 {pnl:+.2f}%. "
-                   f"급락 보호도 여기까지입니다({cfg['hard_stop']}%). 전량 정리합니다.",
-                   f"stop - {pnl:+.2f}% against an average cost of ₩{st['avg_px']:,.0f}; the "
-                   f"fast-fall grace ends at {cfg['hard_stop']}%. Everything out.", "hardstop")
+        st["spike_at"] = None
+        protected = False
     # ③-b the old whole-position -1% law, kept only for the case where the rung
     # ladder is switched off (stop_slices=0). It used to apply to 000660 and
     # 005930, which had them selling EVERYTHING at -1% while every other stock
