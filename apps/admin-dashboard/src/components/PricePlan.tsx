@@ -225,8 +225,8 @@ export function ProcessSteps({ steps, step }:
           </span>
         </div>
         <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
-          {t("아래 숫자는 캡션이 아니라 실제로 측정한 값이며, 호가가 3초마다 들어올 때마다 다시 계산됩니다. 값이 바뀌면 그 줄이 잠깐 켜집니다.",
-             "every number below is a measured value, not a caption, recomputed each time the book arrives (every 3s). A value that changes lights up for a moment.")}
+          {t("호가에서 오는 값은 3초마다, 일봉 습관에서 오는 값은 30초마다 다시 계산됩니다 — 값이 실제로 바뀐 줄만 잠깐 켜집니다. 켜지지 않는 줄은 멈춘 것이 아니라 그 3초 동안 숫자가 그대로였다는 뜻이고, 「5개 가격」·「합계」처럼 원래 변하지 않는 확인 줄도 있습니다.",
+             "values that come from the book are recomputed every 3s, those from the daily habit every 30s - and only a line whose number actually moved lights up. A line that does not light is not stuck: the number simply did not change in those 3 seconds. Two lines never change by design - the count of prices and the total size, which are confirmations, not readings.")}
         </div>
       </div>
       <div className="px-4 py-2">
@@ -257,14 +257,53 @@ export default function PricePlan({ code, book, onPlan, onSteps }:
   const [qty, setQty] = useState(100);
   const [bars, setBars] = useState<Bar[] | null>(null);
 
+  // TODAY'S OWN CANDLE IS PART OF THE HABIT, AND IT IS STILL BEING WRITTEN
+  // (measured 2026-09-09 at his question "is it real time every 3 sec or not":
+  // over 60s the wall moved 18 times out of 19, but "3개월 습관 66일" and
+  // "중앙값 -3.99%" never moved AT ALL - because these bars were fetched once,
+  // when the stock was picked, and never again. Today's low deepens through
+  // the session and every one of the five buy prices is derived from these
+  // quantiles, so a frozen fetch quietly froze the prices too.)
+  //
+  // Re-read every 30s. Not on the 3s book clock: a daily bar cannot move that
+  // fast, and polling three months of candles twenty times a minute would cost
+  // the desk far more than the answer is worth.
   useEffect(() => {
     let dead = false;
-    setBars(null);
-    fetch(`${API}/approval/chart/${code}?mode=month3`, { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => { if (!dead) setBars(Array.isArray(d?.bars) ? d.bars : []); })
-      .catch(() => { if (!dead) setBars([]); });
-    return () => { dead = true; };
+    setBars(null);                       // never show the last stock's history
+    // TWO SOURCES, EACH FOR WHAT IT IS ACTUALLY GOOD AT. The 3-month depth
+    // comes from the daily history (66 sessions); Kiwoom's own daily call
+    // returns only ~21 rows, which is too few to cut five quantiles from. But
+    // that history's TODAY row lags - measured 2026-09-09 14:08, it still said
+    // close 1,862,000 while Kiwoom's tape said 1,859,000 - and today's candle
+    // is the only one still moving, so it is the one that must be right. Today
+    // is therefore overwritten with Kiwoom's live bar, which is the same source
+    // the book and the tape beside this panel are read from.
+    const pull = async () => {
+      let bs: Bar[] = [];
+      try {
+        const d = await fetch(`${API}/approval/chart/${code}?mode=month3`,
+                              { cache: "no-store" }).then((r) => r.json());
+        bs = Array.isArray(d?.bars) ? d.bars : [];
+      } catch { bs = []; }
+      try {
+        const k = await fetch(`${API}/paper-desk/raw-daily?code=${code}&months=3`,
+                              { cache: "no-store" }).then((r) => r.json());
+        const rows = Array.isArray(k?.rows) ? k.rows : [];
+        const td = rows.length ? rows[rows.length - 1] : null;
+        if (td && td.live && td.open && td.low) {
+          const tt = String(td.date || "").slice(2);
+          const live: Bar = { t: tt, o: td.open, h: td.high, l: td.low,
+                              c: td.close, v: td.volume };
+          const at = bs.findIndex((b) => b.t === tt);
+          bs = at >= 0 ? [...bs.slice(0, at), live, ...bs.slice(at + 1)] : [...bs, live];
+        }
+      } catch { /* the history alone still stands */ }
+      if (!dead) setBars(bs);
+    };
+    pull();
+    const iv = setInterval(pull, 30000);
+    return () => { dead = true; clearInterval(iv); };
   }, [code]);
 
   const plan = !book ? null
@@ -313,7 +352,8 @@ export default function PricePlan({ code, book, onPlan, onSteps }:
     : [
         { ko: "지금 시장 값이 얼마인지만 봅니다", en: "noting what the market costs right now",
           val: book ? `${t("최우선 매도 ", "best ask ")}${won(book.best_ask || book.last || 0)}` : "…" },
-        { ko: "이 종목의 3개월 습관을 읽습니다", en: "reading this stock's own 3-month habit",
+        { ko: "이 종목의 3개월 습관을 읽습니다 (30초마다 갱신)",
+          en: "reading this stock's own 3-month habit (refreshed every 30s)",
           val: bars === null ? "…" : `${bars.length}${t("일", " sessions")}` },
         { ko: "하루에 얼마나 밀리는지 줄 세웁니다", en: "sorting how far it falls each day",
           val: dipMid === null ? "…" : `${t("중앙값 ", "median ")}${pct(-dipMid * 100)}` },
