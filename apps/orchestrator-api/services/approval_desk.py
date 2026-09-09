@@ -34,7 +34,12 @@ SIX = [("000660", "SK하이닉스"), ("005930", "삼성전자"), ("035420", "NAV
 # double-firing inside one scan is all that is needed.
 _BUY_COOLDOWN = 45.0
 _SELL_COOLDOWN = 45.0
-_EXPIRE = 600.0
+# _EXPIRE is GONE, and the name is kept only to say so: popups used to die ten
+# minutes after they were raised, and a proposal made while he was away from the
+# desk was over before he saw it. Nothing expires by time now - a card leaves
+# only by his answer or by the closing bell (boss 2026-09-07, re-confirmed
+# 2026-09-09: "the popup should stay until we close or exit or approve or
+# cancel").
 _HOLD_N = 3      # consecutive checks a condition must hold before we ask               # a popup no one answers dies after 10 min
 
 
@@ -1232,7 +1237,20 @@ def scan(db) -> dict:
     # closing auction is no place to propose; unanswered popups die with it.
     if _hhmm() >= "15:20":
         if st["pending"]:
+            # ...AND IT LEAVES A ROW WHEN IT GOES (boss 2026-09-09: "make sure
+            # the popup stays until we close or exit or approve or cancel").
+            # The closing bell is his "close", so the sweep is right - but this
+            # one used to empty the list in silence, so a card he never got to
+            # answer simply vanished with no trace of having existed. The
+            # market-closed sweep twenty lines up has always logged its
+            # withdrawals; this one now does too.
+            for _p9 in st["pending"]:
+                st.setdefault("log", []).append(
+                    {**_p9, "decision": "자동 취소", "at": _hhmm(), "dealt": None,
+                     "why_gone": "15:20 마감 정리 — 답을 못 받은 채 거둡니다 / "
+                                 "swept unanswered at the 15:20 close"})
             st["pending"] = []
+            _trim_log(st)
         _save_scan(st, _seen0, _seenh0)
         return st
     from services.paper_desk import fast_price
@@ -1747,10 +1765,20 @@ def _turn_shape(code: str, bars: list | None = None) -> tuple:
                    f"({(whi - wlo) / wlo * 100:.2f}% of range over 30 min). {_u3} rise(s) "
                    f"so far - the moment the {d['ups']}rd one stands, we ask")
     if fall < d["drop"]:
+        # A NEGATIVE "FALL" IS NOT A SENTENCE (boss 2026-09-09 read the line
+        # "the fall has already healed - only -1.41% below the high"). Below a
+        # high by a negative amount means the price is ABOVE where it fell
+        # from - there is no dip at all, and the row should say that plainly
+        # instead of printing a minus sign at him.
+        if fall <= 0:
+            return _no("지금은 눌림이 없습니다 — 오늘 흐름의 위쪽에 있어 "
+                       "살 자리가 아닙니다 (내렸다 돌아서는 모양을 기다립니다)",
+                       "there is no dip at all right now - the price sits above where "
+                       "it last fell from, so there is nothing to buy into yet")
         return _no(f"하락이 이미 회복됐습니다 — 고점 대비 {fall:.2f}%뿐이라 "
-                   f"살 만한 눌림이 아닙니다",
-                   f"the fall has already healed - only {fall:.2f}% below the high; "
-                   f"there is no dip left to buy")
+                   f"살 만한 눌림이 아닙니다 (최소 {d['drop']}% 필요)",
+                   f"the fall has already healed - only {fall:.2f}% below the high, "
+                   f"and {d['drop']}% is the least we buy into")
     if typ and (hi - px) < d["sharp"] * typ:
         return _no("천천히 흘러내린 것이지 급락이 아닙니다 — 기다립니다",
                    "a slow drift, not a sharp fall - we wait")
