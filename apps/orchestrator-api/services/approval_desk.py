@@ -1611,12 +1611,18 @@ def scan(db) -> dict:
                 st.setdefault("streak", {})[code] = 0
                 continue
             try:
-                from services.checklist_advice import _fresh_stamps
+                from services.checklist_advice import _fresh_stamps, danger_stamps
                 # the RISK veto keeps a wider 3h net — missing a danger story
-                # costs money, so the real-time display law does not thin it
+                # costs money, so the real-time display law does not thin it.
+                # But it must be THIS stock's danger: an industry headline that
+                # happens to name two of our companies ("中 자동차 수출 급증…
+                # 현대차·기아 긴장") is a comparison, not a threat, and it cost
+                # seven of today's best signals (boss 2026-09-09).
                 if (code not in POS_GATE_EXEMPT
-                        and any(str(x.get("stamp")) in ("위험", "악재")
-                                for x in _fresh_stamps(code, limit=2, max_age_min=180))):
+                        and danger_stamps(code,
+                                          _fresh_stamps(code, limit=2, max_age_min=180),
+                                          name)):
+                    st.setdefault("why_skip", {})[code] = "danger news on this stock"
                     continue            # danger news still vetoes, as before
             except Exception:
                 pass

@@ -136,7 +136,21 @@ def run(db) -> dict[str, Any]:
     except Exception:
         db.rollback()
     from services.paper_desk import _live_price, place_order
+    # HIS TWO NAMES ARE NEVER STOPPED OUT (boss 2026-09-03: "another rule for
+    # 삼성전자 and SK하이닉스 - exceptional case: even if they decreased -1% do
+    # not sell, keep holding, because they are already decreased many %";
+    # re-confirmed 2026-09-09: "SK하이닉스 case, after 12 it sold out - please
+    # make sure we should hold it").
+    #
+    # Menu 3 and the chat have honoured that since 09-03 through NO_STOP. This
+    # guard never heard of it, and it trades the SAME shared position: at 12:05
+    # today it sold the last 4 SK하이닉스 shares at ₩1,858,000 on a -1% measured
+    # against the ENGINE's average, and his own 5-share lot went out with them.
+    # He never sold it and no order of his exists - the desk simply took it.
+    _NEVER_STOP = ("005930", "000660")
     for tk, name, qty, avg in rows:
+        if str(tk) in _NEVER_STOP:
+            continue                   # his standing rule outranks the stop
         if tk in auto_held:            # the auto-trade's own doors manage this one
             continue
         px, _nm = _live_price(tk)

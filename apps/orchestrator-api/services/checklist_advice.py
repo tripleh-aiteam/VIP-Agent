@@ -79,6 +79,83 @@ def _en(transcript, lang) -> bool:
     return en
 
 
+# ── WHOSE DANGER IS IT? ──────────────────────────────────────────────────
+# Boss 2026-09-09, after the day's audit: gate 4 refused SEVEN entry signals and
+# the tape then rose on six of them (+0.88% median). The stories it refused on:
+#
+#   기아        "中 자동차 수출 77% 급증…현대차·기아 긴장"   an industry piece
+#   현대차       "현대차그룹, 추석 전 협력사 납품대금 조기 지급"  a group story
+#   현대모비스     the same group story
+#   한화에어로     a 방산 sector piece
+#
+# The 09-08 law already says only a stock's OWN headline may veto it, and each
+# of these does name its stock - which is exactly how a sector piece slips
+# through: "현대차·기아 긴장" names two of our companies at once. A headline
+# that carries TWO OR MORE of the desk's names is a comparison or an industry
+# story; its subject is the sector, not the stock, so it may inform but it may
+# not veto. One name in the headline is still that company's own story.
+_DESK_NAMES = (
+    "SK하이닉스", "삼성전자", "NAVER", "네이버", "SK텔레콤", "한화오션",
+    "두산에너빌리티", "현대로템", "한국전력", "HD현대중공업", "현대모비스",
+    "기아", "HD한국조선해양", "현대차", "삼성중공업", "한화시스템",
+    "한화에어로스페이스", "한화에어로", "LIG넥스원", "한미반도체", "SK스퀘어",
+    "삼성바이오로직스", "삼성SDI", "LG에너지솔루션", "LG화학", "POSCO",
+    "포스코", "카카오", "한국항공우주", "KAI", "삼성전기",
+)
+_ALIAS = {
+    "HD현대중공업": ("HD현대重", "현대중공업", "HD현대"),
+    "HD한국조선해양": ("한국조선해양", "HD현대"),
+    "삼성전자": ("삼전",),
+    "SK하이닉스": ("하이닉스", "SK하닉", "하닉"),
+    "현대차": ("현대자동차", "현대차그룹"),
+    "한화에어로스페이스": ("한화에어로",),
+    "LIG넥스원": ("LIG",),
+    "POSCO홀딩스": ("포스코", "POSCO"),
+    "삼성바이오로직스": ("삼성바이오",),
+    "두산에너빌리티": ("두산에너빌", "두산"),
+    "한국항공우주": ("KAI",),
+    "NAVER": ("네이버",),
+    "삼성중공업": ("삼성重", "삼성중공"),
+    "한화오션": ("한화오션",),
+}
+_SECTOR_WORDS = ("업계", "산업", "섹터", "코스피", "코스닥", "증시", "시황",
+                 "테마", "관련주", "종목들", "빅5", "톱5")
+
+
+def sector_headline(title: str, own: str = "") -> bool:
+    """True when the headline's subject is the industry, not this one stock."""
+    t = str(title or "")
+    if not t:
+        return False
+    hits = set()
+    for n in _DESK_NAMES:
+        if n and n in t:
+            hits.add(n[:4])          # 한화에어로 / 한화에어로스페이스 count once
+    if len(hits) >= 2:
+        return True
+    # AND A STORY THAT NEVER NAMES THE COMPANY IS NOT ITS STORY (his 09-08 law,
+    # enforced here too: "현대차그룹, 추석 전 협력사 납품대금 조기 지급" vetoed
+    # 현대모비스, which the headline never mentions). Papers write short names,
+    # so the aliases are checked with it.
+    if own:
+        names = {own} | set(_ALIAS.get(own, ()))
+        if not any(n in t for n in names):
+            return True
+    return False
+
+
+def danger_stamps(code: str, stamps: list, name: str = "") -> list:
+    """The danger stories that may actually veto THIS stock."""
+    out = []
+    for s0 in stamps or []:
+        if str(s0.get("stamp")) not in ("위험", "악재"):
+            continue
+        if sector_headline(str(s0.get("title") or ""), name or str(s0.get("name") or "")):
+            continue
+        out.append(s0)
+    return out
+
+
 def _fresh_stamps(code: str, limit: int = 2, max_age_min: int = 60) -> list[dict]:
     """REAL-TIME news-intern stamps for one stock (title, stamp, ts, why) —
     the freshest last. Rows older than max_age_min are dropped entirely

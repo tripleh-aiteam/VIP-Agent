@@ -1121,7 +1121,12 @@ def whynot(db: Session = Depends(get_db)):
         # ④ 나쁜 뉴스 (the veto's own 3h net; the remembered day reads the
         # WHOLE trading day's stamps, each line carrying its own clock)
         _sts = _fresh_stamps(code, limit=3, max_age_min=180 if mkt else 600)
-        _bad = [s for s in _sts if str(s.get("stamp")) in ("위험", "악재")]
+        # an INDUSTRY headline is not this stock's danger (boss 2026-09-09)
+        try:
+            from services.checklist_advice import danger_stamps as _dst4
+            _bad = _dst4(code, _sts, r.get("name") or "")
+        except Exception:
+            _bad = [s for s in _sts if str(s.get("stamp")) in ("위험", "악재")]
         from services.kiwoom_rules import POS_GATE_EXEMPT as _PGX4
         if str(code) in _PGX4:
             pass                   # news does not judge his two names
@@ -1747,9 +1752,11 @@ def _brain_compute():
                        f"a sharp fall back toward the bottom." if z == "sell" else "")})
         news_bad = False
         try:
-            from services.checklist_advice import _fresh_stamps
-            news_bad = any(str(x.get("stamp")) in ("위험", "악재")
-                           for x in _fresh_stamps(code, limit=2))
+            from services.checklist_advice import _fresh_stamps, danger_stamps
+            # the same law as the cascade: an INDUSTRY headline is not this
+            # stock's danger (boss 2026-09-09)
+            news_bad = bool(danger_stamps(code, _fresh_stamps(code, limit=2),
+                                          r.get("name") or ""))
         except Exception:
             pass
         gates.append({
@@ -2243,9 +2250,9 @@ def _gates_after_gap(code: str, day: str, mkt: bool) -> tuple:
 
     # ④ 나쁜 뉴스 — the danger veto (a stock's OWN story only, 2026-09-08)
     try:
-        from services.checklist_advice import _fresh_stamps
-        _bad = [s for s in _fresh_stamps(code, limit=3, max_age_min=180 if mkt else 600)
-                if str(s.get("stamp")) in ("위험", "악재")]
+        from services.checklist_advice import _fresh_stamps, danger_stamps
+        _bad = danger_stamps(code, _fresh_stamps(code, limit=3,
+                                                 max_age_min=180 if mkt else 600), name)
     except Exception:
         _bad = []
     from services.kiwoom_rules import POS_GATE_EXEMPT as _PGX5
