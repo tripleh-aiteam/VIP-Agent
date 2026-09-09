@@ -2002,6 +2002,33 @@ def _brain_compute():
     return out
 
 
+@router.get("/history/days")
+def history_days(db: Session = Depends(get_db)):
+    """Every day Menu 3 actually traded (boss 2026-09-09: "the trading history
+    is considering only yesterday and today"). The log it used to read is a
+    200-row window; this reads the order book, which forgets nothing."""
+    from services.desk_history import days as _dh
+    try:
+        return {"ok": True, "days": _dh(db)}
+    except Exception as e:
+        return {"ok": False, "days": [], "error": str(e)[:140]}
+
+
+@router.get("/history")
+def history_day(day: str = Query(...), db: Session = Depends(get_db)):
+    """One past day of Menu 3 trading, rebuilt from the orders themselves."""
+    from services.desk_history import rows as _dr
+    try:
+        rows = _dr(db, day)
+    except Exception as e:
+        return {"ok": False, "day": day, "rows": [], "error": str(e)[:140]}
+    sells = [r for r in rows if r.get("side") == "SELL" and r.get("pnl_won") is not None]
+    return {"ok": True, "day": day, "rows": rows,
+            "trips": len(sells),
+            "won": sum(r.get("pnl_won") or 0 for r in sells),
+            "source": "paper_desk_orders"}
+
+
 @router.get("/giveup")
 def giveup_table():
     """THE GIVE-UP LAW table (boss 2026-09-03): per-stock price-runaway limits

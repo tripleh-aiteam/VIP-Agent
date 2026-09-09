@@ -123,6 +123,18 @@ export default function ApprovePage() {
   const [gcTf, setGcTf] = useState<1 | 15>(1);
   const [gc, setGc] = useState<GateChart | null>(null);
   const [gcBusy, setGcBusy] = useState(false);
+  // 📜 PAST DAYS COME FROM THE ORDER BOOK (boss 2026-09-09: "in the trading
+  // history it is considering only yesterday and today"). The log the panel
+  // used to read is a 200-row window that a quiet morning's 보류 notes can
+  // fill; the orders themselves forget nothing, so every earlier day is read
+  // from there instead.
+  const [histDays, setHistDays] = useState<string[]>([]);
+  const [histRows, setHistRows] = useState<Record<string, LogRow[]>>({});
+  useEffect(() => {
+    fetch(`${base}/approval/history/days`).then((r) => r.json())
+      .then((d) => setHistDays(Array.isArray(d?.days) ? d.days : []))
+      .catch(() => setHistDays([]));
+  }, [base]);
   const [picked, setPicked] = useState<string[]>([]);   // stock picker for the agent grid
   // history filters (boss 2026-09-03 12:0x: "some filters like per price, day and others")
   const [fStock, setFStock] = useState("");
@@ -315,6 +327,15 @@ export default function ApprovePage() {
       .catch(() => setGc(null)).finally(() => setGcBusy(false));
   }, [base]);
   // real time: while a chart is open it refreshes with the 5s feed poll
+  // a past day is fetched once, then kept
+  useEffect(() => {
+    const kst = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    if (!histDay || histDay === kst || histRows[histDay]) return;
+    fetch(`${base}/approval/history?day=${histDay}`).then((r) => r.json())
+      .then((d) => setHistRows((m) => ({ ...m, [histDay]: (d?.rows || []) as LogRow[] })))
+      .catch(() => setHistRows((m) => ({ ...m, [histDay]: [] })));
+  }, [base, histDay, histRows]);
+
   useEffect(() => {
     if (gcFor == null || !gc?.code) return;
     const id = setInterval(() => loadGate(gc.code, gcTf), 5000);
@@ -882,12 +903,16 @@ export default function ApprovePage() {
         // empty and selected, yesterday stays in the dropdown by its date
         const kstToday = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
         const allDays = Array.from(new Set([kstToday, ...(feed?.log || [])
-          .map((l) => l.day || "").filter(Boolean)])).sort().reverse();
+          .map((l) => l.day || "").filter(Boolean), ...histDays])).sort().reverse();
         const dayPick = allDays.includes(histDay) ? histDay : kstToday;
         const isLatestDay = dayPick === kstToday;
-        const done = (feed?.log || [])
+        // today is live (the feed carries the reasons and the pending cards);
+        // any earlier day is rebuilt from the orders
+        const dayRows: LogRow[] = isLatestDay ? (feed?.log || [])
+                                              : (histRows[dayPick] || []);
+        const done = dayRows
           .filter((l) => l.side === "SELL" && (l.dealt === true || l.fill) && l.buy_price != null
-                  && (!dayPick || (l.day || "") === dayPick));
+                  && (!dayPick || (l.day || "") === dayPick || !isLatestDay));
         const holds = isLatestDay ? (feed?.held || []) : [];
         const wins2 = done.filter((l) => (l.pnl_won ?? 0) > 0).length;
         const loss2 = done.filter((l) => (l.pnl_won ?? 0) < 0).length;
