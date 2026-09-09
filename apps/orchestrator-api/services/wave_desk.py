@@ -70,6 +70,53 @@ def _write(d: dict) -> None:
         log.warning(f"wave_desk save: {str(e)[:80]}")
 
 
+def dials() -> dict:
+    """Rule dials he has overridden while the market is running.
+
+    A restart costs about seventy seconds of real Kiwoom tape, so a dial he wants
+    to test at 10:30 must not need one. These are merged over wave_rule.CFG on
+    every single decision, so a change takes effect on the next minute's candle
+    and nothing else in the rule moves."""
+    d = _read().get("dials") or {}
+    return {k: v for k, v in d.items() if k in _ALLOWED}
+
+
+# only the dials that are safe to move mid-session - no share sizes, no lot caps
+_ALLOWED = {"gap_return", "gap_tol", "step", "slice_pct", "drift_pct", "drift_min",
+            "spike_pct", "spike_min", "spike_hold", "stop_pct", "hard_stop",
+            "big_pct", "cascade_sell", "cascade_n", "cascade_profit_only",
+            "slice_gap", "cool_min", "dip_pct", "max_lots", "max_adds"}
+
+
+def set_dial(name: str, value) -> dict:
+    from services import wave_rule as W
+    name = str(name or "").strip()
+    if name not in _ALLOWED:
+        return {"ok": False, "error": f"'{name}' is not a live-changeable dial",
+                "allowed": sorted(_ALLOWED)}
+    was = dials().get(name, W.CFG.get(name))
+    try:
+        v = float(value)
+        v = int(v) if float(v).is_integer() and isinstance(W.CFG.get(name), int) else v
+    except Exception:
+        return {"ok": False, "error": "value must be a number"}
+    d = _read()
+    d.setdefault("dials", {})[name] = v
+    _write(d)
+    log.info(f"wave dial {name} {was} -> {v}", extra={"action": "wave.dial"})
+    return {"ok": True, "dial": name, "was": was, "now": v, "dials": dials()}
+
+
+def clear_dial(name: str = "") -> dict:
+    d = _read()
+    if name:
+        (d.get("dials") or {}).pop(name, None)
+    else:
+        d["dials"] = {}
+    _write(d)
+    return {"ok": True, "dials": dials()}
+
+
 def lanes() -> dict:
     return _read().get("lanes") or {"semi": True, "auto": True}
 
@@ -400,7 +447,7 @@ def tick_lane(bag: dict, code: str, name: str, lot: dict | None,
     now = str(bars[-1].get("hhmm") or "")[:5]
     if st.get("done_at") == now:
         return None                     # a minute decides once per lane
-    dec = W.decide(bars, st, None, gap)
+    dec = W.decide(bars, st, dials() or None, gap)
     if not dec:
         return None
     st["done_at"] = now
@@ -621,7 +668,9 @@ def status() -> dict:
     d = _roll(_read())
     live = d.get("day") == _today()
     book = d.get("auto") or {}
+    _dl = dials()
     return {"ok": True, "lanes": lanes(), "mode": mode(), "day": d.get("day"),
+            "dials": _dl,
             "acts": (d.get("acts") or [])[-40:] if live else [],
             "auto_day": book.get("day"),
             "auto_stats": auto_stats(book),
@@ -633,7 +682,7 @@ def status() -> dict:
                            "spike_at": s.get("spike_at")}
                           for c, s in (d.get("state") or {}).items()
                           if live and int(s.get("qty") or 0) > 0],
-            "cfg": {k: W.CFG[k] for k in ("gap_tol", "ups", "step", "slice_pct",
+            "cfg": {k: _dl.get(k, W.CFG[k]) for k in ("gap_tol", "ups", "step", "slice_pct",
                                           "spike_pct", "spike_min", "spike_hold",
                                           "drift_pct", "drift_min", "stop_pct",
                                           "hard_stop", "max_lots", "slice_gap", "eod")}}

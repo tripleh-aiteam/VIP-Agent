@@ -2477,6 +2477,23 @@ def wave_lane(name: str = Query(..., description="semi | auto"),
     return set_lane(name, on)
 
 
+@router.post("/wave/dial")
+def wave_dial(name: str = Query(...), value: float = Query(...)):
+    """Move one rule dial WITHOUT a restart (a restart costs ~70s of live tape).
+    The change is merged over the rule on the very next candle. `gap_return=1`
+    is the one he asks about most: it re-opens a gap-up stock once price is back
+    to yesterday's last - measured at -16.8% over 72 stock-days, so it ships off."""
+    from services.wave_desk import set_dial
+    return set_dial(name, value)
+
+
+@router.post("/wave/dial-clear")
+def wave_dial_clear(name: str = Query("")):
+    """Put a dial (or all of them) back to the shipped, measured value."""
+    from services.wave_desk import clear_dial
+    return clear_dial(name)
+
+
 @router.get("/wave/auto-book")
 def wave_auto_book(limit: int = Query(400), day: str = Query("")):
     """🤖 The auto lane's own trading history and scoreboard: every buy and sell
