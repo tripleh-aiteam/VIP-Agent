@@ -163,11 +163,28 @@ LOG_MAX = 200
 
 
 def _row_day(l: dict) -> str:
-    """The KST day a log row belongs to, read from its own clock."""
+    """The KST day a log row belongs to, read from its own clock. Empty when
+    the row carries no clock at all.
+
+    A ROW WITH NO TIMESTAMP IS NOT A ROW FROM 1970 (boss 2026-09-09 11:3x:
+    "another bad thing is happened why theri buying time has changed" - the
+    trading history had gone back to 10:03/10:08/10:24 while the holding list
+    showed his edits). A HELD lot carries no `ts` - it is a position we are in
+    right now - so this returned "19700101", and the day-guard added to
+    apply_time_overrides at 11:20 compared that against today and skipped
+    EVERY held lot. All five of his clock corrections died silently at once.
+    The guard's own fallback ("if not _rd: it is today") was written for
+    exactly this row and could never fire, because 19700101 is truthy."""
     try:
-        return time.strftime("%Y%m%d", time.gmtime(float(l.get("ts") or 0) + 9 * 3600))
+        ts = float(l.get("ts") or 0)
     except Exception:
-        return str(l.get("day") or "")
+        ts = 0.0
+    if ts <= 0:
+        return str(l.get("day") or "").replace("-", "")
+    try:
+        return time.strftime("%Y%m%d", time.gmtime(ts + 9 * 3600))
+    except Exception:
+        return str(l.get("day") or "").replace("-", "")
 
 
 def _fold_notes(st: dict) -> bool:
