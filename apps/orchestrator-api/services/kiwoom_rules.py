@@ -373,6 +373,157 @@ def closes120(code: str, day: str) -> list[float]:
 POS_GATE_EXEMPT = ("000660", "005930")   # boss 2026-09-09
 
 
+# ── 예외 2종목의 말투: 갭상승 하나로 설명한다 (boss 2026-09-09) ───────────────
+# "why not buying 이면 갭상승이 있다고 하고, buying 이면 갭상승이 없다(또는
+#  갭상승 몇 %로 열렸지만 어제 가격까지 내려왔다)고 설명하고, 매도 쪽은
+#  SK하이닉스·삼성전자는 많이 올라서 -1% 하락은 큰 하락이 아니라고 설명해줘."
+# Gate 2 no longer refuses these two, so the ONLY thing that can still refuse
+# them is the gap - and that is exactly what the words must say, on all three
+# surfaces, from ONE place so they can never drift apart.
+
+def exempt_gap(code: str, day: str = "") -> dict | None:
+    """Today's gap story for SK하이닉스 / 삼성전자, with real numbers.
+
+    Returns yesterday's close, today's open, the gap %, whether the price ever
+    came back to yesterday's line (and at what minute), plus the two sentences
+    the desk speaks: `buy_ko/buy_en` (why we COULD buy) and `no_ko/no_en` (why
+    we are NOT buying). None for any other stock, or when the tape is missing.
+    """
+    code = str(code or "")
+    if code not in POS_GATE_EXEMPT:
+        return None
+    if not day:
+        from services.kiwoom_tape import _day as _kd9x
+        day = _kd9x()
+    nm = "SK하이닉스" if code == "000660" else "삼성전자"
+    nm_e = "SK hynix" if code == "000660" else "Samsung Electronics"
+    try:
+        yc = float(_gap_ref(code, day) or 0) or None
+    except Exception:
+        yc = None
+    op = px = None
+    back_at = None
+    try:
+        from routers.paper_desk import live_tape
+        bars = (live_tape(code=code, period=60, tick=5, bars=400) or {}).get("bars") or []
+        if bars:
+            op = float(bars[0].get("open") or 0) or None
+            px = float(bars[-1].get("close") or 0) or None
+            if yc:
+                for b in bars:
+                    if float(b.get("low") or 1e18) <= yc * 1.0015:
+                        back_at = str(b.get("hhmm") or "")[:5]
+                        break
+    except Exception:
+        pass
+    if px is None:
+        try:
+            from services.paper_desk import fast_price
+            px = float((fast_price(code) or [None])[0] or 0) or None
+        except Exception:
+            pass
+    if not (yc and op):
+        return None
+    gap = (op / yc - 1) * 100
+    now = ((px / yc - 1) * 100) if px else None
+    W = lambda v: f"₩{v:,.0f}" if v else "?"
+    gapped = gap >= 0.3
+    back = bool(back_at) or (now is not None and now <= 0.15)
+
+    if not gapped:
+        buy_ko = (f"🟢 갭상승이 없습니다 — 오늘 시가 {W(op)}, 어제 종가 {W(yc)} 대비 "
+                  f"{gap:+.2f}%입니다. {nm}는 갭상승만 없으면 위치로는 막지 않습니다 — "
+                  f"하락이 멈추고 빨간 봉 3개가 뜨는 순간 삽니다.")
+        buy_en = (f"🟢 There is NO gap-up — it opened {W(op)}, {gap:+.2f}% against "
+                  f"yesterday's close {W(yc)}. With no gap-up, {nm_e} is never refused "
+                  f"on position — we buy the moment the fall stops and three red "
+                  f"candles appear.")
+    elif back:
+        _when = f"{back_at}에 " if back_at else ""
+        _when_e = f" at {back_at}" if back_at else ""
+        buy_ko = (f"🟢 오늘 시장은 갭상승 {gap:+.2f}%로 열렸지만(시가 {W(op)}, 어제 종가 "
+                  f"{W(yc)}) {_when}어제 가격까지 다시 내려왔습니다"
+                  + (f" — 지금 {W(px)} ({now:+.2f}%)." if px and now is not None else ".")
+                  + f" 비싸게 출발한 값을 쫓은 것이 아니라 어제 가격으로 돌아온 뒤에 "
+                    f"빨간 봉 3개를 보고 샀습니다.")
+        buy_en = (f"🟢 The market opened with a gap-up of {gap:+.2f}% (open {W(op)} vs "
+                  f"yesterday's close {W(yc)}), but the price came back DOWN to "
+                  f"yesterday's price{_when_e}"
+                  + (f" — now {W(px)} ({now:+.2f}%)." if px and now is not None else ".")
+                  + f" We did not chase the expensive open: we bought after it came "
+                    f"back, on the three red candles.")
+    else:
+        buy_ko = buy_en = ""
+
+    if gapped and not back:
+        no_ko = (f"🚫 갭상승이 있습니다 — 오늘 시가 {W(op)}, 어제 종가 {W(yc)}보다 "
+                 f"{gap:+.2f}% 높습니다."
+                 + (f" 지금도 {W(px)} ({now:+.2f}%) — 아직 어제 가격 위에 있습니다."
+                    if px and now is not None else "")
+                 + f" {nm}는 위치 관문에서는 막지 않습니다 — 오늘 사지 않는 이유는 "
+                   f"오직 이 갭상승 하나입니다. 어제 가격 {W(yc)}까지 내려오면 그때 "
+                   f"빨간 봉 3개를 보고 삽니다.")
+        no_en = (f"🚫 There IS a gap-up — it opened {W(op)}, {gap:+.2f}% above "
+                 f"yesterday's close {W(yc)}"
+                 + (f", and it is still {W(px)} ({now:+.2f}%) above that line."
+                    if px and now is not None else ".")
+                 + f" {nm_e} is not refused on position any more — this gap-up is the "
+                   f"ONE and only reason it is not bought today. Once it comes back "
+                   f"down to yesterday's price {W(yc)}, we buy it on the three red "
+                   f"candles.")
+    else:
+        no_ko = no_en = ""
+
+    return {"code": code, "name": nm, "name_en": nm_e, "yc": yc, "op": op,
+            "px": px, "gap": round(gap, 2),
+            "now_vs_yc": round(now, 2) if now is not None else None,
+            "back": back, "back_at": back_at, "gapped": gapped,
+            "buy_ko": buy_ko, "buy_en": buy_en, "no_ko": no_ko, "no_en": no_en}
+
+
+def exempt_hold_line(code: str, px: float, basis: float = 0.0,
+                     day: str = "") -> tuple:
+    """WHY -1% DOES NOT SELL THESE TWO (boss 2026-09-09: "for selling case need
+    to explain skhynix and samsungchonja increased a lot so there is a -1%
+    decrease, not big decrease"). Says it with the size of the rise behind it,
+    so the sentence carries a measurement and not just an opinion."""
+    code = str(code or "")
+    if code not in POS_GATE_EXEMPT:
+        return ("", "")
+    if not day:
+        from services.kiwoom_tape import _day as _kd9x
+        day = _kd9x()
+    nm = "SK하이닉스" if code == "000660" else "삼성전자"
+    nm_e = "SK hynix" if code == "000660" else "Samsung Electronics"
+    rise_ko = rise_en = ""
+    try:
+        hz = _hz_stats(code, day) or {}
+        lo = hz.get("m_low") or hz.get("q_low")
+        lo_n = "1개월 저점" if hz.get("m_low") else "3개월 저점"
+        lo_e = "1-month low" if hz.get("m_low") else "3-month low"
+        if px and lo and lo > 0:
+            up = (float(px) / float(lo) - 1) * 100
+            if up >= 3:
+                rise_ko = (f"{lo_n} ₩{lo:,.0f} → 지금 ₩{px:,.0f}, {up:+.1f}% 올랐습니다. ")
+                rise_en = (f"{lo_e} ₩{lo:,.0f} → now ₩{px:,.0f}, a rise of {up:+.1f}%. ")
+    except Exception:
+        pass
+    # the won value of 1% - from OUR buy price when we know it, otherwise from
+    # today's price, so the sentence always carries a number and never "(1%)"
+    _ref = float(basis or 0) or float(px or 0)
+    won = f"약 ₩{_ref * 0.01:,.0f}" if _ref else "1%"
+    won_e = f"about ₩{_ref * 0.01:,.0f}" if _ref else "1%"
+    ko = (f"🤝 -1%로는 팔지 않습니다 — {nm}는 많이 오른 종목입니다. {rise_ko}"
+          f"그만큼 오른 값에서 -1%({won})는 큰 하락이 아니라 작은 흔들림입니다. "
+          f"이 두 종목은 -1% 매도 규칙에서 제외입니다 — 사장님이 직접 파실 때까지 "
+          f"보유합니다.")
+    en = (f"🤝 NOT sold at -1% — {nm_e} has risen a lot. {rise_en}"
+          f"Against a rise that size, -1% ({won_e}) is a small wobble, not a big "
+          f"fall. These two are exempt from the -1% sell rule - held until you "
+          f"sell them yourself.")
+    return (ko, en)
+
+
 def whole_read(code: str, px: float, day: str) -> float | None:
     """The all-days position: what share of the last 120 daily closes were
     CHEAPER than `px`, with recent days carrying more weight (half-life 20
@@ -495,6 +646,12 @@ def pos_story(code: str, px: float, day: str, bar: float = 65.0,
                        f"information only and never refuses the buy. Gate 1 (the gap and "
                        f"the return to yesterday's price), volume, news and the turn "
                        f"still apply.")
+    elif context == "hold" and str(code) in POS_GATE_EXEMPT:
+        # the -1% rule does NOT sell these two, so the holding card must not
+        # promise that it will (boss 2026-09-09)
+        _hk, _he = exempt_hold_line(code, px, day=day)
+        rule_ko.append(f"→ 지금 {score:.1f}% 지점입니다 (낮을수록 싼 자리). " + _hk)
+        rule_en.append(f"→ It sits at {score:.1f}% (lower = cheaper). " + _he)
     elif context == "hold":
         rule_ko.append(f"→ 지금 {score:.1f}% 지점입니다 (낮을수록 싼 자리). "
                        f"보유 중의 매도는 이 위치가 아니라 -1% 규칙이 결정합니다.")

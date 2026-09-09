@@ -626,6 +626,79 @@ def _enrich_log_rows(st: dict) -> None:
             sc_ko = f" — 오늘 {sc}점." if sc is not None else "."
             sc_en = f" — today {sc} pts." if sc is not None else "."
             l["_rv"] = 5
+            # THE SNAPSHOT MUST BE TAKEN AT THE MINUTE OF THE TRADE (boss
+            # 2026-09-09: "Suggested and ordered time is not logically true so
+            # make it true"). chat_mirror stamps the gates at the minute the
+            # order is MIRRORED, so the 09:04 SK하이닉스 row explained itself
+            # with 10:08 prices. whynot_at already replays any past minute -
+            # the row re-reads itself once, at its own clock, and is marked so
+            # it never pays for the replay again.
+            if l.get("side") == "BUY" and l.get("via") == "chat":
+                try:
+                    from services.kiwoom_tape import _day as _kd8x
+                    _at8 = str(l.get("at") or l.get("hhmm") or "")[:5]
+                    # THE CLOCK HE READS, NOT THE CLOCK WE WROTE: a time edit
+                    # moves the row to its signal minute at RENDER time, so the
+                    # stored `at` is still the minute the order was mirrored.
+                    # Replaying at the stored clock would reprint the very
+                    # 10:08 numbers under a 09:04 heading he called illogical.
+                    _ov8 = (time_overrides() or {}).get(str(code)) or {}
+                    if (_ov8.get("at") and (not _ov8.get("frm")
+                                            or _ov8["frm"] == _at8)):
+                        _at8 = str(_ov8["at"])[:5]
+                    if (_row_day(l) == _kd8x() and len(_at8) == 5
+                            and l.get("_gsnap_at") != _at8):
+                        from routers.approval import whynot_at as _wna8
+                        _wr8 = _wna8(code, _at8, name) or {}
+                        _gs8 = _wr8.get("gates") or []
+                        if _gs8:
+                            _hk8 = ("⚠️ 이 시각에 매수 관문이 막혀 있었지만, 사장님이 "
+                                    "챗봇으로 직접 승인하신 매매입니다. "
+                                    f"{_at8} 그 시각의 관문:"
+                                    if _wr8.get("stopped_at") else
+                                    "✅ 매매 시각에 매수 관문이 모두 열려 있었습니다 — "
+                                    f"규칙과 같은 방향의 매수입니다. {_at8} 그 시각의 관문:")
+                            _he8 = ("⚠️ The buy gates were BLOCKED at this minute, but "
+                                    "the boss approved it directly in chat. The gates "
+                                    f"as of {_at8}:"
+                                    if _wr8.get("stopped_at") else
+                                    "✅ Every buy gate was OPEN at the minute of the "
+                                    "trade — a buy in the same direction as the rule. "
+                                    f"The gates as of {_at8}:")
+                            _rk8, _re8 = [_hk8], [_he8]
+                            for _g8 in _gs8:
+                                _m8 = "✅" if _g8.get("passed") else "⛔"
+                                _rk8.append(f"{_m8} {_g8['n']}. {_g8['ko']}")
+                                _re8.append(f"{_m8} {_g8['n']}. {_g8['en']}")
+                            # keep the 💬 header, drop the stale snapshot lines
+                            _keepk = [x for x in (l.get("reasons") or [])[:1]]
+                            _keepe = [x for x in (l.get("reasons_en") or [])[:1]]
+                            l["reasons"] = _keepk + _rk8
+                            l["reasons_en"] = _keepe + _re8
+                            l["_gsnap_at"] = _at8
+                except Exception:
+                    pass
+            # AND THE PAIR LEADS WITH THE GAP (boss 2026-09-09: "in the buying
+            # case it should explain there is not 갭상승, or that the market
+            # opened with a 갭상승 of X% but the price came back to yesterday's
+            # price") — only on today's own row, because exempt_gap reads the
+            # live tape.
+            if l.get("side") == "BUY":
+                try:
+                    from services.kiwoom_tape import _day as _kd8y
+                    if _row_day(l) == _kd8y() and not any(
+                            "갭상승이 없습니다" in str(x) or "갭상승이 있습니다" in str(x)
+                            or "갭상승 " in str(x)[:14]
+                            for x in (l.get("reasons") or [])[:3]):
+                        from services.kiwoom_rules import exempt_gap as _xgf8
+                        _xg8 = _xgf8(code)
+                        if _xg8 and _xg8.get("buy_ko"):
+                            _rs8 = list(l.get("reasons") or [""])
+                            _es8 = list(l.get("reasons_en") or [""])
+                            l["reasons"] = _rs8[:1] + [_xg8["buy_ko"]] + _rs8[1:]
+                            l["reasons_en"] = _es8[:1] + [_xg8["buy_en"]] + _es8[1:]
+                except Exception:
+                    pass
             if l.get("side") == "BUY" and l.get("via") != "chat" and (
                     # a 💬 chat row keeps its OWN story — "bought by the boss's
                     # order though the gates were blocked" must never be
@@ -2684,10 +2757,25 @@ def trade_story(code: str, name: str = "") -> dict:
             pass
         # and why it is STILL ours
         if code in NO_STOP:
-            ko.append("🤝 이 종목은 -1%로 팔지 않습니다 — 이미 많이 내려온 종목이라 "
-                      "-1%는 큰 의미가 없다는 사장님 규칙입니다.")
-            en.append("🤝 This one is NOT sold at -1% - your rule: it has already "
-                      "fallen a long way, so -1% means little here.")
+            # SAID THE RIGHT WAY ROUND (boss 2026-09-09: "for selling case need
+            # to explain skhynix and samsungchonja INCREASED a lot so there is
+            # a -1% decrease, not big decrease"). The old line claimed they had
+            # FALLEN a long way - the opposite of what is true and of what he
+            # asked for. Now it carries the size of the rise behind it.
+            _hk9, _he9 = "", ""
+            try:
+                from services.kiwoom_rules import exempt_hold_line as _xhl9
+                _hk9, _he9 = _xhl9(code, float(px or 0), float(base or 0))
+            except Exception:
+                pass
+            if _hk9:
+                ko.append(_hk9)
+                en.append(_he9)
+            else:
+                ko.append("🤝 이 종목은 -1%로 팔지 않습니다 — 많이 오른 종목이라 "
+                          "-1% 하락은 큰 하락이 아니라는 사장님 규칙입니다.")
+                en.append("🤝 This one is NOT sold at -1% - your rule: it has "
+                          "risen a lot, so a -1% dip is not a big fall.")
         elif pnl is not None:
             ko.append(f"✋ 아직 보유 중 — 매수가 ₩{base:,.0f} 대비 지금 {pnl:+.2f}%. "
                       f"-1%에 닿기 전까지는 팔지 않습니다.")
@@ -2804,6 +2892,21 @@ def _why_buy(code: str, name: str, hold: dict):
     _gap_talk = (not _gapped) and ((not bt) or bt < "10:30")
     gk = ["갭상승 아님"] if _gap_talk else []
     ge = ["no gap-up"] if _gap_talk else []
+    # HIS TWO NAMES SAY THE GAP OUT LOUD, ALWAYS (boss 2026-09-09: "in the
+    # buying case it should explain there is not 갭상승, or if there was a
+    # 갭상승 then it should explain the market opened with 갭상승 of X% but the
+    # price decreased back to yesterday's price"). Gate 2 no longer refuses
+    # them, so the gap is the only gate that had anything to say - it is not a
+    # three-word chip in a list, it is the first line of the story, and it
+    # keeps saying it after 10:30 because for these two it is the whole reason.
+    _xg9 = None
+    try:
+        from services.kiwoom_rules import exempt_gap as _xgf9
+        _xg9 = _xgf9(code)
+    except Exception:
+        _xg9 = None
+    if _xg9 and _xg9.get("buy_ko"):
+        gk, ge = [], []                 # the full sentence replaces the chip
     # POSITIVE ZONE WORDING with the numbers (boss 2026-09-04 09:1x: "instead
     # of saying not the selling zone, say this IS a buying zone because it is
     # lower than the average price — with numerical proof"). The six often
@@ -2854,8 +2957,12 @@ def _why_buy(code: str, name: str, hold: dict):
                 + (f" ({_vr9:.1f}x its 20-day average)" if _vr9 and _vr9 >= 0.05 else ""))
         gk.append(_vk9)
         ge.append(_ve9)
-    R.append("✅ 살 수 있는 자리입니다 — " + " · ".join(gk))
-    E.append("✅ THIS IS A PLACE TO BUY — " + " · ".join(ge))
+    if _xg9 and _xg9.get("buy_ko"):
+        R.append(_xg9["buy_ko"])
+        E.append(_xg9["buy_en"])
+    if gk:
+        R.append("✅ 살 수 있는 자리입니다 — " + " · ".join(gk))
+        E.append("✅ THIS IS A PLACE TO BUY — " + " · ".join(ge))
 
     # ORDERED BY IMPACT, NOT BY HABIT (boss 2026-09-04: "organise the checklist
     # in terms of impact on the buying. Before them we need to check the
@@ -3194,10 +3301,30 @@ def _why_sell(code: str, lot: dict, row: dict, px: float):
     return R, E
 
 
+# ONE CARD, ONE ORDER (boss 2026-09-09, auditing the holdings: 삼성중공업 shows
+# 96 shares bought at 10:30:13 by the ladder - and a SECOND order for the full
+# 468 at 10:30:20, ₩9,991,800 of exposure he never approved twice. Two decide()
+# calls landed inside seven seconds; each read the pending list before the other
+# had written it, so both found the card and both sent orders. The page's two
+# approve buttons (시장가 / 효율가) make that one mis-click away, and the state
+# is a JSON file with no lock, so the guard has to live here.)
+_DECIDED: dict = {}          # sid -> the moment it was answered
+
+
 def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
+    import time as _t9
+    _n9 = _t9.time()
+    for _k9 in [k for k, v in _DECIDED.items() if _n9 - v > 7200]:
+        _DECIDED.pop(_k9, None)
+    if sid in _DECIDED:
+        return {"ok": False, "decision": "duplicate",
+                "error": "이미 처리된 제안입니다 (중복 클릭) / already handled - "
+                         "this suggestion was answered a moment ago"}
+    _DECIDED[sid] = _n9
     st = _load()
     p = next((x for x in (st.get("pending") or []) if x["id"] == sid), None)
     if not p:
+        _DECIDED.pop(sid, None)      # nothing was sent; a real retry may come
         return {"ok": False, "error": "suggestion expired or already handled"}
     st["pending"] = [x for x in st["pending"] if x["id"] != sid]
     if not ok:
@@ -3255,6 +3382,7 @@ def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
         if not any(x["ok"] for x in _placed):
             st.setdefault("pending", []).append(p)
             _save(st)
+            _DECIDED.pop(sid, None)          # nothing went out - he may try again
             return {"ok": False,
                     "error": (_placed[0].get("error") if _placed else "order failed")}
         p["slices"] = _placed
@@ -3275,6 +3403,7 @@ def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
     if not res.get("ok"):
         st.setdefault("pending", []).append(p)      # keep the popup, report the error
         _save(st)
+        _DECIDED.pop(sid, None)                     # the order never went out
         return {"ok": False, "error": res.get("error") or "order failed"}
     # DEALT OR NOT DEALT (boss 2026-09-03: "if we offer some price it will not
     # deal — the trading history should have a column like dealt or not"): a

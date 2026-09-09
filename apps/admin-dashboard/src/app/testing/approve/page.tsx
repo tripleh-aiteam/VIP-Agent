@@ -1096,7 +1096,16 @@ export default function ApprovePage() {
                           holdKo.push(`② 연중 ${posTxt} — 중간 구간입니다. 파도가 살아 있는 동안 태웁니다.`);
                           holdEn.push(`② At ${posTxt} of the year — mid-range. We ride while the wave is alive.`);
                         }
-                        if ((pnl ?? 0) > -1 && (tr9 < 0 || (tr9 === 0 && (chg9 ?? 0) <= 0))) {
+                        // 🤝 THE PATIENT PAIR NEVER PROMISES A -1% SELL (boss
+                        // 2026-09-09: "for selling case need to explain skhynix
+                        // and samsungchonja increased a lot so there is a -1%
+                        // decrease, not big decrease"). SK하이닉스/삼성전자 are
+                        // exempt from the -1% rule in the engine, so line ③ must
+                        // not say a sell popup is coming for them - it never is.
+                        if (h.code === "000660" || h.code === "005930") {
+                          holdKo.push(`③ 이 종목은 -1% 매도 규칙에서 제외입니다 — 많이 오른 종목이라 -1%(약 ${W(Math.round(h.price * 0.01))})는 큰 하락이 아니라 작은 흔들림입니다. ${W(trig)}을 지나가도 자동으로 팔지 않습니다 — 사장님이 직접 파실 때까지 보유합니다.`);
+                          holdEn.push(`③ This one is EXEMPT from the -1% sell rule — it has risen a lot, so -1% (about ${W(Math.round(h.price * 0.01))}) is a small wobble, not a big fall. Even if it passes ${W(trig)} we do NOT sell automatically — held until you sell it yourself.`);
+                        } else if ((pnl ?? 0) > -1 && (tr9 < 0 || (tr9 === 0 && (chg9 ?? 0) <= 0))) {
                           holdKo.push(`③ 내려가고는 있지만 아직 -1% 선(${W(trig)})에 닿지 않았습니다 — 서두르지 않고 기다립니다.`);
                           holdEn.push(`③ It is decreasing but has NOT yet reached the -1% line (${W(trig)}) — we stay patient, no hurry to sell.`);
                         } else if ((pnl ?? 0) > -1) {
