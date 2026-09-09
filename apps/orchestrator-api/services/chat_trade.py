@@ -149,6 +149,39 @@ def is_question(transcript: Optional[str]) -> bool:
     return bool(_Q_MARK_RE.search(t) or _Q_LEAD_RE.match(t) or _Q_KO_RE.search(t))
 
 
+# HOW MANY PRICE LEVELS — the one pattern every ladder path shares.
+#
+# Boss 2026-09-09: "wanna buy skhynix with different 5 prices and 1000 stock"
+# became ONE 1,000-share market order. Every ladder regex demanded the count
+# BEFORE the word ("5 different prices"); he wrote it after. The split was
+# dropped in silence, which is the worst way to lose an instruction — he only
+# finds out by reading the fill. So the count is now accepted on either side of
+# the word, with or without an adjective between ("5 different efficient
+# prices"), and a bare "5 prices" counts too.
+#
+# The lookbehind matters: without it the trailing "000" of "at 1,856,000 price"
+# matched as a level count and invented a 2-slice ladder out of a limit price.
+_LADDER_N_RE = re.compile(
+    r"(?<![\d,.])(\d{1,2})(?!\d)\s*가지"                                       # 5가지
+    r"|(?<![\d,.])(\d{1,2})(?!\d)\s*개(?:의)?\s*가격"                          # 5개(의) 가격
+    r"|(?<![\d,.])(\d{1,2})(?!\d)\s*(?:different|다른)(?:\s+\w+){0,2}\s*(?:prices?|가격)"
+    r"|(?:different|다른)\s*(?<![\d,.])(\d{1,2})(?!\d)\s*(?:\w+\s+){0,2}(?:prices?|가격)"
+    r"|(?<![\d,.])(\d{1,2})(?!\d)\s*(?:prices?|가격)(?!\w)",                   # 5 prices
+    re.IGNORECASE)
+
+
+def ladder_levels(text: Optional[str]) -> Optional[int]:
+    """The number of price levels asked for, 2-20, or None."""
+    m = _LADDER_N_RE.search(text or "")
+    if not m:
+        return None
+    g = next((x for x in m.groups() if x), None)
+    try:
+        return max(2, min(20, int(g)))
+    except Exception:
+        return None
+
+
 def parse(transcript: Optional[str]) -> Optional[dict]:
     """An imperative BUY/SELL command naming a stock → {side, code, name, qty, all_}.
     None for questions/advice or when no stock resolves."""
@@ -1211,10 +1244,8 @@ def price_reply(db, transcript: Optional[str]) -> Optional[str]:
         # as a price card). As a follow-up it carries no stock, no side and no
         # "buy", so ladder_preview can never see it — the pending slot holds all
         # three. Ask the total size, then build the ladder in qty_reply.
-        _ln1 = re.search(r"(\d{1,2})\s*(?:가지|개(?:의)?\s*가격"
-                         r"|(?:different|다른)(?:\s+\w+){0,2}\s*(?:prices?|가격))", t)
-        if _ln1 and not re.search(r"\d[\d,]*\s*(?:주|shares?|stocks?)\b", t):
-            _n1 = max(2, min(20, int(_ln1.group(1))))
+        _n1 = ladder_levels(t)
+        if _n1 and not re.search(r"\d[\d,]*\s*(?:주|shares?|stocks?)\b", t):
             _PENDING.clear()
             _PENDING.update({"need_qty": True, "ladder_n": _n1,
                              "side": p.get("side") or "BUY", "code": p["code"],
@@ -1358,11 +1389,10 @@ def ladder_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
     tl = t.lower()
     if is_question(t):            # a question is answered, never executed
         return None
-    m = re.search(r"(\d{1,2})\s*가지|(\d{1,2})\s*(?:different|다른)\s*(?:prices?|가격)"
-                  r"|(\d{1,2})\s*개(?:의)?\s*가격", tl)
-    if not m:
+    m = _LADDER_N_RE.search(tl)
+    n = ladder_levels(tl)
+    if not m or not n:
         return None
-    n = max(2, min(20, int(m.group(1) or m.group(2) or m.group(3))))
     if any(w in tl for w in _ADVICE_BLOCK):
         return None
     # WHICH SIDE. Sell is tested first: '팔아줘' / 'sell' is unambiguous, whereas a
@@ -1380,7 +1410,7 @@ def ladder_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
     # already blanks the PRICE for exactly this reason; the ladder never blanked
     # the QUANTITY. Total quantity - "1000주" / "1000 stocks"; the ladder count
     # (10가지) is already consumed by its own pattern, so a bare big number is qty.
-    _tl_nocount = re.sub(m.re.pattern, " ", tl)   # the "5가지"/"5 different prices" span
+    _tl_nocount = _LADDER_N_RE.sub(" ", tl)       # the "5가지"/"different 5 prices" span
     qm = (re.search(r"(\d[\d,]*)\s*(?:주|shares?|stocks?|개)", tl)
           or re.search(r"\b(\d{2,6})\b", _tl_nocount))
     if not qm:

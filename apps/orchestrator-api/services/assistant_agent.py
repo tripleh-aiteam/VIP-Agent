@@ -7637,7 +7637,11 @@ def _run_agent_impl(
                                # advice lane answered a ladder ORDER with a
                                # holding verdict and the ladder never ran.
                                r"|\d+\s*(?:shares?|stocks?)\b"
-                               r"|\d+\s*가지|\d+\s*(?:different|다른)\s*(?:prices?|가격)"
+                               # the count sits on EITHER side of the word — he wrote
+                               # "different 5 prices" (boss 2026-09-09)
+                               r"|\d+\s*가지|\d+\s*(?:different|다른)(?:\s+\w+){0,2}\s*(?:prices?|가격)"
+                               r"|(?:different|다른)\s*\d+\s*(?:\w+\s+){0,2}(?:prices?|가격)"
+                               r"|\d+\s*(?:prices?|가격)\b"
                                r"|please\s+(buy|sell)|(buy|sell)\s+\d"
                                r"|wanna\s+(buy|sell)|want\s+to\s+(buy|sell)"
                                # "I need to buy skhynix stock" (boss 2026-09-09) —
