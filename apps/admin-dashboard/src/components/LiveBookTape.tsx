@@ -166,6 +166,26 @@ export default function LiveBookTape({ code, tapeHeight = 300 }:
                     <span className="ml-1.5" style={{ color: PURPLE }}>{mark}</span>)}</td>
               </tr>);
             })}
+            {/* THE SLICES THE BOOK CANNOT REACH (boss 2026-09-09: "in case of
+                buying I can not see 5 different prices"). A buy stands at five
+                depths this stock actually reaches over three months, and four
+                of them are normally far below the ten levels a book shows - so
+                only the leg that deals now ever got a 🎯. They are named here
+                instead of being silently absent. */}
+            {(() => {
+              const ps = [...(book?.asks || []), ...(book?.bids || [])].map(([p]) => p);
+              if (!ps.length || !(plan?.slices || []).length) return null;
+              const lo = Math.min(...ps), hi = Math.max(...ps);
+              const off = (plan?.slices || []).filter((s) => s.px < lo || s.px > hi);
+              if (!off.length) return null;
+              return (
+                <tr><td colSpan={3} className="px-3 py-1 text-[10px] leading-[1.45]"
+                        style={{ color: PURPLE, background: "rgba(106,27,154,0.06)" }}>
+                  🎯 {t(`이 호가창 10단계 밖에 ${off.length}자리 더 — 아래 표에 전부 있습니다: `,
+                        `${off.length} more of our prices sit outside these ten levels - all of them are in the table below: `)}
+                  {off.map((s) => `₩${fmt(s.px)} · ${s.qty.toLocaleString()}${t("주", " sh")}`).join("   ")}
+                </td></tr>);
+            })()}
           </tbody>
         </table>
         {!book && (

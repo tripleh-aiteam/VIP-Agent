@@ -183,6 +183,54 @@ export default function PricePlan({ code, book, onPlan }:
 
   const filled = (plan?.slices || []).reduce((s, x) => s + x.qty, 0);
 
+  // THE WORK, SHOWN AS IT HAPPENS (boss 2026-09-09: "on the right side there is
+  // a space, so please show the process like thinking, checking, choosing
+  // prices"). Every line below reports a REAL measured value, not a caption -
+  // the wall it found, the days it read, the depths it kept. The steps reveal
+  // one at a time when the stock, the side or the size changes; after that the
+  // numbers keep updating live with the book, which is the point of the panel.
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    setStep(0);
+    const id = setInterval(() => setStep((v) => (v >= 6 ? v : v + 1)), 400);
+    return () => clearInterval(id);
+  }, [code, side, qty]);
+
+  const asksL = (book?.asks || []).filter(([p, q]) => p > 0 && q > 0);
+  const bidsL = (book?.bids || []).filter(([p, q]) => p > 0 && q > 0);
+  const wall = asksL.length ? asksL.reduce((a, b) => (b[1] > a[1] ? b : a)) : null;
+  const dipMid = (() => {
+    const d = (bars || []).filter((b) => b.o > 0).map((b) => (b.o - b.l) / b.o).sort((a, b) => a - b);
+    return d.length ? d[Math.floor(d.length / 2)] : null;
+  })();
+  const steps: { ko: string; en: string; val: string }[] = side === "SELL"
+    ? [
+        { ko: "호가창을 읽습니다", en: "reading the order book",
+          val: book ? `${t("매도 ", "asks ")}${asksL.length} · ${t("매수 ", "bids ")}${bidsL.length}` : "…" },
+        { ko: "가장 두꺼운 매도벽을 찾습니다", en: "finding the thickest ask wall",
+          val: wall ? `${won(wall[0])} · ${wall[1].toLocaleString()}${t("주", " sh")}` : "…" },
+        { ko: "그 벽보다 한 호가 아래에 섭니다", en: "standing one tick in front of it",
+          val: plan?.slices[0] ? won(plan.slices[0].px) : "…" },
+        { ko: "지금 바로 팔리는 자리인지 봅니다", en: "checking whether it deals now",
+          val: !plan ? "…" : plan.slices[0]?.now ? t("바로 체결", "deals now") : t("기다립니다", "it waits") },
+        { ko: "한 가격으로 확정합니다", en: "settling on ONE price",
+          val: plan ? `${filled.toLocaleString()}${t("주", " sh")}` : "…" },
+      ]
+    : [
+        { ko: "호가창을 읽습니다", en: "reading the order book",
+          val: book ? `${t("최우선 매도 ", "best ask ")}${won(book.best_ask || book.last || 0)}` : "…" },
+        { ko: "이 종목의 3개월 습관을 읽습니다", en: "reading this stock's own 3-month habit",
+          val: bars === null ? "…" : `${bars.length}${t("일", " sessions")}` },
+        { ko: "하루에 얼마나 밀리는지 줄 세웁니다", en: "sorting how far it falls each day",
+          val: dipMid === null ? "…" : `${t("중앙값 ", "median ")}${pct(-dipMid * 100)}` },
+        { ko: "실제로 닿는 자리만 고릅니다", en: "keeping only the depths it truly reaches",
+          val: plan ? `${plan.slices.length}${t("개 가격", " prices")}` : "…" },
+        { ko: "닿을 확률만큼 수량을 나눕니다", en: "weighting the size by how likely each is",
+          val: plan?.slices[0] ? `${t("즉시 ", "now ")}${Math.round((plan.slices[0].qty / Math.max(filled, 1)) * 100)}%` : "…" },
+        { ko: "5개 가격으로 확정합니다", en: "settling on FIVE prices",
+          val: plan ? `${filled.toLocaleString()}${t("주", " sh")}` : "…" },
+      ];
+
   return (
     <div className="mt-1.5 px-2.5 py-2 rounded-lg"
          style={{ background: "rgba(106,27,154,0.06)", border: "1px solid rgba(106,27,154,0.25)" }}>
@@ -206,6 +254,11 @@ export default function PricePlan({ code, book, onPlan }:
           {t("주 — 표에 🎯로 자리를 표시합니다", "sh — the 🎯 rows below are those places")}</span>
       </div>
 
+      {/* THE PLAN ON THE LEFT, THE WORK ON THE RIGHT (boss 2026-09-09: "on the
+          right side there is a space, so please show the process like thinking,
+          checking, choosing prices"). */}
+      <div className="flex gap-3 items-start">
+      <div className="flex-1 min-w-0">
       {plan && (
         <div className="text-[10.5px] mt-1.5 leading-[1.55]" style={{ color: "var(--text-secondary)" }}>
           {t(plan.headKo, plan.headEn)}
@@ -267,5 +320,32 @@ export default function PricePlan({ code, book, onPlan }:
             : t(`합계 ${filled.toLocaleString()}주 · ${won(plan.slices.reduce((a, s) => a + s.px * s.qty, 0))} — 매도는 나눠 걸지 않습니다. 나가야 할 물량은 가장 두꺼운 벽보다 한 호가 먼저 서서 한 번에 비웁니다.`,
                 `${filled.toLocaleString()} sh · ${won(plan.slices.reduce((a, s) => a + s.px * s.qty, 0))} — a sell is not spread. Stock that has to leave stands one tick in front of the thickest wall and clears in one go.`)}
         </div>)}
+      </div>
+
+      <div className="shrink-0 rounded-lg px-2 py-1.5 mt-1.5"
+           style={{ width: 246, background: "rgba(106,27,154,0.09)",
+                    border: "1px solid rgba(106,27,154,0.28)" }}>
+        <div className="text-[10px] font-extrabold mb-1" style={{ color: "#6a1b9a" }}>
+          🧠 {t("지금 하고 있는 일", "what it is doing right now")}
+        </div>
+        {steps.map((sp, i) => (
+          <div key={i} className="flex gap-1.5 items-baseline text-[10px] py-[2px]"
+               style={{ opacity: i <= step ? 1 : 0.32,
+                        transition: "opacity .25s ease",
+                        borderTop: i ? "1px solid rgba(106,27,154,0.13)" : undefined }}>
+            <span className="shrink-0 tabular-nums" style={{ width: 11, color: "#6a1b9a" }}>
+              {i < step ? "✓" : i === step ? "◍" : "·"}</span>
+            <span className="flex-1 leading-[1.35]" style={{ color: "var(--text-secondary)" }}>
+              {t(sp.ko, sp.en)}</span>
+            <span className="shrink-0 font-bold tabular-nums text-right"
+                  style={{ color: "#6a1b9a", maxWidth: 118 }}>
+              {i <= step ? sp.val : ""}</span>
+          </div>))}
+        <div className="text-[9px] mt-1 leading-[1.4]" style={{ color: "var(--text-muted)" }}>
+          {t("호가가 바뀔 때마다 위 숫자는 다시 계산됩니다.",
+             "every number above is recomputed each time the book ticks.")}
+        </div>
+      </div>
+      </div>
     </div>);
 }
