@@ -2436,6 +2436,8 @@ def _working_order(db, code: str) -> bool:
 
 LADDER_N = 5            # five slices of 20% (boss 2026-09-07)
 LADDER_STEP = 1         # one tick better per slice
+MIN_LOT = 100           # boss 2026-09-09: "we should not buy 5 shares, it is
+                        # too low - the minimum buying stock is 100"
 
 
 def _touch_price(code: str, side: str):
@@ -2488,7 +2490,13 @@ def book_ladder(code: str, side: str, fallback: float, qty: int,
     or with no book, there is no ladder - one order, as before."""
     qty = int(qty or 0)
     base, ko, en = _book_price(code, side, fallback)
-    if qty < max(2, slices) or not base:
+    # NO SLICE BELOW THE MINIMUM LOT (boss 2026-09-09). Five slices of an order
+    # of 468 gave 96 and 93 - odd lots he does not want sent. The ladder now
+    # takes as many slices as it can while every one of them is a real order,
+    # and sends one order when it cannot make even two.
+    if qty and slices > 1:
+        slices = max(1, min(int(slices), int(qty) // MIN_LOT))
+    if qty < max(2, slices) or slices < 2 or not base:
         return [{"px": base, "qty": qty, "kind": "market", "ko": ko, "en": en}]
     from services.kiwoom_rules import krx_tick
     tk = krx_tick(base) or 1

@@ -367,6 +367,34 @@ def place_order(db, ticker: str, side: str, qty: int,
     order_type = order_type.lower()
     if side not in ("BUY", "SELL") or qty <= 0:
         return {"ok": False, "error": "side must be BUY/SELL and qty > 0"}
+    # THE SMALLEST ORDER THIS DESK BUYS IS A HUNDRED SHARES (boss 2026-09-09:
+    # "we should not buy 5 stock, it is too low - minimum buying stock is 100").
+    # It binds the hands he drives - the desk, the chat, his own manual orders -
+    # and never the engines, whose books trade in tens of thousands and whose
+    # sizing is their own law. A SELL is never blocked: getting out of what we
+    # already hold can never be refused for being small.
+    if (side == "BUY" and int(qty) < 100
+            and str(source or "") in ("semi", "chat", "chatbot", "manual")):
+        # ...but only where a hundred shares was affordable in the first place.
+        # At his ₩10m ticket only six of the twenty are: SK하이닉스 costs
+        # ₩186m for a hundred, 삼성전자 ₩27m. Refusing those outright would
+        # block fourteen of the twenty names on the day he asked for MORE
+        # trades, so the floor binds the case he actually objected to - an
+        # odd-lot order of a stock we could have bought properly - and leaves
+        # the expensive names to be sized by the budget, as they always were.
+        try:
+            _p9 = float(ref_price or 0) or float(limit_price or 0)
+            if not _p9:
+                _p9 = float((_live_price(ticker) or [0])[0] or 0)
+        except Exception:
+            _p9 = 0.0
+        if _p9 and _p9 * 100 <= 10_000_000:
+            return {"ok": False,
+                    "error": f"최소 주문 수량은 100주입니다 (요청 {int(qty)}주 · "
+                             f"100주는 약 ₩{_p9 * 100:,.0f}) — 이보다 작은 매수는 "
+                             f"내지 않습니다 / the desk's smallest buy is 100 shares "
+                             f"(asked for {int(qty)}; 100 would cost about "
+                             f"₩{_p9 * 100:,.0f})"}
     if qty > MAX_QTY:
         return {"ok": False, "error": f"qty > {MAX_QTY:,} not allowed"}
     if order_type == "limit" and not limit_price:
