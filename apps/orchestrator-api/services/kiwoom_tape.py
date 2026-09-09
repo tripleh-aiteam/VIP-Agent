@@ -494,7 +494,9 @@ def status() -> dict[str, Any]:
 # ── bars, aggregated exactly as the artificial side does ────────────────────────────
 def bars_ticks(ticks: list[dict], n: int) -> list[dict]:
     """One bar per n EXECUTIONS. Only complete groups become bars, so a bar never changes
-    once drawn — the same rule the artificial tick charts follow."""
+    once drawn — the same rule the artificial tick charts follow. Sorted for the same
+    reason bars_time is: a late-arriving tick must not put a bar out of order."""
+    ticks = sorted(ticks, key=lambda x: x.get("ts") or "")
     out: list[dict] = []
     prev_close = None
     for b in range(len(ticks) // n):
@@ -513,9 +515,22 @@ def bars_ticks(ticks: list[dict], n: int) -> list[dict]:
 def bars_time(ticks: list[dict], seconds: int) -> list[dict]:
     """One bar per `seconds` of clock. Bars are CONTINUOUS — each opens at the previous
     close — so "close > open" and "close > previous close" are the same statement, which
-    is what makes a red bar mean "the engine counted a rise" at every timeframe."""
+    is what makes a red bar mean "the engine counted a rise" at every timeframe.
+
+    AND THE MINUTES COME OUT IN ORDER (found 2026-09-09, hunting the boss's
+    "today we missed many cases"). Kiwoom's execution pages are not perfectly
+    chronological — 000660 alone carried 532 backwards ticks today, the first at
+    09:21:37, typically 3 seconds out and one of them 76. This loop starts a new
+    bar whenever the minute key CHANGES, so one late tick splits its minute in
+    two and the day came back with 45 duplicated and out-of-order candles:
+    09:21, 09:22, 09:21, 09:22, 09:23… Every rule that counts candles — the 3rd
+    red included — was counting those phantoms, and a run of three rises could
+    be broken by a minute that had already happened. The tape file keeps the raw
+    arrival order; the bars are built from a sorted copy."""
     if not ticks:
         return []
+    ticks = sorted(ticks, key=lambda x: x.get("ts") or "")
+
     def sec_of(x):
         t = x["ts"]
         return int(t[8:10]) * 3600 + int(t[10:12]) * 60 + int(t[12:14])

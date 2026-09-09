@@ -1517,12 +1517,27 @@ def scan(db) -> dict:
                      if not x.get("stopped_at")}
     except Exception:
         _wn_pass9 = None
+    # 🌊 IS THE LADDER LANE ON? (boss 2026-09-09: "please make it consistent").
+    # When his 20% ladder rule is running - in either mode - it is the ONE voice
+    # for every room: this scanner stops raising its own BUY cards and its own
+    # -1% SELL cards, because the ladder already carries a stop, a profit rung,
+    # a slow-roll-over exit and a closing flat. Two lanes proposing on one stock
+    # is two agents arguing on his screen. 'off' hands the desk straight back.
+    try:
+        from services.wave_desk import mode as _wmode9
+        _wave_on9 = _wmode9() != "off"
+    except Exception:
+        _wave_on9 = False
     for code, name, score in _rooms9:
         try:
             px, chg, _t, _s = fast_price(code)
             if not px:
                 continue
             px = float(px)
+            if _wave_on9:
+                st.setdefault("why_skip", {})[code] = (
+                    "🌊 ladder lane owns this room - see wave_desk")
+                continue
             # THE ENGINE DECIDES, THE BOSS APPROVES (boss 2026-09-02 18:0x:
             # "menu 3 must implement all buying and selling cases of algo 3").
             # The old scanner carried its OWN three-line rule - score>=55, not
@@ -2509,8 +2524,129 @@ def _touch_price(code: str, side: str):
     return None
 
 
+def _daily3(code: str, days: int = 60) -> list[dict]:
+    """This stock's last ~3 months of daily open/high/low - the habit the five
+    buy prices are read from. Same rows the popup's price plan draws."""
+    try:
+        from ml._db import get_conn
+        conn = get_conn()
+        cur = conn.cursor()
+        try:
+            cur.execute("""SELECT open,high,low FROM raw_daily_prices
+                           WHERE ticker=%s ORDER BY date DESC LIMIT %s""",
+                        (str(code), int(days)))
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+            conn.close()
+        return [{"o": float(o), "h": float(h), "l": float(l)}
+                for o, h, l in rows if o and h and l]
+    except Exception as e:
+        log.debug(f"daily3 {code}: {str(e)[:60]}")
+        return []
+
+
+def history_buy_plan(code: str, qty: int, now_px: float) -> list[dict]:
+    """FIVE EFFICIENT PRICES, FROM THIS STOCK'S OWN THREE-MONTH HABIT.
+
+    Boss 2026-09-09: "in case of the buying you just put market price; we should
+    buy efficient price, so you have to choose 5 different efficient prices" -
+    and, pressing again while the ladder rule was being built, "our agent needs
+    to find by analyzing historical data and prices and offer the best efficient
+    prices, so please make sure to this."
+
+    THE POPUP ALREADY DID THIS AND THE ORDER DID NOT. The five history-chosen
+    prices were computed in the browser (PricePlan.tsx) purely to be READ, while
+    the order that actually went out was still five slices a single tick apart
+    around the order book - so the screen and the money disagreed about what a
+    buy is. This is that same calculation, in the backend, on the path the order
+    takes.
+
+    The levels are the depths this stock genuinely reaches: three months of "how
+    far did it fall from its own open that day", sorted, read at the 85 / 70 /
+    50 / 30 / 15% marks. Every price stands BELOW the market - an unfilled buy
+    costs nothing, an expensive one costs every time - and the size on each is
+    (how often we get there) x (how many sessions truly traded through it), so
+    the likeliest, best-supported level carries the most shares.
+    """
+    from services.kiwoom_rules import krx_tick
+    bars = _daily3(code)
+    if not bars or len(bars) < 20 or not now_px or qty <= 0:
+        return []
+    dips = sorted(((b["o"] - b["l"]) / b["o"]) for b in bars if b["o"] > 0)
+    if not dips:
+        return []
+
+    def q(p: float) -> float:
+        i = int(round((len(dips) - 1) * p))
+        return dips[max(0, min(len(dips) - 1, i))]
+
+    def snap(px: float) -> float:
+        tk = krx_tick(px) or 1
+        return float(int(px / tk) * tk)
+
+    def support(px: float) -> int:
+        return sum(1 for b in bars if b["l"] <= px <= b["h"])
+
+    picked: list[dict] = []
+    for p in (0.15, 0.30, 0.50, 0.70, 0.85):
+        px = snap(now_px * (1 - q(p)))
+        # two marks can snap onto the same KRX tick on a quiet stock - step down
+        # until five real, distinct, placeable prices stand (bounded, never a
+        # loop that cannot end)
+        for _ in range(40):
+            if px < now_px and all(abs(px - x["px"]) > 1e-9 for x in picked):
+                break
+            tk = krx_tick(px) or 1
+            nx = snap(px - tk)
+            px = nx if nx < px else px - tk
+        if px > 0 and px < now_px and all(abs(px - x["px"]) > 1e-9 for x in picked):
+            picked.append({"px": px, "reach": 1 - p, "days": support(px)})
+    if len(picked) < 5:
+        return []
+    picked.sort(key=lambda x: -x["px"])                 # dearest first
+    # NO ODD LOTS, EVER (his standing complaint about "96 and 93"). Weights
+    # decide the shape; the KRX lot decides the numbers. Five real lots need
+    # 500 shares - below that the plan takes as many whole lots as it can, and
+    # under two it hands the order back to the book ladder.
+    n_sl = max(0, min(len(picked), int(qty) // MIN_LOT))
+    if n_sl < 2:
+        return []
+    picked = picked[:n_sl]
+    wsum = sum(x["reach"] * max(x["days"], 1) for x in picked) or 1.0
+    lots = int(qty) // MIN_LOT
+    alloc = [max(1, int(round(lots * (x["reach"] * max(x["days"], 1)) / wsum)))
+             for x in picked]
+    while sum(alloc) > lots:                 # trim from the smallest weight up
+        i = max(range(len(alloc)), key=lambda k: (alloc[k], -k))
+        if alloc[i] <= 1:
+            break
+        alloc[i] -= 1
+    alloc[0] += lots - sum(alloc)            # the remainder rides the likeliest price
+    out, left = [], int(qty)
+    for i, x in enumerate(picked):
+        n = alloc[i] * MIN_LOT
+        if i == len(picked) - 1:
+            n = left                          # the last slice carries any odd tail
+        n = min(n, left)
+        if n <= 0:
+            continue
+        left -= n
+        off = (x["px"] - now_px) / now_px * 100
+        out.append({
+            "px": float(x["px"]), "qty": int(n), "kind": "limit",
+            "ko": (f"{i + 1}번째 {n:,}주 — ₩{x['px']:,.0f} ({off:+.2f}%). "
+                   f"최근 {len(bars)}일 중 {round(x['reach'] * 100)}%의 날이 시가에서 "
+                   f"이 깊이까지 밀렸고, 실제로 이 가격대에서 거래된 날은 {x['days']}일입니다."),
+            "en": (f"slice {i + 1}, {n:,} sh at ₩{x['px']:,.0f} ({off:+.2f}%) - "
+                   f"{round(x['reach'] * 100)}% of the last {len(bars)} sessions fell this "
+                   f"far from their own open, and {x['days']} of them actually traded here."),
+        })
+    return out
+
+
 def book_ladder(code: str, side: str, fallback: float, qty: int,
-                slices: int = LADDER_N) -> list[dict]:
+                slices: int = LADDER_N, touch_first: bool = False) -> list[dict]:
     """ONE ORDER BECOMES A LADDER (boss 2026-09-07: "we are selling all with one
     price. How about 20% with this price and another 20% another like this").
 
@@ -2531,7 +2667,47 @@ def book_ladder(code: str, side: str, fallback: float, qty: int,
     slice, so the guaranteed leg is never the short one. Below `slices` shares,
     or with no book, there is no ladder - one order, as before."""
     qty = int(qty or 0)
+    # A BUY IS A HISTORY QUESTION (boss 2026-09-09) — the five prices the popup
+    # shows are now the five the order uses. Only a buy: a sell that must leave
+    # still goes as one price in front of the biggest wall.
+    if side == "BUY" and qty > 0:
+        try:
+            _now9 = _touch_price(code, "BUY") or float(fallback or 0)
+            _hist9 = history_buy_plan(code, qty, float(_now9 or 0))
+            if len(_hist9) >= 2 and all(r["qty"] >= MIN_LOT for r in _hist9):
+                # WHERE HIS TWO LAWS MEET (2026-09-09). All five prices stand
+                # below the market, which is right for a patient buy - "an
+                # unfilled buy costs nothing". But the ladder rule's entry is a
+                # TIMING decision: "at 09:04 we should buy 1000 shares" means
+                # owning them at 09:04. Measured over the last ten stored days
+                # on six stocks, only 54% of its buys ever traded down to even
+                # the dearest of the five prices that day, and 21% inside half
+                # an hour - so a purely patient entry misses half the signals
+                # it just spent the morning finding. When the caller says this
+                # buy is a timing decision, the first slice takes the price
+                # that deals now and the other four keep their history marks.
+                if touch_first and _now9:
+                    _hist9[0] = {**_hist9[0], "px": float(_now9), "kind": "market",
+                                 "ko": (f"1번째 {_hist9[0]['qty']:,}주 — 지금 바로 체결되는 "
+                                        f"₩{_now9:,.0f}. 신호가 선 자리를 놓치지 않기 위한 "
+                                        f"물량이고, 나머지 네 조각은 아래 가격에 걸어둡니다."),
+                                 "en": (f"slice 1, {_hist9[0]['qty']:,} sh at ₩{_now9:,.0f} - the "
+                                        f"price it deals at right now, so the signal is not "
+                                        f"missed; the other four rest at the history prices below.")}
+                return _hist9
+        except Exception as e:
+            log.debug(f"history ladder {code}: {str(e)[:60]}")
     base, ko, en = _book_price(code, side, fallback)
+    # A SELL IS ONE PRICE AT THE WALL (boss 2026-09-09, twice: "in case of the
+    # selling just put price one tick below highest volume", and again with the
+    # ladder rule: "our price offer the highest volume numbers down side").
+    # The popup has said this since commit 1ced7044 - the ORDER had not caught
+    # up and was still going out as five slices a tick apart, so the screen and
+    # the money disagreed on the sell side exactly as they did on the buy side.
+    # Stock that has to leave does not get spread above the wall it was meant
+    # to beat; it goes at one price, in front of the queue.
+    if side == "SELL" and base:
+        return [{"px": float(base), "qty": qty, "kind": "limit", "ko": ko, "en": en}]
     # NO SLICE BELOW THE MINIMUM LOT (boss 2026-09-09). Five slices of an order
     # of 468 gave 96 and 93 - odd lots he does not want sent. The ladder now
     # takes as many slices as it can while every one of them is a real order,
@@ -3596,10 +3772,17 @@ def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
     _rows = None
     if not _px and not _urgent and _q >= LADDER_N:
         try:
-            _rows = book_ladder(p["code"], p["side"], float(p.get("price") or 0), _q)
+            # a ladder-rule entry or dip-buy is a timing decision - its first
+            # slice deals now (see book_ladder). Everything else stays patient.
+            _tf9 = str(p.get("wave") or "") in ("entry", "add")
+            _rows = book_ladder(p["code"], p["side"], float(p.get("price") or 0), _q,
+                                touch_first=_tf9)
         except Exception:
             _rows = None
-    if _rows and len(_rows) > 1:
+    # ...and a ONE-row plan is still a plan: the sell's single price at the wall
+    # must go out as that limit, not fall through to a market order (which is
+    # what "one price at the wall" was meant to stop).
+    if _rows and (len(_rows) > 1 or str(_rows[0].get("kind")) == "limit"):
         _placed, _filled, _cost, _oids = [], 0, 0.0, []
         for _r in _rows:
             if _r["kind"] == "market":
@@ -3673,7 +3856,13 @@ def decide(db, sid: int, ok: bool, qty=None, price=None) -> dict:
             # whole holding because the first slice filled would erase shares we
             # still own - the position shrinks by what actually sold, and only
             # an empty one leaves the book.
-            if _lot and (p.get("slices") or []):
+            # ...AND A PIECE IS A PIECE WHETHER OR NOT IT WENT AS A LADDER
+            # (2026-09-09, wiring his 20% ladder): the test used to be "did this
+            # decision have slices", so a plain 400-share sell out of 2,000 threw
+            # away the other 1,600 - the book would have shown a flat position
+            # while we still owned most of it. The test is now the only one that
+            # matters: did this sale take everything?
+            if _lot and int(p["qty"]) < int(_lot.get("qty") or 0):
                 _left9 = int(_lot.get("qty") or 0) - int(p["qty"])
                 if _left9 > 0:
                     _lot["qty"] = _left9

@@ -2407,6 +2407,14 @@ def init_scheduler():
             from services.approval_desk import scan_async, can_propose
             if can_propose():
                 scan_async()
+                # 🌊 AND THE LADDER LANE ON THE SAME CLOCK (boss 2026-09-09).
+                # His rule reads 1-minute candles, so a 20-second tick sees
+                # every one of them within twenty seconds of its close - in
+                # 반자동 that raises the card, in 자동 it also answers it.
+                # Runs in its own thread with its own session; it never delays
+                # the scan.
+                from services.wave_desk import async_run as _wave_async
+                _wave_async()
         except Exception as e:
             log.warning(f"desk watch tick: {str(e)[:100]}")
 

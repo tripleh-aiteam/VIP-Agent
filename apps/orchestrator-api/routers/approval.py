@@ -2448,3 +2448,55 @@ def bulk_buy(dry: int = Query(1), budget: int = Query(0),
             "budget_per_name": budget,
             "n_judged": len(judged), "n_buy": len([x for x in judged if x["ok"]]),
             "best_five": names5, "rows": judged, "orders": orders}
+
+
+# ── 🌊 THE LADDER LANE (boss 2026-09-09) ───────────────────────────────────────
+# "first create Auto button inside Real Time Monitoring, because in this part we
+# have a semi auto, so you have to create 2 buttons - semi auto and auto."
+@router.get("/wave/status")
+def wave_status():
+    """Which mode the ladder is in, what it has done today, and its dials."""
+    from services.wave_desk import status
+    return status()
+
+
+@router.post("/wave/mode")
+def wave_mode(mode: str = Query(..., description="off | semi | auto")):
+    """반자동 (the card waits for his click) · 자동 (the machine answers its own
+    card) · off (the desk's previous rule comes back)."""
+    from services.wave_desk import set_mode
+    return set_mode(mode)
+
+
+@router.get("/wave/replay")
+def wave_replay(code: str = Query(...), day: str = Query(""),
+                step: float = Query(0.0), fees: int = Query(1)):
+    """THE PROOF, ON A REAL DAY (his "make a backup by the example of SKhynix
+    and Samsung"). Replays the shipped rule minute by minute over the stored
+    tape with no lookahead, and returns every decision with the sentence that
+    produced it. `fees` prices the round trips at the real KRX cost."""
+    from services import wave_rule as W
+    cfg = {"step": step} if step else None
+    bars = W.minute_bars(code, day)
+    if not bars:
+        return {"ok": False, "code": code, "error": "no stored tape for that day"}
+    ref = W.prev_last(code, day)
+    gap = ((bars[0]["open"] / ref - 1) * 100) if ref else 0.0
+    r = W.replay(code, "", day=day, cfg=cfg, bars=bars, gap=gap)
+    if fees and r.get("trades"):
+        fee, tax = 0.00015, 0.0018
+        cost = sum(t["px"] * t["qty"] * (fee + (tax if t["side"] == "SELL" else 0))
+                   for t in r["trades"])
+        spent = sum(t["px"] * t["qty"] for t in r["trades"] if t["side"] == "BUY") or 1
+        r["cost"] = round(cost)
+        r["net_pct"] = round(r["pnl_pct"] - cost / spent * 100, 3)
+    r["prev_close"] = ref
+    r["open"] = bars[0]["open"]
+    return r
+
+
+@router.post("/wave/tick")
+def wave_tick_now(db: Session = Depends(get_db)):
+    """Run the lane once, right now - the same pass the 20-second clock makes."""
+    from services.wave_desk import run_all
+    return run_all(db)

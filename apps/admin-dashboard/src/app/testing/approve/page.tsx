@@ -8,6 +8,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useLanguage } from "@/components/i18n";
 import { API } from "../../../components/api";
 import WhyNotPanel from "@/components/WhyNotPanel";
+import WaveLane from "@/components/WaveLane";
 import GateChartView, { GateVerdicts, GateChartFull, type GateChart } from "@/components/GateChartView";
 
 type Zone = { pos: number; zone: "buy" | "sell" | "mid" } | null;
@@ -426,6 +427,9 @@ export default function ApprovePage() {
         {t("에이전트가 100 체크리스트·1년 역사 데이터·호가창·거래량·뉴스를 실시간으로 검사하다가 기회가 오면 매수/매도 팝업으로 이유·가격·수량까지 제안합니다. 승인을 눌러야만 실행됩니다 — 절대 혼자 사고팔지 않습니다.", "The agent live-checks the 100-item checklist, 1-year history, the order book, volume and news; when a chance appears it proposes BUY/SELL popups with reasons, price and share count. Nothing executes until you press Approve — it never trades alone.")}
         {feed && <span style={{ marginLeft: 8 }}>{feed.market_open ? t("🟢 장중", "🟢 market open") : t("🌙 장 마감 — 제안은 장중에만 나옵니다", "🌙 market closed — proposals come only in market hours")}</span>}
       </div>
+
+      {/* ─ 🌊 THE LADDER LANE — 반자동 / 자동 (boss 2026-09-09) ─ */}
+      <WaveLane marketOpen={feed?.market_open} />
 
       {/* ─ 🌐 MARKET WEATHER STRIP (boss 2026-09-04 09:3x: SOX + KOSPI as
           main factors, visible on the board) ─ */}
