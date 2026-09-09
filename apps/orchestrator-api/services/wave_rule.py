@@ -56,14 +56,16 @@ from typing import Optional
 CFG: dict = {
     # ① the day gate
     "gap_tol": 0.30,     # an open more than this % above yesterday's last is a 갭상승
-    # GATE 1, AND THE ONE NUMBER THAT ARGUES WITH HIM. He asked for "if there is
-    # not 갭상승, or it back to normal price, then buy" - so a gap-up day would
-    # re-open once price returned to yesterday's last. Measured over all 26
-    # stored days that opens 72 extra stock-days and every one of them is a
-    # drag: -16.8% between them, -0.233% a day, which turns the whole rule from
-    # +10.6% to -6.1%. A gap-up day is left alone until he says otherwise;
-    # gap_return=1 restores his version in one word.
-    "gap_return": 0,
+    # GATE 1 - HIS LAW, WITH THE MEASUREMENT ON THE RECORD BESIDE IT. 2026-09-10,
+    # after being shown the numbers: "make sure if there is a 갭상승 and price come
+    # back to yesterday 19:59 price or down then start to buy. This is rule."
+    # So a gap-up stock is no longer dead for the session - it waits until the
+    # price has traded at or below yesterday's LAST price (after-hours included,
+    # which is what his 19:59 means), and from that moment the ordinary entry
+    # applies. Measured over the 26 stored days this opens 72 extra stock-days
+    # worth -16.8% between them (-0.233% a day) and it is his desk and his call;
+    # gap_return=0 puts the strict gate back in one word.
+    "gap_return": 1,
     # ② the entry shape - his "3 red"
     "ups": 3,            # rises that must stand
     "soft": 0.20,        # one blue candle this small inside the run is forgiven
@@ -95,6 +97,7 @@ CFG: dict = {
     "hard_stop": -2.0,   # a fast fall is forgiven, but never past this
     # ⑥ housekeeping
     "cool_min": 3,       # minutes between two decisions in one stock
+    "add_gap": 10,       # ...and between two pullback buys inside one holding
     "slice_gap": 10,     # ...and this many between two slices coming off the same rise
     # EVERYTHING IS FLAT AT THE CLOSE (boss 2026-09-10: "it should be 15:20, like
     # market closing time") - the same minute the desk's own flat close fires.
@@ -519,16 +522,28 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
             # the two fences under it.
             fresh = bool(st.get("spike_at") and (not st.get("buy_at")
                          or _mins(st["buy_at"], st["spike_at"]) > 0))
-            if not fresh and st["sold"] > 0 and int(st.get("owed") or 0) <= 0:
+            # HIS GENERAL LAW, 2026-09-10: "during trading even if we have a
+            # stock (holding), if price down and again start increasing then in
+            # this case we will buy." A dip that turns is a buy whether or not a
+            # slice was sold first and whether or not the fall was fast - those
+            # were the only two doors before, so a plain pullback inside a
+            # holding did nothing at all. The turn still has to be a real one
+            # (a fall of at least dip_pct, then the 3rd rise), the position still
+            # cannot pass max_lots, and two adds cannot land inside add_gap
+            # minutes of each other.
+            _plain = not fresh and st["sold"] <= 0
+            if _plain and st.get("buy_at") and _mins(st["buy_at"], now) < cfg["add_gap"]:
+                return None
+            if not fresh and not _plain and st["sold"] > 0 and int(st.get("owed") or 0) <= 0:
                 return None
             # AND THE LADDER ALTERNATES. Two buy-backs in a row is not a ladder,
             # it is an average-down: the replay stacked four of them between
             # 12:28 and 13:22, filled the position to its cap, and had nothing
             # left when his own 14:24 turn arrived. A slice bought back must be
             # sold again before the next one is bought.
-            if not fresh and st["sold"] > 0 and st.get("last_side") == "BUY":
+            if not fresh and not _plain and st["sold"] > 0 and st.get("last_side") == "BUY":
                 return None
-            if not fresh and st["sold"] > 0 and st.get("sell_px") and px > st["sell_px"]:
+            if not fresh and not _plain and st["sold"] > 0 and st.get("sell_px") and px > st["sell_px"]:
                 return None
             if fresh and st["sold"] == 0:
                 q = min(base_lot(px), cap - st["qty"])
@@ -546,6 +561,14 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
                 en = (f"buying the slice back - the fall stopped and the 3rd rising candle "
                       f"stood at {third}. {q:,} sh at ₩{px:,.0f}, the same {cfg['slice_pct']}% "
                       f"we sold (volume x{volx}).")
+            elif _plain:
+                q = min(slice_qty(st["high_water"], cfg), cap - st["qty"])
+                ko = (f"보유 중 눌림 매수 — 내리다가 멈추고 {third}에 3번째 양봉이 "
+                      f"섰습니다. 들고 있는 자리에서 {q:,}주를 ₩{px:,.0f}에 더 삽니다 "
+                      f"(평균 ₩{st['avg_px']:,.0f} 대비 {pnl:+.2f}%, 거래량 x{volx}).")
+                en = (f"adding into a pullback while holding - the fall stopped and the 3rd "
+                      f"rising candle stood at {third}. {q:,} sh more at ₩{px:,.0f} "
+                      f"({pnl:+.2f}% against an average of ₩{st['avg_px']:,.0f}, volume x{volx}).")
             else:
                 return None
             return out("BUY", q, ko, en, "add")
