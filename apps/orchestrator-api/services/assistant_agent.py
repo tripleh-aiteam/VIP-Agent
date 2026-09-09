@@ -6665,6 +6665,19 @@ def run_agent(
     memory persistence (writes each turn to chat_sessions/chat_messages
     under channel='assistant_overlay' so recall_history can find it
     later). Persistence is best-effort and never blocks the response."""
+    # ⌨️ KOREAN KEYBOARD LEFT ON (boss 2026-09-09): 'ㅗㅑㅐ ㅊ무 ㅛㅐㅑㅕ ㅗ디ㅔ ㅡㄷ'
+    # is not Korean, it is "hi can you help me" through the Dubeolsik IME — and it
+    # got "이해하지 못했습니다". Undo it before any lane reads the text; the helper
+    # rewrites ONLY when the jamo dominate AND the result is recognisable English,
+    # so real Korean is never touched.
+    try:
+        from services.ime_layout import fix as _ime_fix
+        _imed = _ime_fix(transcript)
+        if _imed:
+            log.info(f"[ime] keyboard-layout fix: {transcript!r} -> {_imed!r}")
+            transcript = _imed
+    except Exception:
+        pass
     # ✏️ one spell pass before anything reads the text (boss 2026-08-26)
     transcript = _spell_normalize(transcript) or transcript
     # MULTI-PART: 'A? 그리고 B? 그리고 C?' → answer EVERY sub-question (was: only the last).
@@ -7627,7 +7640,13 @@ def _run_agent_impl(
                                r"|\d+\s*가지|\d+\s*(?:different|다른)\s*(?:prices?|가격)"
                                r"|please\s+(buy|sell)|(buy|sell)\s+\d"
                                r"|wanna\s+(buy|sell)|want\s+to\s+(buy|sell)"
-                               r"|사고\s*싶|팔고\s*싶|살래|팔래"
+                               # "I need to buy skhynix stock" (boss 2026-09-09) —
+                               # a settled decision with no digit and no "wanna",
+                               # so every pattern above missed it and this lane
+                               # answered an ORDER with a full gate verdict.
+                               r"|need\s+to\s+(buy|sell)|have\s+to\s+(buy|sell)"
+                               r"|gotta\s+(buy|sell)|let'?s\s+(buy|sell)"
+                               r"|사고\s*싶|팔고\s*싶|살래|팔래|사야겠|팔아야겠"
                                # time-EDIT orders belong to the trip editor, not
                                # advice ("this buying time to 10:26: …" was
                                # answered with a holding verdict, 2026-09-07)
@@ -8806,11 +8825,14 @@ def _run_agent_impl(
             and not _all_stocks_in_query(transcript)):
         try:
             _en_c = not _re.search(r"[가-힣]", transcript)
-            _sys_c = ("You are the VIP trading assistant. Reply warmly in 1-2 short "
-                      "sentences, in the user's language. If they ask for help, offer "
+            # PIN THE LANGUAGE, don't ask for it. "in the user's language" left the
+            # choice to the model and a bare "help me" came back in SPANISH
+            # (2026-09-09). We already know which script he typed — say so.
+            _sys_c = ("You are the VIP trading assistant. Reply ONLY in ENGLISH, warmly, "
+                      "in 1-2 short sentences. If they ask for help, offer "
                       "briefly: stock prices/history, recommendations, buy/sell by chat, "
                       "news. No headers, no lists." if _en_c else
-                      "당신은 VIP 트레이딩 어시스턴트입니다. 사용자의 언어로 1~2문장으로 따뜻하게 "
+                      "당신은 VIP 트레이딩 어시스턴트입니다. 반드시 한국어로만 1~2문장으로 따뜻하게 "
                       "답하세요. 도움을 청하면 간단히 안내: 주가/과거 데이터, 추천, 채팅 매수·매도, "
                       "뉴스. 제목·목록 금지.")
             _out_c = chat_completion_sync(_sys_c, [{"role": "user", "content": transcript}],

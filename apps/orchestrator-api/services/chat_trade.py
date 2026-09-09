@@ -83,14 +83,24 @@ _CMD_EN = re.compile(r"^\s*(?:please\s+|pls\s+|now\s+|then\s+|ok\s+|and\s+)*(buy
 # "I wanna buy X" / "can you buy X for me" are ORDERS too (boss 2026-08-26: "if we say
 # Please buy or I wanna buy... it should not buy automatically, must ask one more time")
 _CMD_EN2 = re.compile(r"\b(?:i\s+wanna|i\s+want\s+to|i'?d\s+like\s+to|i\s+would\s+like\s+to"
+                      # "I NEED to buy skhynix stock" carried a settled intent and
+                      # still parsed as nothing (boss 2026-09-09) — it matched no
+                      # command pattern, so the Menu 3 advice lane answered an order
+                      # with a gate verdict. A need/have-to/gotta is a decision the
+                      # boss has already made; only a '?' turns it back into a question.
+                      r"|(?:i|we)\s+need\s+to|(?:i|we)\s+have\s+to|(?:i|we)\s+gotta"
+                      r"|let'?s"
                       r"|(?:can|could)\s+you(?:\s+please)?(?:\s+help\s+(?:me|us)(?:\s+to)?)?"
                       r"|please)\s+(buy|sell)\b", re.I)
 _KO_BUY = ("사줘", "사 줘", "사자", "매수해", "매수 해", "매수해줘", "매수하자", "매수",
            "사고 싶", "사고싶", "매수하고 싶",
+           # the Korean half of "I need to buy" — a settled decision, not a question
+           "사야겠", "사야 겠", "매수해야겠",
            # "사려고 하는데 … 주문해줘" was answered with a PRICE CARD (2026-09-02)
            "사려고", "사려는", "사고자", "주문해줘", "주문 해줘", "주문해 줘")
 _KO_SELL = ("팔아줘", "팔아 줘", "팔아", "팔자", "매도해", "매도해줘", "매도하자", "매도",
-            "전량매도", "팔고 싶", "팔고싶", "매도하고 싶")
+            "전량매도", "팔고 싶", "팔고싶", "매도하고 싶",
+            "팔아야겠", "팔아야 겠", "매도해야겠")
 # question/advice phrasings are NEVER a command ("매수해도 돼?", "should I buy...")
 _ADVICE_BLOCK = ("should", "할까", "살까", "팔까", "괜찮", "어때", "can i", "may i", "could i",
                  "worth", "좋을까", "어떨까", "할지", "해도", "될까", "돼?", "돼요", "됩니까",
@@ -487,6 +497,96 @@ def closed_reply(side: str, en: bool) -> str:
             f"({wait}). KRX 정규장은 평일 09:00~15:30입니다.")
 
 
+# ---------------------------------------------------------------------------
+# AFTER-HOURS TEST TRADING (boss 2026-09-09: "if we ask like buy or sale after
+# market it should not say [the gate verdict] — it should say the market is
+# closed, do you wanna buy for testing. I mean it should allow to trade after
+# market also for testing").
+#
+# The 08-26 law refused every off-hours order outright. That was right for a
+# desk that only ever traded live, and wrong for a desk still being tested: the
+# boss cannot rehearse the order flow between 15:30 and 09:00, which is most of
+# the hours he actually works. So the refusal becomes an OFFER — the same
+# confirmation form, opened by a banner that says plainly this is a test, priced
+# at the last trade, and tagged `test-chat` so a rehearsal is never counted as a
+# live call. His "네" is still required; nothing auto-fills.
+#
+# Set False to restore the old outright refusal everywhere.
+AFTER_HOURS_TEST = True
+
+
+def market_is_open() -> bool:
+    """True when KRX is in session. An UNKNOWN answer counts as open — exactly
+    how every call site behaved before, where a failing import fell through the
+    try/except and built the order form anyway."""
+    try:
+        from services.kiwoom_tape import market_open
+        return bool(market_open())
+    except Exception:
+        return True
+
+
+def closed_test_note(side: str, en: bool) -> str:
+    """The banner that OPENS an after-hours order form (instead of refusing it).
+    It must say three things before the boss says 네: the market is shut, this
+    fills on the paper desk at the last traded price, and it never reaches the
+    real market."""
+    nxt, _now = _next_open_kst()
+    if en:
+        return ("🌙 **The market is CLOSED** (KRX 09:00–15:30 KST) — so this would be a "
+                "**TEST order**: it fills on the paper desk at the last traded price and "
+                "never reaches the real market.\n"
+                f"⏰ Next open: **{_WD_EN[nxt.weekday()]} {nxt.month}/{nxt.day} 09:00 KST**. "
+                "Do you still want to place it for testing?")
+    _act = "매수" if side == "BUY" else ("매도" if side == "SELL" else "매매")
+    return ("🌙 **지금은 장이 닫혀 있습니다** (KRX 정규장 09:00~15:30) — 그래서 아래 주문은 "
+            "**테스트 주문**입니다: 마지막 거래가로 페이퍼 데스크에만 체결되고 실제 시장에는 "
+            "나가지 않습니다.\n"
+            f"⏰ 다음 개장: **{nxt.month}월 {nxt.day}일({_WD_KO[nxt.weekday()]}) 09:00 KST**. "
+            f"테스트로 {_act} 진행할까요?")
+
+
+def closed_gate(side: str, en: bool) -> tuple[bool, Optional[str]]:
+    """(is_closed, refusal_or_None) — the one place the off-hours decision is made.
+    Returns a refusal string ONLY when after-hours testing is switched off."""
+    closed = not market_is_open()
+    if closed and not AFTER_HOURS_TEST:
+        return True, closed_reply(side, en)
+    return closed, None
+
+
+def test_source(closed: bool) -> str:
+    """`test-chat` for an after-hours rehearsal, `chatbot` for a live order. Both
+    match the chat-order filters (`IN ('chat','chatbot') OR LIKE '%-chat'`), so a
+    test still shows up in '주문 상태' and still wakes the watchdog — but anything
+    grading LIVE chat calls can exclude it by name."""
+    return "test-chat" if closed else "chatbot"
+
+
+def closed_fill_note(en: bool, filled: bool = True) -> str:
+    """Appended under an after-hours order so the record reads honestly. `filled`
+    False is the queued case — a limit price he named himself, which cannot fill
+    until the market reopens, and must never be described as a fill."""
+    if not filled:
+        return ("\n🌙 *Test order — the market is closed, so this sits in the book and can "
+                "only fill after 09:00. Recorded as a `test-chat` order.*" if en else
+                "\n🌙 *테스트 주문 — 장 마감 상태라 호가창에서 대기하며 다음 개장(09:00) "
+                "이후에야 체결될 수 있습니다. `test-chat` 주문으로 기록되었습니다.*")
+    return ("\n🌙 *Test fill — the market was closed, so this was priced at the last "
+            "trade and recorded as a `test-chat` order.*" if en else
+            "\n🌙 *테스트 체결 — 장 마감 상태라 마지막 거래가로 체결되었고 `test-chat` "
+            "주문으로 기록되었습니다.*")
+
+
+def _fuzzy_word(t: str, targets: tuple, cutoff: float = 0.75) -> bool:
+    """A typo-tolerant keyword hit, the same trick has_cancel_word uses for
+    'cancle'. The boss types fast: "efficent" cost him a whole pending order,
+    because the exact-match keyword missed and the wizard bailed (2026-09-09)."""
+    import difflib
+    return any(difflib.get_close_matches(w, targets, n=1, cutoff=cutoff)
+               for w in re.findall(r"[a-z]{4,12}", t or ""))
+
+
 def has_cancel_word(t: str) -> bool:
     """'취소' / 'cancel' — typo-tolerant ('cancle' reached the portfolio lane and got
     a holdings lecture, boss 2026-08-26)."""
@@ -512,8 +612,13 @@ def cancel_open(db, transcript: Optional[str], lang: str) -> Optional[str]:
     explicit = any(k in t for k in ("주문", "order", "대기", "waiting", "queue"))
     if not stocks and not explicit:
         return None
+    # the SAME chat-order filter the status lane uses. It read IN ('chat','chatbot')
+    # only, so anything tagged '<x>-chat' — an after-hours `test-chat` rehearsal, an
+    # `algo2-chat` order — was listed by "주문 상태" and then reported as nothing to
+    # cancel, leaving a queued order the boss believed he had pulled (2026-09-09).
     q = ("SELECT id, name, side, qty, limit_price FROM paper_desk_orders "
-         "WHERE COALESCE(source,'') IN ('chat','chatbot') AND status='OPEN'")
+         "WHERE (COALESCE(source,'') IN ('chat','chatbot') "
+         "OR COALESCE(source,'') LIKE '%-chat') AND status='OPEN'")
     params = {}
     if stocks:
         q += " AND ticker=:t"
@@ -628,14 +733,12 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
                   all_: bool, en: bool, price_asked: Optional[float] = None,
                   market_flag: bool = False,
                   pct: Optional[int] = None) -> Optional[str]:
-    # market-hours gate FIRST — no order form outside the session
-    try:
-        from services.kiwoom_tape import market_open
-        if not market_open():
-            _PENDING.clear()
-            return closed_reply(side, en)
-    except Exception:
-        pass
+    # market-hours gate FIRST — outside the session the form still opens, but as
+    # a TEST order (boss 2026-09-09); only with AFTER_HOURS_TEST off is it refused.
+    _closed, _refusal = closed_gate(side, en)
+    if _refusal:
+        _PENDING.clear()
+        return _refusal
     cmd = {"code": code, "name": name, "side": side, "qty": qty_asked, "all_": all_}
     from services.paper_desk import BUY_COST_PCT, SELL_COST_PCT, _live_price
     px, kw_name = _live_price(code)
@@ -691,11 +794,14 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
             _PENDING.update({"offer": True, "side": "SELL", "code": code,
                              "name": name, "ts": time.time(), "en": en})
             _save_pending()
-            return (f"🧮 **{name}** {pos:,}주 보유 중입니다 — 얼마나 팔까요?\n"
+            _hdS = (closed_test_note("SELL", en) + "\n\n"
+                    if (not market_is_open() and AFTER_HOURS_TEST) else "")
+            return (_hdS + (
+                    f"🧮 **{name}** {pos:,}주 보유 중입니다 — 얼마나 팔까요?\n"
                     f"· 예: **\"10%\"** (= {max(1, round(pos * 0.10)):,}주) · \"절반\" · \"30주\" · \"전량\""
                     if not en else
                     f"🧮 You hold {pos:,} shares of **{name}** — how much should I sell?\n"
-                    f"· e.g. **\"10%\"** (= {max(1, round(pos * 0.10)):,} sh) · \"half\" · \"30 shares\" · \"all\"")
+                    f"· e.g. **\"10%\"** (= {max(1, round(pos * 0.10)):,} sh) · \"half\" · \"30 shares\" · \"all\""))
     else:
         if (not cmd["qty"] and price_asked is None and not market_flag
                 and pct is None):
@@ -724,6 +830,12 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
                           if _blk0 else "\n")
                          if en else
                          ("**그래도 실험 매수를 원하시면** — \n\n" if _blk0 else "\n"))
+            # THE CLOSED MARKET IS SAID FIRST, NOT TWO STEPS LATER (boss
+            # 2026-09-09). This step-1 price menu is where a bare "I need to buy
+            # X" lands, so without this he picked a price and a quantity before
+            # anything mentioned the market was shut.
+            if not market_is_open() and AFTER_HOURS_TEST:
+                _hd0 = closed_test_note("BUY", en) + "\n\n" + _hd0
             if en:
                 return (_hd0 +
                         f"🛒 **{name}** — step 1 of 2: what PRICE would you like?\n"
@@ -750,6 +862,13 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
     limit_price = None
     if price_asked:
         limit_price = float(price_asked)
+    elif _closed:
+        # AFTER HOURS the order book is a leftover, not a market: an auto-offer
+        # would queue a limit BELOW the last trade that cannot fill until 09:00,
+        # so the "test order" the banner promised would just sit there. A test
+        # must actually fill, at the last traded price — so no offer, market it
+        # is. A price he names himself still wins (the branch above).
+        pass
     elif not market_flag:
         offer = _book_offer(code, side)
         if offer:
@@ -771,7 +890,7 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
     total = (limit_price or px) * qty
     _PENDING.clear()
     _PENDING.update({"code": code, "name": name, "side": side, "qty": qty,
-                     "px": px, "ts": time.time(), "en": en,
+                     "px": px, "ts": time.time(), "en": en, "closed": _closed,
                      "order_type": order_type, "limit_price": limit_price})
     _save_pending()
     b = budget()
@@ -943,6 +1062,8 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
             L.append(be_ko)
         L += ["", f"**정말 {side_ko}할까요?** 실행하려면 **네**, 취소는 **아니요** 라고 답해 주세요 "
               "(5분간 유효). 실제 실시간 가격으로 페이퍼 데스크에 💬 챗봇(chatbot) 주문으로 기록됩니다."]
+    if _closed:                       # the test banner leads, before any number
+        L = [closed_test_note(side, en), ""] + L
     return "\n".join(L)
 
 
@@ -1002,6 +1123,22 @@ def qty_reply(db, transcript: Optional[str]) -> Optional[str]:
         qty = max(1, int(m.group(1).replace(",", "")))
     except Exception:
         return None
+    # step 2 when the price answer was "N different prices": the size completes a
+    # LADDER, not a single order. Rebuild the sentence ladder_preview expects — it
+    # owns the slicing, the held-quantity check and the after-hours banner, and
+    # this way there is exactly one ladder implementation.
+    if p.get("ladder_n"):
+        _s9 = p.get("side") or "BUY"
+        _nm9 = p.get("name") or p["code"]
+        _syn9 = (f"{'buy' if _s9 == 'BUY' else 'sell'} {_nm9} {qty} shares "
+                 f"at {int(p['ladder_n'])} different prices" if p.get("en") else
+                 f"{_nm9} {qty}주 {int(p['ladder_n'])}가지 가격으로 "
+                 f"{'사줘' if _s9 == 'BUY' else '팔아줘'}")
+        _r9 = ladder_preview(db, _syn9, "en" if p.get("en") else "ko")
+        if _r9:
+            return _r9
+        # ladder could not be built (e.g. nothing held to sell) — fall through to
+        # the ordinary preview rather than dropping his order on the floor
     # step 2 of the price-first wizard: the price is already chosen — a bare
     # quantity completes the order preview (boss 2026-09-07)
     if p.get("need_qty"):
@@ -1060,23 +1197,48 @@ def price_reply(db, transcript: Optional[str]) -> Optional[str]:
             or time.time() - _PENDING.get("ts", 0) > _TTL):
         return None
     t = (transcript or "").strip().lower()
-    if not t or len(t) > 40:
+    # 40 was too tight: "I wanna with 5 different efficent price" is exactly 40 and
+    # the next word tipped it out of the wizard entirely (boss 2026-09-09).
+    if not t or len(t) > 80:
         return None
     p = dict(_PENDING)
     en = bool(p.get("en"))
     if p.get("offer") and p.get("price_first") and not p.get("qty"):
         # ── step 1 answered: keep the price, ask the size (step 2) ──
+        # "5 different prices" ANSWERS the price question — a ladder is a price
+        # CHOICE, not a separate command (boss 2026-09-09: "I wanna with 5
+        # different efficent price" dropped the whole pending order and came back
+        # as a price card). As a follow-up it carries no stock, no side and no
+        # "buy", so ladder_preview can never see it — the pending slot holds all
+        # three. Ask the total size, then build the ladder in qty_reply.
+        _ln1 = re.search(r"(\d{1,2})\s*(?:가지|개(?:의)?\s*가격"
+                         r"|(?:different|다른)(?:\s+\w+){0,2}\s*(?:prices?|가격))", t)
+        if _ln1 and not re.search(r"\d[\d,]*\s*(?:주|shares?|stocks?)\b", t):
+            _n1 = max(2, min(20, int(_ln1.group(1))))
+            _PENDING.clear()
+            _PENDING.update({"need_qty": True, "ladder_n": _n1,
+                             "side": p.get("side") or "BUY", "code": p["code"],
+                             "name": p.get("name") or p["code"],
+                             "ts": time.time(), "en": en})
+            _save_pending()
+            return (f"🪜 **{_n1} different prices — got it.** How many shares IN TOTAL? "
+                    f"I'll split them across {_n1} price levels.\n"
+                    f"· e.g. **\"100 shares\"**"
+                    if en else
+                    f"🪜 **{_n1}가지 가격 — 확인했습니다.** 총 몇 주로 할까요? "
+                    f"{_n1}개 가격에 나눠서 걸어드립니다.\n· 예: **\"100주\"**")
         _mk = _pr1 = None
-        if re.search(r"시장가|\bmarket\b", t):
+        if re.search(r"시장가|\bmarket\b", t) or _fuzzy_word(t, ("market",)):
             _mk = True
-        elif re.search(r"추천|스마트|\bsmart\b", t):
+        elif re.search(r"추천|스마트|\bsmart\b", t) or _fuzzy_word(t, ("smart",)):
             try:
                 from services.paper_desk import _live_price
                 _px1, _ = _live_price(p["code"])
                 _pr1 = smart_price(p["code"], float(_px1)) if _px1 else None
             except Exception:
                 _pr1 = None
-        elif re.search(r"효율|제안|최적|알아서|그냥|efficient|\bbest\b|\bbook\b", t):
+        elif (re.search(r"효율|제안|최적|알아서|그냥|efficient|\bbest\b|\bbook\b", t)
+              or _fuzzy_word(t, ("efficient",))):
             pass                            # book offer = the default path
         else:
             _pm1 = re.search(r"(\d[\d,]{3,})\s*(?:원|won)?", t)
@@ -1232,13 +1394,10 @@ def ladder_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
     if len(stocks) != 1:
         return None
     code, name = stocks[0]
-    try:
-        from services.kiwoom_tape import market_open
-        if not market_open():
-            _PENDING.clear()
-            return closed_reply(side, en)
-    except Exception:
-        pass
+    _closed, _refusal = closed_gate(side, en)
+    if _refusal:
+        _PENDING.clear()
+        return _refusal
     # You cannot ladder out more than you actually hold.
     held_note = ""
     if side == "SELL":
@@ -1295,7 +1454,7 @@ def ladder_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
     total = sum(pr * q for pr, q in slices)
     _PENDING.clear()
     _PENDING.update({"ladder": True, "side": side, "code": code, "name": name,
-                     "ts": time.time(), "en": en, "slices": slices})
+                     "ts": time.time(), "en": en, "slices": slices, "closed": _closed})
     _save_pending()
     side_ko = "매수" if side == "BUY" else "매도"
     L = [(f"🪜 **분할 {side_ko} 확인 - {name} 총 {qty:,}주 · {n}단계**" if not en else
@@ -1326,6 +1485,8 @@ def ladder_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
                   f"price rises, each fill ✅-announced here. Cancel: \"cancel {name} orders\""))
     L.append(("**정말 주문할까요?** \"네\" = 전체 접수 · \"아니요\" = 취소" if not en else
               "**Place the whole ladder?** \"yes\" = queue all · \"no\" = cancel"))
+    if _closed:
+        L = [closed_test_note(side, en), ""] + L
     return "\n".join(L)
 
 
@@ -1355,13 +1516,10 @@ def multi_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
     if len(stocks) < 2 or len(stocks) > 5:
         return None
     en = text_lang_en(transcript, lang)
-    try:
-        from services.kiwoom_tape import market_open
-        if not market_open():
-            _PENDING.clear()
-            return closed_reply(side, en)
-    except Exception:
-        pass
+    _closed, _refusal = closed_gate(side, en)
+    if _refusal:
+        _PENDING.clear()
+        return _refusal
     qm = re.search(r"(\d[\d,]*)\s*(?:주|shares?|stocks?|개)", tl)
     qty_each = max(1, int(qm.group(1).replace(",", ""))) if qm else None
     from services.paper_desk import _live_price
@@ -1384,7 +1542,8 @@ def multi_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
     if not live:
         return ("⚠️ 매도할 보유 종목이 없습니다." if not en else "⚠️ None of those stocks are held.")
     _PENDING.clear()
-    _PENDING.update({"multi": True, "side": side, "orders": live, "ts": time.time(), "en": en})
+    _PENDING.update({"multi": True, "side": side, "orders": live, "ts": time.time(),
+                     "en": en, "closed": _closed})
     _save_pending()
     sk = "매수" if side == "BUY" else "매도"
     L = [(f"🧾 **복수 종목 {sk} 확인 — {len(live)}종목**" if not en else
@@ -1399,6 +1558,8 @@ def multi_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
     L.append((f"예상 총액 ~₩{total:,.0f} · **정말 {sk}할까요?** \"네\" = 전부 실행 · \"아니요\" = 취소"
               if not en else
               f"Est. total ~₩{total:,.0f} · **Really {side} all?** \"yes\" = execute all · \"no\" = cancel"))
+    if _closed:
+        L = [closed_test_note(side, en), ""] + L
     return "\n".join(L)
 
 
@@ -1529,18 +1690,16 @@ def finish(db, word: str) -> Optional[str]:
         if word == "no":
             return ("🚫 취소했습니다 — 복수 종목 주문은 실행되지 않았습니다." if not en
                     else "🚫 Cancelled — the multi-stock order was NOT executed.")
-        try:
-            from services.kiwoom_tape import market_open
-            if not market_open():
-                return closed_reply(p.get("side") or "BUY", en)
-        except Exception:
-            pass
+        _mclosed, _mrefusal = closed_gate(p.get("side") or "BUY", en)
+        if _mrefusal:
+            return _mrefusal
+        _msrc = test_source(_mclosed or bool(p.get("closed")))
         from services.paper_desk import place_order
         lines = []
         for o in p.get("orders") or []:
             try:
                 res = place_order(db, o["code"], p["side"], int(o["qty"]),
-                                  order_type="market", source="chatbot", direct=True)
+                                  order_type="market", source=_msrc, direct=True)
                 if res.get("ok"):
                     f9 = float(res.get("fill_price") or o.get("px") or 0)
                     try:
@@ -1557,7 +1716,8 @@ def finish(db, word: str) -> Optional[str]:
                 lines.append(f"· ⚠️ {o['name']}: {str(e)[:40]}")
         head = (f"🧾 **복수 종목 {'매수' if p['side'] == 'BUY' else '매도'} 결과**" if not en
                 else f"🧾 **Multi-stock {p['side']} results**")
-        return "\n".join([head] + lines + ["", _desk_links(en)])
+        _tail = [closed_fill_note(en)] if _msrc == "test-chat" else []
+        return "\n".join([head] + lines + _tail + ["", _desk_links(en)])
     # 🪜 a LADDER waiting for its "네": queue every slice as its own limit order
     if p.get("ladder"):
         _lside = p.get("side", "BUY")           # SELL ladders exist since 2026-09-09
@@ -1565,18 +1725,16 @@ def finish(db, word: str) -> Optional[str]:
         if word == "no":
             return (f"🚫 취소했습니다 — 분할 {_lside_ko}는 접수되지 않았습니다." if not en
                     else f"🚫 Cancelled — the split {_lside.lower()} was NOT placed.")
-        try:
-            from services.kiwoom_tape import market_open
-            if not market_open():
-                return closed_reply(_lside, en)
-        except Exception:
-            pass
+        _lclosed, _lrefusal = closed_gate(_lside, en)
+        if _lrefusal:
+            return _lrefusal
+        _lsrc = test_source(_lclosed or bool(p.get("closed")))
         from services.paper_desk import place_order
         ok_n, fill_n, fail_n = 0, 0, 0
         for pr, q in p.get("slices") or []:
             try:
                 res = place_order(db, p["code"], _lside, int(q), order_type="limit",
-                                  limit_price=float(pr), source="chatbot", direct=True)
+                                  limit_price=float(pr), source=_lsrc, direct=True)
                 if res.get("ok"):
                     ok_n += 1
                     if res.get("status") == "FILLED":
@@ -1601,13 +1759,15 @@ def finish(db, word: str) -> Optional[str]:
                     + (f" ({fill_n} filled instantly)" if fill_n else "")
                     + (f" · {fail_n} failed" if fail_n else "")
                     + f". {wait_n} waiting in the book — each fill ✅-announced here. "
-                    f"\"order status\" shows the ladder; \"cancel {p['name']} orders\" pulls it.\n\n"
+                    f"\"order status\" shows the ladder; \"cancel {p['name']} orders\" pulls it."
+                    + (closed_fill_note(True, filled=False) if _lsrc == "test-chat" else "") + "\n\n"
                     + _desk_links(True))
         return (f"🪜 **분할 {_lside_ko} 접수 — {p['name']}**: {ok_n}건 접수"
                 + (f" (즉시 체결 {fill_n}건)" if fill_n else "")
                 + (f" · 실패 {fail_n}건" if fail_n else "")
                 + f". 대기 {wait_n}건 — 체결될 때마다 이 채팅에 ✅ 알림이 옵니다. "
-                f"\"주문 상태\"로 확인, \"{p['name']} 주문 취소\"로 전체 회수.\n\n"
+                f"\"주문 상태\"로 확인, \"{p['name']} 주문 취소\"로 전체 회수."
+                + (closed_fill_note(False, filled=False) if _lsrc == "test-chat" else "") + "\n\n"
                 + _desk_links(False))
     # a CONDITIONAL rule waiting for its "네" (Step 3): yes stores the standing
     # rule (no order yet — the watchdog fires it at the trigger), no drops it
@@ -1632,13 +1792,12 @@ def finish(db, word: str) -> Optional[str]:
         return (f"🚫 취소했습니다 — {side_ko} {p['name']} {p['qty']:,}주 주문은 실행되지 않았습니다."
                 if not en else
                 f"🚫 Cancelled — the {p['side']} {p['name']} {p['qty']:,}-share order was NOT executed.")
-    # the market may have closed between the preview and the "네"
-    try:
-        from services.kiwoom_tape import market_open
-        if not market_open():
-            return closed_reply(p["side"], en)
-    except Exception:
-        pass
+    # the market may have closed between the preview and the "네" — off-hours the
+    # order still goes through as a TEST fill (boss 2026-09-09), tagged test-chat
+    _cclosed, _crefusal = closed_gate(p["side"], en)
+    if _crefusal:
+        return _crefusal
+    _csrc = test_source(_cclosed or bool(p.get("closed")))
     # ── THE LAST CHECK BEFORE THE MONEY MOVES (boss 2026-09-09: "even though
     # the condition matches it should wait - stop decreasing, start increasing,
     # and on the 3rd red then buy. Moreover before buying our agent should
@@ -1653,7 +1812,11 @@ def finish(db, word: str) -> Optional[str]:
     # His own order still wins: the check REPORTS and asks once more rather
     # than refusing outright, because an order he typed himself is his
     # decision. One more "네" and it goes.
-    if p["side"] == "BUY" and not p.get("forced"):
+    # A TEST fill placed while the market is shut skips this: verify_now reads the
+    # LIVE tape, and after 15:30 there is no tape to read — it would either refuse
+    # every rehearsal or wave it through on stale numbers. Neither is a real check,
+    # and the banner already told him this order is not real.
+    if p["side"] == "BUY" and not p.get("forced") and _csrc != "test-chat":
         _stop_ko = _stop_en = ""
         try:
             from services.approval_desk import verify_now as _vn9, _turn_shape as _ts9
@@ -1689,7 +1852,7 @@ def finish(db, word: str) -> Optional[str]:
     from services.paper_desk import place_order
     _ot = p.get("order_type") or "market"
     res = place_order(db, p["code"], p["side"], int(p["qty"]), order_type=_ot,
-                      limit_price=p.get("limit_price"), source="chatbot",
+                      limit_price=p.get("limit_price"), source=_csrc,
                       ref_price=p.get("px"), direct=True)
     if _ot == "limit" and res.get("ok") and res.get("status") == "OPEN":
         # queued in the book — the trading loop fills it when the price touches
@@ -1720,6 +1883,8 @@ def finish(db, word: str) -> Optional[str]:
               f"💬 챗봇 주문으로 기록됩니다{_gap}. "
               f"👀 제가 지켜보고 있다가 체결되는 순간 이 채팅에 ✅ 알림을 바로 띄워드립니다. "
               f"중간 확인은 \"주문 상태\", 취소는 \"{p['name']} 주문 취소\"라고 말씀하세요."])
+        if _csrc == "test-chat":
+            L.append(closed_fill_note(en, filled=False).strip())
         L += ["", _desk_links(en)]
         return "\n".join(L)
     if not res.get("ok"):
@@ -1755,6 +1920,8 @@ def finish(db, word: str) -> Optional[str]:
                  + (" 🖥 메뉴3 보드(보유 목록·매매 기록)에도 함께 기록되었습니다." if _m3done else ""))
         L.append("")
         L.append(_desk_links(False))
+    if _csrc == "test-chat":
+        L.insert(1, closed_fill_note(en).strip())
     return "\n".join(L)
 
 
