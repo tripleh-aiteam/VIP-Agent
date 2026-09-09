@@ -56,7 +56,11 @@ const snap = (p: number, code: string) => {
 const won = (n: number) => "₩" + Math.round(n).toLocaleString();
 const pct = (n: number) => (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
 
-/** SELL — priced off the book's biggest wall, this second. */
+/** SELL - ONE order at ONE price: one tick under the biggest ask wall.
+    Boss 2026-09-09: "in case of the selling just put price one tick below
+    highest volume". A sell that must leave has one job - clear ahead of the
+    thickest queue - and splitting it only leaves part of the position sitting
+    above the wall it was meant to get in front of. */
 function sellPlan(code: string, qty: number, book: Book): Plan | null {
   const asks = (book.asks || []).filter(([p, q]) => p > 0 && q > 0);
   if (!asks.length) return null;
@@ -64,30 +68,22 @@ function sellPlan(code: string, qty: number, book: Book): Plan | null {
   const tk = tickSize(wallPx, code);
   const anchor = snap(wallPx - tk, code);
   const dealsNow = !!book.best_bid && anchor <= book.best_bid;
-  // the anchor carries the most, because it is the leg that actually clears;
-  // the rest climb one tick each and only fill if the price comes up to us
-  const W = [0.40, 0.25, 0.20, 0.15];
-  const out: Slice[] = [];
-  let left = qty;
-  W.forEach((w, i) => {
-    const px = snap(anchor + tk * i, code);
-    const n = i === W.length - 1 ? left : Math.max(1, Math.round(qty * w));
-    if (n <= 0 || left <= 0) return;
-    const take = Math.min(n, left);
-    left -= take;
-    out.push({
-      px, qty: take, now: i === 0 && dealsNow,
-      ko: i === 0
-        ? `가장 두꺼운 매도벽 ${won(wallPx)}(${wallQty.toLocaleString()}주) 바로 한 호가 아래 — 그 줄보다 먼저 팔립니다${dealsNow ? " (지금 바로 체결)" : ""}`
-        : `한 호가씩 위 — 값이 ${pct(((px - anchor) / anchor) * 100)} 올라오면 이만큼 더 받습니다`,
-      en: i === 0
-        ? `one tick under the biggest ask wall ${won(wallPx)} (${wallQty.toLocaleString()} sh) — we clear ahead of that queue${dealsNow ? " (deals now)" : ""}`
-        : `one tick higher each — ${pct(((px - anchor) / anchor) * 100)} more if the price comes up to it`,
-    });
-  });
-  return { slices: out, basis: "book",
-    headKo: `매도는 지금 이 호가창이 정합니다 — 가장 두꺼운 매도벽 ${won(wallPx)}(${wallQty.toLocaleString()}주)의 한 호가 아래 ${won(anchor)}가 기준입니다.`,
-    headEn: `A sell is priced by the book as it stands — one tick under the biggest ask wall ${won(wallPx)} (${wallQty.toLocaleString()} sh), i.e. ${won(anchor)}.` };
+  return {
+    slices: [{
+      px: anchor, qty, now: dealsNow,
+      ko: `가장 두꺼운 매도벽 ${won(wallPx)}(${wallQty.toLocaleString()}주) 바로 한 호가 아래 — `
+        + `그 줄보다 먼저 팔립니다. 전량 ${qty.toLocaleString()}주를 한 가격에 냅니다`
+        + `${dealsNow ? " (지금 바로 체결)" : ""}.`,
+      en: `one tick under the biggest ask wall ${won(wallPx)} (${wallQty.toLocaleString()} sh) - we clear `
+        + `ahead of that queue. The whole ${qty.toLocaleString()} sh goes at this one price`
+        + `${dealsNow ? " (deals now)" : ""}.`,
+    }],
+    basis: "book",
+    headKo: `매도는 한 가격입니다 — 가장 두꺼운 매도벽 ${won(wallPx)}(${wallQty.toLocaleString()}주)의 한 호가 아래 ${won(anchor)}. `
+      + `나가야 할 물량을 조각으로 나누면 일부가 벽 위에 남아 못 팔립니다.`,
+    headEn: `A sell is ONE price - one tick under the biggest ask wall ${won(wallPx)} (${wallQty.toLocaleString()} sh), i.e. ${won(anchor)}. `
+      + `Splitting stock that has to leave only strands part of it above the wall it was meant to beat.`,
+  };
 }
 
 /** BUY — priced from where this stock has actually traded for three months. */
@@ -110,14 +106,27 @@ function buyPlan(code: string, qty: number, book: Book, bars: Bar[]): Plan | nul
   // this level. A level many days touched is a price the market kept agreeing
   // on; one nobody visited is a guess.
   const support = (px: number) => bars.filter((b) => b.l <= px && px <= b.h).length;
-  const picked = [0.25, 0.45, 0.65, 0.85]
-    .map((p) => {
-      const depth = q(p);
-      const px = snap(now * (1 - depth), code);
-      return { px, reach: 1 - p, days: support(px) };
-    })
-    .filter((r, i, a) => r.px < now && a.findIndex((x) => x.px === r.px) === i);
-  if (!picked.length) return null;
+  // FIVE DIFFERENT PRICES, ALWAYS (boss 2026-09-09: "for buying case we have
+  // to buy like 5 different prices"). Four history depths under the live ask,
+  // plus the leg that deals now. When two quantiles snap onto the SAME tick -
+  // which happens on a quiet stock, and used to silently leave the demo with
+  // three prices instead of five - the collision is stepped one tick lower so
+  // five real, distinct, placeable prices always stand.
+  const tkb = tickSize(now, code);
+  const picked: { px: number; reach: number; days: number }[] = [];
+  [0.20, 0.40, 0.60, 0.80].forEach((p) => {
+    let px = snap(now * (1 - q(p)), code);
+    // bounded: snap() rounds to the KRX grid, and near a tick boundary it can
+    // round straight back up - an unbounded while would then never terminate
+    for (let g = 0; g < 40 && (px >= now || picked.some((x) => x.px === px)); g++) {
+      const nx = snap(px - tkb, code);
+      px = nx < px ? nx : px - tkb;
+    }
+    if (px > 0 && px < now && !picked.some((x) => x.px === px)) {
+      picked.push({ px, reach: 1 - p, days: support(px) });
+    }
+  });
+  if (picked.length < 4) return null;
   picked.sort((a, b) => b.px - a.px);                     // dearest first
 
   // 30% goes in at once so a decision always starts; the other 70% is split by
@@ -143,8 +152,8 @@ function buyPlan(code: string, qty: number, book: Book, bars: Bar[]): Plan | nul
     });
   });
   return { slices: out.filter((s) => s.qty > 0), basis: "history",
-    headKo: `매수는 서두를 이유가 없습니다 — 안 사면 손해가 없고, 비싸게 사면 매번 손해입니다. 그래서 자리는 호가창이 아니라 이 종목 자신의 습관에서 고릅니다: 최근 ${bars.length}일 동안 시가에서 하루에 얼마나 밀렸는지를 줄 세워, 실제로 자주 닿는 깊이만 씁니다. 수량은 닿을 확률이 높을수록 많이 겁니다.`,
-    headEn: `A buy is never in a hurry — an unfilled buy costs nothing, an expensive one costs every time. So the levels come from this stock's own habit rather than from the book: three months of "how far did it fall from its own open today", sorted, using only the depths it genuinely reaches. The likelier a level, the more shares stand there.` };
+    headKo: `매수는 5개 가격으로 나눠 삽니다 — 서두를 이유가 없습니다. 안 사면 손해가 없고, 비싸게 사면 매번 손해입니다. 그래서 자리는 호가창이 아니라 이 종목 자신의 습관에서 고릅니다: 최근 ${bars.length}일 동안 시가에서 하루에 얼마나 밀렸는지를 줄 세워, 실제로 자주 닿는 깊이만 씁니다. 수량은 닿을 확률이 높을수록 많이 겁니다.`,
+    headEn: `A buy goes in at FIVE different prices - it is never in a hurry — an unfilled buy costs nothing, an expensive one costs every time. So the levels come from this stock's own habit rather than from the book: three months of "how far did it fall from its own open today", sorted, using only the depths it genuinely reaches. The likelier a level, the more shares stand there.` };
 }
 
 export default function PricePlan({ code, book, onPlan }:
@@ -252,8 +261,11 @@ export default function PricePlan({ code, book, onPlan }:
 
       {plan && (
         <div className="text-[10px] mt-1.5" style={{ color: "var(--text-muted)" }}>
-          {t(`합계 ${filled.toLocaleString()}주 · ${won(plan.slices.reduce((a, s) => a + s.px * s.qty, 0))} — 한 가격에 다 넣지 않는 이유는 그것이 모든 값이 똑같이 나올 거라고 가정하는 일이기 때문입니다. 위 배분은 실제로 그렇게 믿는 만큼입니다.`,
-             `${filled.toLocaleString()} sh · ${won(plan.slices.reduce((a, s) => a + s.px * s.qty, 0))} — one price for the whole order would assume every level is equally likely. These weights say what we actually believe.`)}
+          {plan.slices.length > 1
+            ? t(`합계 ${filled.toLocaleString()}주 · ${won(plan.slices.reduce((a, s) => a + s.px * s.qty, 0))} — 한 가격에 다 넣지 않는 이유는 그것이 모든 값이 똑같이 나올 거라고 가정하는 일이기 때문입니다. 위 배분은 실제로 그렇게 믿는 만큼입니다.`,
+                `${filled.toLocaleString()} sh · ${won(plan.slices.reduce((a, s) => a + s.px * s.qty, 0))} — one price for the whole order would assume every level is equally likely. These weights say what we actually believe.`)
+            : t(`합계 ${filled.toLocaleString()}주 · ${won(plan.slices.reduce((a, s) => a + s.px * s.qty, 0))} — 매도는 나눠 걸지 않습니다. 나가야 할 물량은 가장 두꺼운 벽보다 한 호가 먼저 서서 한 번에 비웁니다.`,
+                `${filled.toLocaleString()} sh · ${won(plan.slices.reduce((a, s) => a + s.px * s.qty, 0))} — a sell is not spread. Stock that has to leave stands one tick in front of the thickest wall and clears in one go.`)}
         </div>)}
     </div>);
 }
