@@ -2461,11 +2461,39 @@ def wave_status():
 
 
 @router.post("/wave/mode")
-def wave_mode(mode: str = Query(..., description="off | semi | auto")):
-    """반자동 (the card waits for his click) · 자동 (the machine answers its own
-    card) · off (the desk's previous rule comes back)."""
+def wave_mode(mode: str = Query(..., description="semi | auto | both | off")):
+    """Kept for older callers - prefer /wave/lane, which touches one lane only."""
     from services.wave_desk import set_mode
     return set_mode(mode)
+
+
+@router.post("/wave/lane")
+def wave_lane(name: str = Query(..., description="semi | auto"),
+              on: bool = Query(...)):
+    """TWO LANES, TWO SWITCHES (boss 2026-09-09: "it is testing, so both should
+    work parallel - when I switch one of them it should not stop"). Turning 자동
+    off leaves 반자동 exactly as it was, and the other way round."""
+    from services.wave_desk import set_lane
+    return set_lane(name, on)
+
+
+@router.get("/wave/auto-book")
+def wave_auto_book(limit: int = Query(400)):
+    """🤖 The auto lane's own trading history and scoreboard: every buy and sell
+    with its reason, the invested capital, realised and unrealised gain, the
+    win rate and the total - fees and the 0.18% sell tax already taken off."""
+    from services.wave_desk import auto_book
+    return auto_book(limit)
+
+
+@router.post("/wave/backfill")
+def wave_backfill(codes: str = Query("000660,005930"), day: str = Query("")):
+    """Replay a stored day through the rule and write it into the AUTO book -
+    his "use backup of today's morning and make a trading history on the auto
+    side using SKhynix and Samsung". Re-running replaces those stocks' rows
+    instead of doubling them."""
+    from services.wave_desk import backfill
+    return backfill([c for c in (codes or "").split(",") if c.strip()], day)
 
 
 @router.get("/wave/replay")

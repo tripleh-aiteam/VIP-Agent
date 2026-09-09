@@ -1523,9 +1523,13 @@ def scan(db) -> dict:
     # -1% SELL cards, because the ladder already carries a stop, a profit rung,
     # a slow-roll-over exit and a closing flat. Two lanes proposing on one stock
     # is two agents arguing on his screen. 'off' hands the desk straight back.
+    # It is the SEMI lane that raises cards, so it is the semi lane that silences
+    # this one. 자동 keeps its own book and never touches these rooms, so it can
+    # run beside either without a word (boss 2026-09-09: "both should work
+    # parallel - when I switch one of them it should not stop").
     try:
-        from services.wave_desk import mode as _wmode9
-        _wave_on9 = _wmode9() != "off"
+        from services.wave_desk import lane_on as _lane9
+        _wave_on9 = _lane9("semi")
     except Exception:
         _wave_on9 = False
     for code, name, score in _rooms9:

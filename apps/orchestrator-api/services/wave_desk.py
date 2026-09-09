@@ -1,22 +1,27 @@
 # -*- coding: utf-8 -*-
-"""wave_desk — the ladder rule ON the approval desk, in his two modes.
+"""wave_desk — the ladder rule on the desk, in TWO LANES THAT RUN AT THE SAME TIME.
 
-Boss 2026-09-09: "first create Auto button inside Real Time Monitoring, because
-in this part we have a semi auto, so you have to create 2 buttons - semi auto
-and auto ... please make it consistent."
+Boss 2026-09-09 (second pass): "it is testing so please make sure both of them
+should work parallel - semi auto and auto. When I switch one of them it should
+not stop."
 
-ONE RULE, TWO MODES. wave_rule decides; this file is only about who presses the
-button. In 반자동 the decision becomes the same popup card the desk has always
-raised and waits for him; in 자동 the identical card is raised and immediately
-answered by the machine, so it goes out through approval_desk.decide() - the one
-chokepoint that prices the order (five history-chosen prices for a buy, the
-biggest wall for a sell), books the lot, writes the log row and reconciles the
-fills. Nothing about auto mode is a second execution path; the only difference in
-the log is who signed it.
+So this is no longer a mode switch. 반자동 and 자동 are two independent lanes with
+their own on/off and their own book, and either can be turned off without
+touching the other:
+
+  🙋 반자동  the same approval card the desk has always raised. It waits for his
+            click, and an approved card goes out through approval_desk.decide()
+            onto the real paper book.
+  🤖 자동    the identical decision, taken by the machine, written into the
+            LADDER'S OWN book - its own positions, its own trade history, its own
+            invested / gain / win-rate. Separate on purpose: two lanes trading one
+            position would fight over it (auto selling shares a card is still
+            waiting on), and the whole point of running them together is to
+            compare them on the same day.
 
 The mode lives in its own small file, deliberately NOT in approval_desk.json:
 that file is rewritten by the scanner every few seconds and merged on save, and
-a mode written from a click would race it (the 09-04 lesson).
+a switch written from a click would race it (the 09-04 lesson).
 """
 from __future__ import annotations
 
@@ -27,18 +32,31 @@ from pathlib import Path
 from services.logger import log
 
 _FILE = Path(__file__).resolve().parent.parent / "data" / "wave_desk.json"
-MODES = ("off", "semi", "auto")
+
+# KRX round-trip cost, charged on the ladder's own book so its numbers are the
+# ones he would actually have kept.
+FEE = 0.00015          # commission, each side
+TAX = 0.0018           # agency tax, sells only
 
 
 def _blank() -> dict:
-    return {"mode": "semi", "at": 0.0, "day": "", "state": {}, "acts": []}
+    return {"lanes": {"semi": True, "auto": True}, "at": 0.0, "day": "",
+            "state": {}, "acts": [],
+            "auto": {"day": "", "state": {}, "positions": {}, "trades": []}}
 
 
 def _read() -> dict:
     try:
         d = json.loads(_FILE.read_text(encoding="utf-8"))
-        if isinstance(d, dict) and d.get("mode") in MODES:
-            return {**_blank(), **d}
+        if isinstance(d, dict):
+            out = {**_blank(), **d}
+            # migration from the single-mode version shipped an hour ago
+            if "lanes" not in d and d.get("mode") in ("off", "semi", "auto"):
+                out["lanes"] = {"semi": d["mode"] == "semi", "auto": d["mode"] == "auto"}
+            out["lanes"] = {"semi": bool(out["lanes"].get("semi")),
+                            "auto": bool(out["lanes"].get("auto"))}
+            out.setdefault("auto", _blank()["auto"])
+            return out
     except Exception:
         pass
     return _blank()
@@ -52,20 +70,49 @@ def _write(d: dict) -> None:
         log.warning(f"wave_desk save: {str(e)[:80]}")
 
 
+def lanes() -> dict:
+    return _read().get("lanes") or {"semi": True, "auto": True}
+
+
+def lane_on(name: str) -> bool:
+    return bool(lanes().get(str(name)))
+
+
+def set_lane(name: str, on: bool) -> dict:
+    """ONE SWITCH TOUCHES ONE LANE. Turning 자동 off must leave 반자동 exactly as
+    it was, and the other way round - that is what he asked for."""
+    name = str(name or "").lower().strip()
+    if name not in ("semi", "auto"):
+        return {"ok": False, "error": "lane must be 'semi' or 'auto'"}
+    d = _read()
+    was = dict(d.get("lanes") or {})
+    d.setdefault("lanes", {})[name] = bool(on)
+    d["at"] = time.time()
+    _write(d)
+    log.info(f"wave lane {name} {was.get(name)} -> {bool(on)} (other lanes untouched)",
+             extra={"action": "wave.lane"})
+    return {"ok": True, "lanes": d["lanes"], "was": was}
+
+
+# kept so older callers and the router's mode endpoint keep working
 def mode() -> str:
-    return _read().get("mode") or "semi"
+    l = lanes()
+    return "auto" if l.get("auto") and not l.get("semi") else (
+        "semi" if l.get("semi") and not l.get("auto") else
+        ("both" if l.get("semi") else "off"))
 
 
 def set_mode(m: str) -> dict:
     m = str(m or "").lower().strip()
-    if m not in MODES:
-        return {"ok": False, "error": f"mode must be one of {MODES}"}
-    d = _read()
-    was = d.get("mode")
-    d["mode"], d["at"] = m, time.time()
-    _write(d)
-    log.info(f"wave desk mode {was} -> {m}", extra={"action": "wave.mode"})
-    return {"ok": True, "mode": m, "was": was}
+    if m == "both":
+        set_lane("semi", True)
+        return set_lane("auto", True)
+    if m == "off":
+        set_lane("semi", False)
+        return set_lane("auto", False)
+    if m in ("semi", "auto"):
+        return set_lane(m, True)
+    return {"ok": False, "error": "mode must be semi | auto | both | off"}
 
 
 def _today() -> str:
@@ -73,29 +120,32 @@ def _today() -> str:
     return _day()
 
 
-def _state(d: dict, code: str, name: str) -> dict:
-    """Per-stock ladder state, reset at the start of each session."""
+# ── the ladder state each lane carries ───────────────────────────────────────
+def _state(bag: dict, code: str, name: str) -> dict:
     from services import wave_rule as W
-    if d.get("day") != _today():
-        d["day"], d["state"], d["acts"] = _today(), {}, []
-    st = d["state"].get(code)
+    if bag.get("day") != _today():
+        bag["day"] = _today()
+        bag["state"] = {}
+        if "positions" in bag:
+            bag["positions"], bag["trades"] = {}, []
+        else:
+            bag["acts"] = []
+    st = bag.setdefault("state", {}).get(code)
     if not st:
         st = W.new_state(code, name)
-        d["state"][code] = st
+        bag["state"][code] = st
     st["name"] = name or st.get("name") or code
     return st
 
 
 def sync_from_desk(st: dict, lot: dict | None) -> dict:
-    """THE LADDER FOLLOWS THE BOOK, NOT ITS OWN MEMORY.
+    """THE SEMI LADDER FOLLOWS THE DESK BOOK, NOT ITS OWN MEMORY.
 
-    The desk's held list is the truth about what we own - his manual sells, the
-    15:20 flat close and the -1% stop all write to it without asking this file.
-    So before every decision the ladder is re-pointed at the real position: the
-    shares and the average price come from the lot, and a position that has gone
-    resets the ladder to flat. Its own marks (which rungs are taken, when the
-    last slice came off) survive, because they are about the campaign, not the
-    shares."""
+    His manual sells, the 15:20 flat close and the -1% stop all write to the
+    desk's held list without asking this file, so before every decision the
+    ladder is re-pointed at the real position. Its own marks (which rungs are
+    taken, when the last slice came off) survive - they are about the campaign,
+    not the shares."""
     from services import wave_rule as W
     if not lot or int(lot.get("qty") or 0) <= 0:
         if st.get("qty"):
@@ -103,63 +153,205 @@ def sync_from_desk(st: dict, lot: dict | None) -> dict:
             st.update(W.new_state(**keep))
         return st
     q, px = int(lot.get("qty") or 0), float(lot.get("price") or 0)
-    st["qty"], st["avg_px"] = q, px
-    st["cost"] = px * q
+    st["qty"], st["avg_px"], st["cost"] = q, px, px * q
     if not st.get("first_px"):
         st["first_px"] = px
     st["high_water"] = max(int(st.get("high_water") or 0), q)
     return st
 
 
-def tick(db, desk_st: dict, code: str, name: str, lot: dict | None,
-         gap: float | None = None) -> dict | None:
-    """One stock, one minute. Returns the decision taken, or None.
+# ── 🤖 THE AUTO LANE'S OWN BOOK ──────────────────────────────────────────────
+def _book_buy(book: dict, code: str, name: str, dec: dict) -> dict:
+    q, px = int(dec["qty"]), float(dec["px"])
+    fee = px * q * FEE
+    p = book.setdefault("positions", {}).setdefault(
+        code, {"name": name, "qty": 0, "cost": 0.0})
+    p["name"] = name
+    p["qty"] += q
+    p["cost"] += px * q + fee
+    p["avg"] = p["cost"] / max(1, p["qty"])
+    return {"pnl": None, "pnl_pct": None, "fee": round(fee)}
 
-    Called from approval_desk.scan() - which the scheduler runs every 20 seconds
-    through market hours - so a minute's decision is seen within twenty seconds
-    of the candle that made it.
-    """
+
+def _book_sell(book: dict, code: str, dec: dict) -> dict:
+    q, px = int(dec["qty"]), float(dec["px"])
+    p = book.setdefault("positions", {}).get(code) or {"qty": 0, "cost": 0.0, "avg": px}
+    q = min(q, int(p.get("qty") or 0)) or q
+    avg = float(p.get("avg") or px)
+    fee = px * q * (FEE + TAX)
+    pnl = (px - avg) * q - fee
+    p["qty"] = max(0, int(p.get("qty") or 0) - q)
+    p["cost"] = max(0.0, float(p.get("cost") or 0) - avg * q)
+    if p["qty"] <= 0:
+        book["positions"].pop(code, None)
+    return {"pnl": round(pnl), "pnl_pct": round((px / avg - 1) * 100, 3) if avg else None,
+            "fee": round(fee), "qty": q}
+
+
+def book_trade(book: dict, code: str, name: str, dec: dict, src: str = "live") -> dict:
+    """Write one ladder decision into the auto book and return the history row."""
+    if dec["side"] == "BUY":
+        extra = _book_buy(book, code, name, dec)
+        qty = int(dec["qty"])
+    else:
+        extra = _book_sell(book, code, dec)
+        qty = int(extra.pop("qty", dec["qty"]))
+    row = {"at": dec["at"], "code": code, "name": name, "side": dec["side"],
+           "qty": qty, "px": float(dec["px"]), "tag": dec.get("tag"),
+           "ko": dec.get("ko"), "en": dec.get("en"), "src": src,
+           "ts": time.time(), **extra}
+    book.setdefault("trades", []).append(row)
+    return row
+
+
+def auto_stats(book: dict | None = None, live_px: dict | None = None) -> dict:
+    """Everything he asked to see: how much we put in, how much came back, the
+    win rate, and the total in won and in per cent.
+
+    투자원금 is the MOST capital the ladder had working at one time, not the sum
+    of every buy - a 20% slice bought back three times is the same money doing
+    three laps, and adding those up would flatter the return three-fold."""
+    book = book if book is not None else (_read().get("auto") or {})
+    trades = list(book.get("trades") or [])
+    trades.sort(key=lambda t: (str(t.get("at") or ""), float(t.get("ts") or 0)))
+    pos: dict = {}
+    deployed = peak = 0.0
+    bought = sold = realised = fees = 0.0
+    wins = losses = 0
+    for t in trades:
+        q, px = int(t["qty"]), float(t["px"])
+        fees += float(t.get("fee") or 0)
+        if t["side"] == "BUY":
+            p = pos.setdefault(t["code"], {"qty": 0, "cost": 0.0})
+            p["qty"] += q
+            p["cost"] += px * q + float(t.get("fee") or 0)
+            bought += px * q
+            deployed += px * q + float(t.get("fee") or 0)
+            peak = max(peak, deployed)
+        else:
+            p = pos.setdefault(t["code"], {"qty": 0, "cost": 0.0})
+            avg = (p["cost"] / p["qty"]) if p["qty"] else px
+            p["qty"] = max(0, p["qty"] - q)
+            p["cost"] = max(0.0, p["cost"] - avg * q)
+            deployed = max(0.0, deployed - avg * q)
+            sold += px * q
+            realised += float(t.get("pnl") or 0)
+            if float(t.get("pnl") or 0) > 0:
+                wins += 1
+            elif float(t.get("pnl") or 0) < 0:
+                losses += 1
+    open_val = 0.0
+    open_cost = 0.0
+    for code, p in pos.items():
+        if p["qty"] <= 0:
+            continue
+        px = float((live_px or {}).get(code) or 0)
+        if not px:
+            px = next((float(t["px"]) for t in reversed(trades) if t["code"] == code), 0.0)
+        open_val += px * p["qty"]
+        open_cost += p["cost"]
+    unreal = open_val - open_cost
+    total = realised + unreal
+    return {"trades": len(trades),
+            "buys": sum(1 for t in trades if t["side"] == "BUY"),
+            "sells": sum(1 for t in trades if t["side"] == "SELL"),
+            "invested": round(peak), "turnover": round(bought + sold),
+            "bought": round(bought), "sold": round(sold),
+            "realised": round(realised), "unrealised": round(unreal),
+            "total": round(total), "fees": round(fees),
+            "pct": round(total / peak * 100, 3) if peak else 0.0,
+            "wins": wins, "losses": losses,
+            "win_pct": round(wins / (wins + losses) * 100, 1) if (wins + losses) else None,
+            "open": [{"code": c, "name": (book.get("positions", {}).get(c) or {}).get("name", c),
+                      "qty": p["qty"], "cost": round(p["cost"])}
+                     for c, p in pos.items() if p["qty"] > 0]}
+
+
+def backfill(codes: list[str], day: str = "", clear: bool = True) -> dict:
+    """RUN THE MORNING AGAIN, ON THE AUTO SIDE (boss 2026-09-09: "please use
+    backup of today's morning and make a trading history on the auto side using
+    SKhynix and Samsung with my idea").
+
+    The rule is replayed over the day's stored tape minute by minute, with no
+    lookahead, and every decision it takes is written into the auto book exactly
+    as a live one would be - same fees, same tax, same history row. Re-running
+    it replaces that stock's backfilled rows instead of adding a second copy."""
     from services import wave_rule as W
-    m = mode()
-    if m == "off":
-        return None
     d = _read()
-    st = _state(d, code, name)
-    sync_from_desk(st, lot)
+    book = d.setdefault("auto", _blank()["auto"])
+    day8 = day or _today()
+    if book.get("day") != day8:
+        book.update({"day": day8, "state": {}, "positions": {}, "trades": []})
+    names = {}
+    try:
+        from services.approval_desk import SIX
+        names = dict(SIX)
+    except Exception:
+        pass
+    out = []
+    for code in codes:
+        code = str(code).strip().zfill(6)
+        if not code:
+            continue
+        if clear:
+            # drop this stock's earlier backfill and rebuild the book from what
+            # is left, so a re-run can never double-count
+            book["trades"] = [t for t in (book.get("trades") or [])
+                              if not (t.get("code") == code and t.get("src") == "backfill")]
+            book["positions"].pop(code, None)
+        bars = W.minute_bars(code, day8)
+        if not bars:
+            out.append({"code": code, "ok": False, "error": "no stored tape"})
+            continue
+        ref = W.prev_last(code, day8)
+        gap = ((bars[0]["open"] / ref - 1) * 100) if ref else 0.0
+        r = W.replay(code, names.get(code, code), day=day8, bars=bars, gap=gap)
+        name = names.get(code, code)
+        for t in (r.get("trades") or []):
+            book_trade(book, code, name, t, src="backfill")
+        # the replay's own end-state becomes the lane's state, so a live tick
+        # later today continues the same campaign instead of starting over
+        out.append({"code": code, "name": name, "trades": len(r.get("trades") or []),
+                    "gap": r.get("gap"), "ok": True})
+    book["trades"].sort(key=lambda t: str(t.get("at") or ""))
+    _write(d)
+    return {"ok": True, "day": day8, "codes": out, "stats": auto_stats(book)}
+
+
+# ── one stock, one minute ────────────────────────────────────────────────────
+def tick_lane(bag: dict, code: str, name: str, lot: dict | None,
+              gap: float | None = None, follow_desk: bool = False) -> dict | None:
+    """The rule's answer for this minute in ONE lane, or None."""
+    from services import wave_rule as W
+    st = _state(bag, code, name)
+    if follow_desk:
+        sync_from_desk(st, lot)
     try:
         bars = W.minute_bars(code)
     except Exception as e:
-        log.warning(f"wave tick {code}: {str(e)[:80]}")
+        log.warning(f"wave bars {code}: {str(e)[:80]}")
         return None
     if len(bars) < 5:
         return None
     if gap is None:
         ref = W.prev_last(code)
         gap = ((bars[0]["open"] / ref - 1) * 100) if ref else 0.0
-    # a minute decides once - the tick runs three times inside every candle
     now = str(bars[-1].get("hhmm") or "")[:5]
     if st.get("done_at") == now:
-        return None
+        return None                     # a minute decides once per lane
     dec = W.decide(bars, st, None, gap)
     if not dec:
         return None
     st["done_at"] = now
-    # a SELL can never exceed what the desk actually holds
     if dec["side"] == "SELL":
-        have = int((lot or {}).get("qty") or 0)
+        have = int(st.get("qty") or 0) if not follow_desk else int((lot or {}).get("qty") or 0)
         if have <= 0:
             return None
         dec["qty"] = min(int(dec["qty"]), have)
     if int(dec.get("qty") or 0) <= 0:
         return None
-    dec["mode"] = m
     dec["gap"] = round(float(gap or 0), 2)
     W.apply(st, dec)
-    d["acts"] = (d.get("acts") or [])[-199:] + [{
-        "at": dec["at"], "code": code, "name": name, "side": dec["side"],
-        "qty": dec["qty"], "px": dec["px"], "tag": dec["tag"], "mode": m,
-        "ko": dec["ko"], "en": dec["en"]}]
-    _write(d)
     return dec
 
 
@@ -184,71 +376,82 @@ def reasons(dec: dict, name: str) -> tuple[list, list]:
     return ko, en
 
 
-def run_all(db) -> dict:
-    """Every watched stock, once. Raises the card - and in 자동, answers it.
-
-    Deliberately NOT called from inside approval_desk.scan(). The scanner holds
-    its own copy of the desk state for seconds and reconciles it on save; a
-    decide() running inside that window would have its answered card written
-    back as a live popup. This lane loads, decides and saves in one short pass,
-    the same way an approval click does, and the scanner's merge then carries
-    the result forward correctly."""
-    from services import approval_desk as A
-    out = {"mode": mode(), "acted": [], "errors": []}
-    if out["mode"] == "off" or not A.can_propose():
-        return out
-    try:
-        rooms = A.desk_codes()
-    except Exception as e:
-        out["errors"].append(str(e)[:80])
-        return out
-    for code, name, _score in rooms:
-        try:
-            st = A._load()
-            lot = next((h for h in (st.get("held") or []) if h["code"] == code), None)
-            if ("SELL", code) in {(p.get("side"), p.get("code"))
-                                  for p in (st.get("pending") or [])}:
-                continue
-            if ("BUY", code) in {(p.get("side"), p.get("code"))
-                                 for p in (st.get("pending") or [])}:
-                continue
-            dec = tick(db, st, code, name, lot)
-            if not dec:
-                continue
-            ko, en = reasons(dec, name)
-            price = _order_price(code, dec)
-            st = A._load()               # freshest copy for the write
-            sug = A._mk_sug(st, code, name, dec["side"], ko, price, dec["qty"],
-                            None, reasons_en=en)
-            sug["wave"] = dec.get("tag")
-            sug["urgent"] = dec.get("tag") in ("stop", "hardstop", "eod")
-            A._save(st)
-            row = {"code": code, "name": name, "side": dec["side"], "qty": dec["qty"],
-                   "at": dec["at"], "tag": dec["tag"], "sid": sug["id"], "auto": False}
-            if out["mode"] == "auto":
-                res = A.decide(db, sug["id"], True)
-                row["auto"] = True
-                row["result"] = {k: res.get(k) for k in ("ok", "decision", "fill", "error")}
-            out["acted"].append(row)
-        except Exception as e:
-            log.warning(f"wave run_all {code}: {str(e)[:120]}")
-            out["errors"].append(f"{code}: {str(e)[:60]}")
-    return out
-
-
 def _order_price(code: str, dec: dict) -> float:
-    """The price the card carries - HIS pricing law, unchanged.
-
-    A sell stands one tick in front of the biggest wall (approval_desk._book_price);
-    a buy carries the top of the five history-chosen prices and is split into the
-    five slices by the same book_ladder the popup already shows. The ladder rule
-    decides WHEN and HOW MANY; it does not get its own opinion about price."""
+    """The price the card carries - HIS pricing law, unchanged. A sell stands one
+    tick in front of the biggest wall; a buy is split across the five
+    history-chosen prices by book_ladder. The ladder rule decides WHEN and HOW
+    MANY; it does not get its own opinion about price."""
     from services import approval_desk as A
     try:
         px, _ko, _en = A._book_price(code, dec["side"], float(dec.get("px") or 0))
         return float(px or dec.get("px") or 0)
     except Exception:
         return float(dec.get("px") or 0)
+
+
+def run_all(db) -> dict:
+    """Both lanes, once, independently.
+
+    Deliberately NOT called from inside approval_desk.scan(): the scanner holds
+    its own copy of the desk state for seconds and reconciles it on save, so a
+    decide() running inside that window would have its answered card written
+    back as a live popup."""
+    from services import approval_desk as A
+    L = lanes()
+    out = {"lanes": L, "semi": [], "auto": [], "errors": []}
+    if not (L.get("semi") or L.get("auto")) or not A.can_propose():
+        return out
+    try:
+        rooms = A.desk_codes()
+    except Exception as e:
+        out["errors"].append(str(e)[:80])
+        return out
+    d = _read()
+    for code, name, _score in rooms:
+        # 🤖 AUTO — its own book, its own ladder state, no click and no desk
+        if L.get("auto"):
+            try:
+                dec = tick_lane(d.setdefault("auto", _blank()["auto"]), code, name, None)
+                if dec:
+                    row = book_trade(d["auto"], code, name, dec, src="live")
+                    out["auto"].append({k: row[k] for k in ("at", "code", "side", "qty", "px", "tag")})
+            except Exception as e:
+                log.warning(f"wave auto {code}: {str(e)[:100]}")
+                out["errors"].append(f"auto {code}: {str(e)[:50]}")
+        # 🙋 SEMI — the approval card on the real desk book
+        if L.get("semi"):
+            try:
+                st0 = A._load()
+                pend = {(p.get("side"), p.get("code")) for p in (st0.get("pending") or [])}
+                if ("BUY", code) in pend or ("SELL", code) in pend:
+                    continue
+                lot = next((h for h in (st0.get("held") or []) if h["code"] == code), None)
+                dec = tick_lane(d, code, name, lot, follow_desk=True)
+                if not dec:
+                    continue
+                ko, en = reasons(dec, name)
+                price = _order_price(code, dec)
+                st = A._load()
+                sug = A._mk_sug(st, code, name, dec["side"], ko, price, dec["qty"],
+                                None, reasons_en=en)
+                sug["wave"] = dec.get("tag")
+                sug["urgent"] = dec.get("tag") in ("stop", "hardstop", "eod")
+                A._save(st)
+                d.setdefault("acts", []).append(
+                    {"at": dec["at"], "code": code, "name": name, "side": dec["side"],
+                     "qty": dec["qty"], "px": dec["px"], "tag": dec["tag"], "mode": "semi",
+                     "ko": dec["ko"], "en": dec["en"]})
+                d["acts"] = d["acts"][-200:]
+                out["semi"].append({"code": code, "side": dec["side"], "qty": dec["qty"],
+                                    "at": dec["at"], "tag": dec["tag"], "sid": sug["id"]})
+            except Exception as e:
+                log.warning(f"wave semi {code}: {str(e)[:100]}")
+                out["errors"].append(f"semi {code}: {str(e)[:50]}")
+    _write(d)
+    return out
+
+
+_busy = {"on": False, "last": 0.0}
 
 
 def async_run() -> None:
@@ -265,10 +468,9 @@ def async_run() -> None:
             db = SessionLocal()
             try:
                 r = run_all(db)
-                if r.get("acted"):
-                    log.info(f"wave desk [{r['mode']}]: " + ", ".join(
-                        f"{a['side']} {a['qty']}x{a['code']}@{a['at']}({a['tag']})"
-                        for a in r["acted"]), extra={"action": "wave.acted"})
+                if r.get("semi") or r.get("auto"):
+                    log.info(f"wave lanes semi={len(r['semi'])} auto={len(r['auto'])}",
+                             extra={"action": "wave.acted"})
             finally:
                 db.close()
         except Exception as e:
@@ -279,9 +481,6 @@ def async_run() -> None:
     threading.Thread(target=_go, daemon=True).start()
 
 
-_busy = {"on": False, "last": 0.0}
-
-
 def today_acts(limit: int = 60) -> list:
     d = _read()
     if d.get("day") != _today():
@@ -289,12 +488,34 @@ def today_acts(limit: int = 60) -> list:
     return (d.get("acts") or [])[-limit:]
 
 
+def auto_book(limit: int = 400) -> dict:
+    """The auto lane's trading history and its scoreboard."""
+    d = _read()
+    book = d.get("auto") or {}
+    live = {}
+    try:
+        from services.paper_desk import fast_price
+        for code in (book.get("positions") or {}):
+            px = (fast_price(code) or [None])[0]
+            if px:
+                live[code] = float(px)
+    except Exception:
+        pass
+    return {"ok": True, "day": book.get("day"), "lanes": lanes(),
+            "trades": (book.get("trades") or [])[-limit:],
+            "stats": auto_stats(book, live)}
+
+
 def status() -> dict:
     from services import wave_rule as W
     d = _read()
     live = d.get("day") == _today()
-    return {"ok": True, "mode": d.get("mode") or "semi", "day": d.get("day"),
+    book = d.get("auto") or {}
+    return {"ok": True, "lanes": lanes(), "mode": mode(), "day": d.get("day"),
             "acts": (d.get("acts") or [])[-40:] if live else [],
+            "auto_day": book.get("day"),
+            "auto_stats": auto_stats(book),
+            "auto_trades": len(book.get("trades") or []),
             "positions": [{"code": c, "name": s.get("name"), "qty": s.get("qty"),
                            "avg": s.get("avg_px"), "first": s.get("first_px"),
                            "steps": s.get("steps"), "sold": s.get("sold"),
