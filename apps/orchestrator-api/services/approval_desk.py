@@ -917,6 +917,18 @@ def _reconcile_positions(db, st) -> bool:
     for h in lots:
         code = str(h.get("code") or "")
         want = int(h.get("qty") or 0)
+        # HIS TWO NAMES ARE HELD UNTIL HE SELLS THEM (boss 2026-09-09, twice in
+        # one hour: "Please do not sell this skhynix because it is not selling
+        # postion so make it holding" / "Skhynix should be hold").
+        # 알고2 trades the SAME position pool - today it round-tripped SK하이닉스
+        # fifteen times, 50,000 shares at a go - and every time it flattened,
+        # this reconcile read position 0 and closed his 5-share lot with it.
+        # That is the machine deleting his standing order, not a ghost being
+        # cleaned up. NOTHING in Menu 3 sells these two (NO_STOP), so nothing
+        # here may close them either.
+        if code in POS_GATE_EXEMPT:
+            keep.append(h)
+            continue
         # DID THE DESK GO FLAT AFTER WE BOUGHT? A plain "is the position big
         # enough now" test is not enough: every algo trades the SAME position
         # pool, so an algo re-entering the stock makes a long-dead Menu 3 lot
