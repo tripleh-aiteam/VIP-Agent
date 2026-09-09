@@ -107,6 +107,11 @@ ANTHROPIC_BASE = "https://api.anthropic.com/v1"
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
 _last_used = {"provider": "none", "model": "none"}  # reload tag v2
+# Counts completed LLM round-trips. Callers snapshot this before and after a
+# request to tell "a model answered" apart from "a deterministic code path
+# answered and no model ran at all" — _last_used alone can't, because it keeps
+# the previous turn's value when nothing calls out.
+_call_seq = {"n": 0}
 
 # Budget-aware "smart-first" pipeline state. When OpenAI (the paid, smarter
 # model) reports it's out of money/quota, we set a cooldown and automatically
@@ -130,6 +135,28 @@ def _gemini_cooling() -> bool:
     return time.time() < _gemini_state["cooldown_until"]
 
 
+# Anthropic cooldown (2026-09-09). An invalid/expired ANTHROPIC_API_KEY returns
+# 401 on EVERY call, and Claude sits at the top of several cascades — so each
+# message paid a guaranteed-failing Anthropic round-trip before reaching a live
+# provider. Auth failures do not self-heal, so they cool down hard (a restart,
+# which is required to load a new key anyway, clears it).
+_anthropic_state = {"cooldown_until": 0.0, "reason": ""}
+
+
+def _note_anthropic_failure(err: str) -> None:
+    e = (err or "").lower()
+    auth = any(k in e for k in ("401", "authentication", "invalid x-api-key",
+                                "api key is invalid", "invalid_api_key"))
+    quota = any(k in e for k in ("429", "quota", "rate", "credit", "billing"))
+    _anthropic_state["cooldown_until"] = time.time() + (
+        900.0 if auth else 120.0 if quota else 30.0)
+    _anthropic_state["reason"] = str(err)[:120]
+
+
+def _anthropic_cooling() -> bool:
+    return time.time() < _anthropic_state["cooldown_until"]
+
+
 # GLM free-tier cooldown — same pattern as Gemini's: after a quota/rate failure
 # (5 req/min · 500 req/day on the free tier), skip GLM for a while instead of
 # paying a failing attempt on every message.
@@ -149,6 +176,158 @@ def _glm_cooling() -> bool:
 
 def get_last_provider() -> str:
     return f"{_last_used['provider']} ({_last_used['model']})"
+
+
+def provider_health() -> dict:
+    """Which providers can plausibly answer RIGHT NOW: a key is present and the
+    provider is not in a failure cooldown. Used to stop routing to dead ends."""
+    return {
+        "anthropic": bool(_env("ANTHROPIC_API_KEY")) and not _anthropic_cooling(),
+        "gemini": bool(_env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")) and not _gemini_cooling(),
+        "openai": bool(_env("OPENAI_API_KEY")) and time.time() >= _paid_state["cooldown_until"],
+        "groq": bool(_env("GROQ_API_KEY")),
+        "glm": bool(_env("GLM_API_KEY") or _env("ZHIPU_API_KEY")) and not _glm_cooling(),
+    }
+
+
+# One healthy representative per provider, cheapest-and-fastest first.
+_FALLBACK_ORDER = (
+    ("groq", "groq-llama-3.3-70b"),
+    ("gemini", "gemini-3.5-flash"),
+    ("anthropic", "claude-haiku-4-5"),
+    ("glm", "glm-5.3-flash"),
+    ("openai", "gpt-5.4-mini"),
+)
+
+
+def pick_fallback_model(primary: str = "") -> str:
+    """A second-choice model on a DIFFERENT, currently-healthy provider.
+
+    The old fallback map was hardcoded (gemini -> claude-haiku, claude -> claude).
+    When the Anthropic key went invalid that sent every Gemini failure straight
+    into a second guaranteed failure, and the caller reported 'both tiers failed'
+    for questions the live Groq tier could answer instantly."""
+    primary_provider = (MODEL_CATALOG.get(primary or "") or ("", ""))[0]
+    health = provider_health()
+    for provider, model in _FALLBACK_ORDER:
+        if provider != primary_provider and health.get(provider):
+            return model
+    # Nothing healthy on another provider — the local box is unlimited.
+    return _env("OLLAMA_FALLBACK_MODEL") or "qwen3-vl:30b-a3b-instruct-q4_K_M"
+
+
+def call_seq() -> int:
+    """Number of LLM round-trips completed in this process so far."""
+    return _call_seq["n"]
+
+
+def probe_providers(timeout: float = 12.0) -> dict:
+    """Ask every configured provider for one token, once, at startup.
+
+    Two jobs. (1) Pre-seed the failure cooldowns, so a dead key costs ONE probe
+    here instead of a failing round-trip on the user's first message. (2) Print
+    the truth in the log. An invalid ANTHROPIC_API_KEY and an exhausted Gemini
+    free tier were both invisible for months: the cascade quietly substituted a
+    live provider and the boss read the result as "the model I picked is dumb".
+    """
+    msgs = [{"role": "user", "content": "ping"}]
+    out = {}
+    raw_err = {}          # full provider error, before the display truncation
+
+    def _try(name, fn, note=None):
+        if not fn:
+            out[name] = "no key"
+            return
+        try:
+            ok, res = fn()
+        except Exception as e:
+            ok, res = False, str(e)
+        if not ok:
+            raw_err[name] = str(res)
+        # Provider errors arrive in the provider's own language (GLM answers in
+        # Chinese). This log line runs during startup on a cp949 console, where a
+        # raw CJK byte raises UnicodeEncodeError and would take the boot with it.
+        _disp = str(res)[:110].encode("ascii", "backslashreplace").decode("ascii")
+        out[name] = "OK" if ok else f"DOWN: {_disp}"
+        if not ok and note:
+            try:
+                note(str(res))
+            except Exception:
+                pass
+
+    if _env("ANTHROPIC_API_KEY"):
+        _try("anthropic",
+             lambda: _call_anthropic("claude-haiku-4-5", "ping", msgs, 4, 0.0, timeout),
+             _note_anthropic_failure)
+    else:
+        out["anthropic"] = "no key"
+
+    if _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY"):
+        _try("gemini",
+             lambda: _call_gemini("gemini-3.5-flash", "ping", msgs, 4, 0.0, timeout),
+             _note_gemini_failure)
+    else:
+        out["gemini"] = "no key"
+
+    if _env("OPENAI_API_KEY"):
+        _try("openai", lambda: _call_openai_compatible(
+            _env("OPENAI_BASE_URL") or "https://api.openai.com/v1",
+            _env("OPENAI_API_KEY"), "gpt-5.4-mini",
+            [{"role": "system", "content": "ping"}] + msgs, 4, 0.0, timeout))
+        if out.get("openai", "").startswith("DOWN"):
+            # Match on the FULL error: the display string is truncated at 110
+            # chars, which cut "…/billing/" off and hid the no-credit signal.
+            _err = raw_err.get("openai", "")
+            _paid_state["cooldown_until"] = time.time() + (
+                3600 if _is_no_money(_err) else 300)
+            _paid_state["reason"] = f"startup probe: {_err[:80]}"
+    else:
+        out["openai"] = "no key"
+
+    if _env("GROQ_API_KEY"):
+        _try("groq", lambda: _call_openai_compatible(
+            "https://api.groq.com/openai/v1", _env("GROQ_API_KEY"),
+            "openai/gpt-oss-120b",
+            [{"role": "system", "content": "ping"}] + msgs, 4, 0.0, timeout))
+    else:
+        out["groq"] = "no key"
+
+    _glm = _env("GLM_API_KEY") or _env("ZHIPU_API_KEY")
+    if _glm:
+        _try("glm", lambda: _call_openai_compatible(
+            _env("GLM_BASE_URL") or "https://open.bigmodel.cn/api/paas/v4",
+            _glm, "glm-5.3-flash",
+            [{"role": "system", "content": "ping"}] + msgs, 4, 0.0, timeout),
+            _note_glm_failure)
+    else:
+        out["glm"] = "no key"
+
+    alive = [k for k, v in out.items() if v == "OK"]
+    try:
+        from services.logger import log as _log
+    except Exception:
+        import logging
+        _log = logging.getLogger("llm_client")
+    for k, v in out.items():
+        try:
+            (_log.info if v == "OK" else _log.warning)(f"[llm-probe] {k}: {v}")
+        except Exception:
+            pass
+    if alive:
+        _log.info(f"[llm-probe] live providers: {', '.join(alive)}")
+    else:
+        _log.error("[llm-probe] NO provider answered - chat falls back to local Ollama only")
+    return out
+
+
+def last_used() -> dict:
+    """The provider/model that actually produced the most recent answer.
+
+    The cascade silently substitutes a live provider when the requested one is
+    down, so the model the user PICKED is often not the model that replied.
+    Surfacing this is what makes that substitution visible instead of looking
+    like 'the model I chose is stupid'."""
+    return dict(_last_used)
 
 
 def _smart_model_name() -> str:
@@ -859,7 +1038,7 @@ def gemini_multimodal_sync(
 
 
 def _call_gemini(model: str, system_prompt: str, messages: list[dict],
-                 max_tokens: int, temperature: float, timeout: float = 15.0) -> tuple[bool, str]:
+                 max_tokens: int, temperature: float, timeout: float = 90.0) -> tuple[bool, str]:
     """Google Gemini generateContent API."""
     gemini_key = _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")
     if not gemini_key:
@@ -876,12 +1055,17 @@ def _call_gemini(model: str, system_prompt: str, messages: list[dict],
     out_tokens = max_tokens
     if "pro" in model or "preview" in model:
         out_tokens = max(max_tokens, 8192)
-    # Gemini 3.x FLASH also thinks by default and returned EMPTY (finishReason=
-    # MAX_TOKENS) on small budgets (2026-08-26, boss's free-tier plan) — we want
-    # answers, not thoughts: turn thinking off for flash-class calls.
+    # Gemini 3.x FLASH thinks by default, and thinking is where most of its
+    # intelligence lives — the same model answers far better in AI Studio purely
+    # because thinking is on there. We used to send thinkingBudget=0 to stop the
+    # EMPTY (finishReason=MAX_TOKENS) replies of 2026-08-26, but that traded the
+    # empty answers for dumb ones. The real cause was the budget, not the
+    # thinking: maxOutputTokens covers thoughts AND answer, so a 1100 ceiling
+    # left nothing for the reply. Give flash real headroom and keep it thinking;
+    # if it still comes back empty we rescue that single call below.
+    elif "flash" in model:
+        out_tokens = max(max_tokens, 4096)
     _gen_cfg = {"maxOutputTokens": out_tokens, "temperature": temperature}
-    if "flash" in model:
-        _gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
     try:
         with httpx.Client(timeout=timeout) as client:
             def _post(cfg):
@@ -907,12 +1091,27 @@ def _call_gemini(model: str, system_prompt: str, messages: list[dict],
                 cands = data.get("candidates") or []
                 # Extract any text parts (thinking models may also include
                 # non-text 'thought' parts which we skip).
+                def _text_of(cand):
+                    parts = (cand.get("content", {}) or {}).get("parts") or []
+                    return "".join(p.get("text", "") for p in parts
+                                   if isinstance(p, dict) and p.get("text"))
                 if cands:
-                    parts = (cands[0].get("content", {}) or {}).get("parts") or []
-                    text = "".join(p.get("text", "") for p in parts if isinstance(p, dict) and p.get("text"))
+                    text = _text_of(cands[0])
                     if text.strip():
                         return True, text
                     finish = cands[0].get("finishReason")
+                    # Thinking ate the whole budget (the 2026-08-26 symptom).
+                    # Retry ONCE with thinking off rather than failing the turn —
+                    # a plain answer beats no answer, and this now costs a retry
+                    # only in the rare case instead of every single call.
+                    if finish == "MAX_TOKENS" and "thinkingConfig" not in _gen_cfg:
+                        _cfg3 = dict(_gen_cfg)
+                        _cfg3["thinkingConfig"] = {"thinkingBudget": 0}
+                        r3 = _post(_cfg3)
+                        if r3.status_code == 200:
+                            c3 = (r3.json().get("candidates") or [])
+                            if c3 and _text_of(c3[0]).strip():
+                                return True, _text_of(c3[0])
                     return False, f"Empty Gemini response (finishReason={finish})"
                 return False, "Empty Gemini response (no candidates)"
             return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
@@ -949,6 +1148,7 @@ def chat_completion_sync(
     model: str | None = None,
     prefer_paid: bool = False,
 ) -> str:
+    _call_seq["n"] += 1
     out = _chat_completion_sync_inner(system_prompt, messages, max_tokens,
                                       temperature, model, prefer_paid)
     return _strip_think(out) if isinstance(out, str) else out
@@ -1005,7 +1205,12 @@ def _chat_completion_sync_inner(
     if chosen in MODEL_CATALOG:
         provider, real_model = MODEL_CATALOG[chosen]
         if provider == "anthropic":
-            ok, result = _call_anthropic(real_model, system_prompt, messages, max_tokens, temperature)
+            if _anthropic_cooling():
+                ok, result = False, f"anthropic cooling down ({_anthropic_state['reason'][:60]})"
+            else:
+                ok, result = _call_anthropic(real_model, system_prompt, messages, max_tokens, temperature)
+                if not ok:
+                    _note_anthropic_failure(str(result))
         elif provider == "gemini":
             if _gemini_cooling():
                 ok, result = False, f"gemini cooling down ({_gemini_state['reason'][:60]})"
@@ -1082,24 +1287,43 @@ def _chat_completion_sync_inner(
         _note_glm_failure(str(result))
         attempt_log.append(f"glm-5.3-flash (free fallback): {str(result)[:200]}")
 
-    # Free tier #2 — LOCAL Ollama star (unlimited, private; 6.8s warm on the 5090)
+    # Free tier #2/#3 — Groq gpt-oss-120b and the LOCAL Ollama star. BOTH are free,
+    # so this order is purely about which answers better.
+    #
+    # Groq now goes first (2026-09-09). With the Anthropic key invalid and the
+    # Gemini/OpenAI/GLM quotas spent, EVERY pinned model fell through to here —
+    # and local qwen3-vl:30b was picking up every one of them, so choosing
+    # "claude-sonnet" or "gemini-pro" in the dropdown silently delivered the
+    # weakest model available while plain AUTO got the much stronger Groq
+    # gpt-oss-120b. Set LLM_PREFER_LOCAL=1 to restore local-first (private,
+    # unlimited) — Ollama still catches everything if Groq is down or throttled.
     _local_star = _env("OLLAMA_FALLBACK_MODEL") or "qwen3-vl:30b-a3b-instruct-q4_K_M"
-    ok, result = _call_openai_compatible(f"{ollama_url}/v1", "", _local_star,
-                                         full_messages_with_sys, max_tokens, temperature, 120.0)
-    if ok:
-        _last_used.update({"provider": "ollama", "model": f"{_local_star} (local fallback)"})
-        return result
-    attempt_log.append(f"{_local_star} (local ollama fallback): {str(result)[:200]}")
 
-    # Free tier #3 — Groq gpt-oss-120b (free; covers the case the local box is off)
-    if groq_key:
-        ok, result = _call_openai_compatible("https://api.groq.com/openai/v1", groq_key,
-                                             "openai/gpt-oss-120b",
-                                             full_messages_with_sys, max_tokens, temperature, 30.0)
-        if ok:
+    def _try_groq():
+        if not groq_key:
+            return False, "GROQ_API_KEY not set"
+        ok_, res_ = _call_openai_compatible("https://api.groq.com/openai/v1", groq_key,
+                                            "openai/gpt-oss-120b",
+                                            full_messages_with_sys, max_tokens, temperature, 30.0)
+        if ok_:
             _last_used.update({"provider": "groq", "model": "gpt-oss-120b (free fallback)"})
+        return ok_, res_
+
+    def _try_local():
+        ok_, res_ = _call_openai_compatible(f"{ollama_url}/v1", "", _local_star,
+                                            full_messages_with_sys, max_tokens, temperature, 120.0)
+        if ok_:
+            _last_used.update({"provider": "ollama", "model": f"{_local_star} (local fallback)"})
+        return ok_, res_
+
+    _prefer_local = _env("LLM_PREFER_LOCAL", "").strip().lower() in ("1", "true", "yes", "on")
+    _rungs = ([("local", _try_local), ("groq", _try_groq)] if _prefer_local
+              else [("groq", _try_groq), ("local", _try_local)])
+    for _tag, _fn in _rungs:
+        ok, result = _fn()
+        if ok:
             return result
-        attempt_log.append(f"gpt-oss-120b (groq free fallback): {str(result)[:200]}")
+        attempt_log.append(f"{_tag} free fallback: {str(result)[:200]}")
 
     # Paid tier — OpenAI gpt-5.4-mini, LAST resort only (boss runs free-first)
     if openai_key:

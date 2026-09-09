@@ -113,16 +113,15 @@ async def lifespan(app: FastAPI):
     # intermittent "I don't know"). Best-effort, non-blocking — never delays startup.
     async def _warmup_llm():
         try:
-            from services.llm_client import chat_completion_sync
-            await asyncio.to_thread(
-                chat_completion_sync,
-                system_prompt="ping",
-                messages=[{"role": "user", "content": "ping"}],
-                max_tokens=1,
-                temperature=0.0,
-            )
-        except Exception:
-            pass
+            # Probe EVERY provider once instead of warming a single connection.
+            # This seeds the failure cooldowns, so a dead key (invalid Anthropic
+            # key, exhausted Gemini free tier) costs one startup probe rather
+            # than a failing round-trip on every chat message - and it prints
+            # which providers are actually alive, which nothing used to say.
+            from services.llm_client import probe_providers
+            await asyncio.to_thread(probe_providers)
+        except Exception as _pe:
+            print(f"[startup] llm provider probe failed: {_pe!r}")
     try:
         asyncio.create_task(_warmup_llm())
     except Exception:

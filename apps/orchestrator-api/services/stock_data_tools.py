@@ -503,18 +503,62 @@ _TOOL_DEFS: list[tuple[str, Callable, str, dict]] = [
 ]
 
 
+def _backend_reachable(timeout: float = 3.0) -> bool:
+    """One cheap liveness probe for the external Investment Engine backend.
+
+    Called once at registration. STOCK_BACKEND_PROBE=off skips the probe and
+    trusts the backend (useful if it is merely slow to wake but alive)."""
+    if (os.environ.get("STOCK_BACKEND_PROBE", "").strip().lower()
+            in ("off", "0", "no", "false")):
+        return True
+    url = _backend_url()
+    for path in ("/health", "/"):
+        try:
+            if httpx.get(f"{url}{path}", timeout=timeout).status_code < 400:
+                return True
+        except Exception:
+            pass
+    return False
+
+
 def register_stock_data_tools(registry: dict, ToolCls: type) -> int:
     """Register all Stock live-data read tools into the given TOOL_REGISTRY.
 
     Called from assistant_tools.py (passing its TOOL_REGISTRY + Tool class) to
     avoid a circular import. Returns the number of tools registered.
     """
+    # These 12 read from the external "Investment Engine" backend. That host has
+    # returned 503 "Service Suspended" since 2026-08-18, so every one of them is a
+    # guaranteed-failing option -- yet they still cost ~3k tokens of tool catalogue
+    # in EVERY chat system prompt and handed the model a dozen dead ends to pick
+    # from. Probe once at startup and skip them while it is down; a later restart
+    # restores them automatically if the host comes back.
+    _BACKEND_TOOLS = {
+        "stock_get_recommendations", "stock_get_portfolio",
+        "stock_get_intraday_signals", "stock_get_intraday_status",
+        "stock_get_market_summary", "stock_get_foreign_flow",
+        "stock_get_investor_flow", "stock_get_volume_spikes",
+        "stock_get_watchlist", "stock_get_alerts",
+        "stock_get_ownership_changes", "stock_get_news",
+    }
+    backend_up = _backend_reachable()
+
     n = 0
+    skipped = 0
     for name, fn, description, parameters in _TOOL_DEFS:
+        if name in _BACKEND_TOOLS and not backend_up:
+            skipped += 1
+            continue
         registry[name] = ToolCls(
             name=name, kind="read", description=description,
             parameters=parameters, fn=fn,
         )
         n += 1
-    log.info(f"stock_data_tools: registered {n} live-data read tools (backend={_backend_url()})")
+    if skipped:
+        log.warning(
+            f"stock_data_tools: registered {n} tools; SKIPPED {skipped} needing "
+            f"{_backend_url()} (unreachable). Set STOCK_BACKEND_URL to a live host, "
+            f"or STOCK_BACKEND_PROBE=off, to restore them.")
+    else:
+        log.info(f"stock_data_tools: registered {n} live-data read tools (backend={_backend_url()})")
     return n

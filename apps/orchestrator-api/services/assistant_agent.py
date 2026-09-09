@@ -4012,6 +4012,16 @@ def _pick_model_for_query(user_msg: str, history: list[dict]) -> str:
     return "groq-llama-3.3-70b"
 
 
+def _healthy_retry_model(avoid: str = "") -> Optional[str]:
+    """A live model to retry an unparseable answer with. Returns None (= let the
+    router decide) only if the health probe itself is unavailable."""
+    try:
+        from services.llm_client import pick_fallback_model as _pick_fb
+        return _pick_fb(avoid or "")
+    except Exception:
+        return None
+
+
 def _call_llm_for_decision(
     system: str,
     user_msg: str,
@@ -4051,14 +4061,16 @@ def _call_llm_for_decision(
     # Cascade order: if Claude is rate-limited, try its other tier; if both
     # Claude tiers fail (outage, key issue), drop to Gemini Flash, then
     # OpenAI as the cross-provider safety net. Cheapest survivor wins.
-    if primary == "claude-haiku-4-5":
-        fallback = "claude-sonnet-4-6"
-    elif primary == "claude-sonnet-4-6":
-        fallback = "claude-haiku-4-5"
-    elif primary.startswith("gemini"):
-        fallback = "claude-haiku-4-5"
-    else:
-        fallback = "gpt-5.4-mini"
+    # The fallback must be on a provider that is actually ALIVE. The old map was
+    # static (gemini -> claude-haiku, claude-sonnet -> claude-haiku), so once the
+    # Anthropic key went invalid every primary failure walked straight into a
+    # second guaranteed 401 and the user got "I couldn't process that" for
+    # questions the healthy Groq tier answers instantly (2026-09-09).
+    try:
+        from services.llm_client import pick_fallback_model as _pick_fb
+        fallback = _pick_fb(primary)
+    except Exception:
+        fallback = "groq-llama-3.3-70b"
 
     def _try(model: str) -> tuple[str, Optional[str]]:
         """Returns (usable_text, error_reason). usable_text is empty when
@@ -4082,7 +4094,7 @@ def _call_llm_for_decision(
                     messages=messages,
                     # Big enough that a multi-step {"steps":[...]} decision is never
                     # truncated mid-JSON (truncation → unparseable → raw-JSON leak).
-                    max_tokens=1100,
+                    max_tokens=1600,
                     temperature=0.2,
                     model=model,
                 )
@@ -4171,7 +4183,7 @@ def _call_llm_for_decision(
         # instead of the {"answer": …} JSON) and it carries every general-knowledge reply.
         # A 500-char cut chopped them mid-word — "* 1/4 cup of chopped", "* 2큰술" — while
         # the JSON branch below happily returned 2400. Same budget for both now.
-        return {"answer": raw[:2400], "_model": primary}
+        return {"answer": raw[:4000], "_model": primary}
     parsed["_model"] = primary
     return parsed
 
@@ -4881,13 +4893,13 @@ def _output_format_directive(user_msg: str) -> tuple[str, int, int]:
             "(don't truncate); order newest/most-relevant first.\n"
             "- Use the real numbers/dates from the result. At most ONE short "
             "line of text before the table.\n",
-            1300, 6000,
+            1600, 6000,
         )
     if wants_list:
         return (
             "Format the answer as a concise MARKDOWN bullet list — one bullet per "
             "item with its key fields and real values. No long prose.\n",
-            900, 5000,
+            1200, 5000,
         )
     return (
         "Answer like a knowledgeable consultant: give the full reasoning and the "
@@ -4895,7 +4907,7 @@ def _output_format_directive(user_msg: str) -> tuple[str, int, int]:
         "the question is complex), using the real numbers/names from the data. Be "
         "thorough, clear and consistent every turn (a follow-up deserves the same depth "
         "as the first answer); don't cut it short, but don't pad with filler.\n",
-        750, 2600,
+        1500, 2600,
     )
 
 
@@ -6678,6 +6690,14 @@ def run_agent(
                 _adv = _m.group(1).strip(" ,.;·-")
                 if len(_why) >= 8 and len(_adv) >= 4:
                     _parts = [_why.rstrip("?") + "?", _adv.rstrip("?") + "?"]
+    # Snapshot the LLM counter so we can report which model REALLY answered —
+    # and, just as importantly, when none did (a deterministic keyword path
+    # replied). The boss spent months assuming his model picker was in effect.
+    try:
+        from services import llm_client as _lc_seq
+        _seq_before = _lc_seq.call_seq()
+    except Exception:
+        _lc_seq, _seq_before = None, None
     if _parts:
         result = _answer_multi_part(db, _parts, language, current_path, selected_id,
                                     history, forced_model, user_id, agent_id, page_context)
@@ -6701,6 +6721,21 @@ def run_agent(
     # 💡 a natural next-step offer on data answers (boss 2026-08-26)
     if isinstance(result, dict):
         _append_followup(result, transcript)
+    # WHICH MODEL ACTUALLY ANSWERED (2026-09-09). The cascade silently swaps in a
+    # live provider when the requested one is down, and ~96 keyword paths answer
+    # with no model at all — both looked identical from the UI, so a dead
+    # Anthropic key read as "the model I picked is stupid".
+    try:
+        if isinstance(result, dict) and _lc_seq is not None and _seq_before is not None:
+            if _lc_seq.call_seq() > _seq_before:
+                _lu = _lc_seq.last_used()
+                result["real_model"] = f"{_lu.get('provider')}/{_lu.get('model')}"
+            else:
+                result["real_model"] = "deterministic (no LLM call)"
+            if forced_model:
+                result["requested_model"] = forced_model
+    except Exception:
+        pass
     # LANGUAGE GUARD — English question MUST get an English answer (and vice versa).
     # Catches the case where a delegated (stock-backend) reply comes back in Korean.
     # Skipped for llm_task: 'translate to Korean' answers ARE Korean on purpose.
@@ -10562,7 +10597,8 @@ def _run_agent_impl(
             system + "\n\n■ Your previous output was unparseable. Reply with the "
             "{\"answer\": \"...\"} shape ONLY — a direct, complete natural-language "
             "answer in the user's language. Do NOT use tools or steps.",
-            transcript, history or [], forced_model="claude-sonnet-4-6")
+            transcript, history or [], forced_model=_healthy_retry_model(
+                decision.get("_model") or forced_model or ""))
         if decision.get("_unparsed_decision") or (not decision.get("answer")
                                                   and not decision.get("tool")
                                                   and not decision.get("steps")):
