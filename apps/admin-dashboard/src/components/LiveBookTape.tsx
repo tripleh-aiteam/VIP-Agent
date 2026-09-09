@@ -19,7 +19,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
-import PricePlan, { type Plan } from "@/components/PricePlan";
+import PricePlan, { ProcessSteps, type Plan } from "@/components/PricePlan";
 
 const RED = "#d32f2f";
 const BLUE = "#1565c0";
@@ -43,6 +43,8 @@ export default function LiveBookTape({ code, tapeHeight = 300 }:
   const [execs, setExecs] = useState<Execs | null>(null);
   // 🎯 the price plan the panel below works out, lifted here so the book table
   // can mark the very rows those slices would stand on
+  const [steps, setSteps] = useState<{ ko: string; en: string; val: string }[]>([]);
+  const [pstep, setPstep] = useState(0);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [planSide, setPlanSide] = useState<"BUY" | "SELL">("BUY");
 
@@ -90,7 +92,8 @@ export default function LiveBookTape({ code, tapeHeight = 300 }:
               answered by the wall in this book right now, the buy by where the
               stock has actually traded for three months. */}
           <PricePlan code={code} book={book}
-                     onPlan={(p, sd) => { setPlan(p); setPlanSide(sd); }} />
+                     onPlan={(p, sd) => { setPlan(p); setPlanSide(sd); }}
+                     onSteps={(st, k) => { setSteps(st); setPstep(k); }} />
         </div>
         <table className="w-full text-[11.5px] tabular-nums">
           <thead><tr className="text-[10px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
@@ -246,6 +249,12 @@ export default function LiveBookTape({ code, tapeHeight = 300 }:
               {t("체결 불러오는 중…", "loading executions…")}</div>)}
         </div>
       </div>
+
+      {/* 🧠 UNDER THE TAPE, NOT BESIDE THE PLAN (boss 2026-09-09: "please move
+          'what it is doing right now' under the live executions, because it is
+          hiding other text"). Beside the table it stole 246px from the reasons
+          column; down here it has the full width. */}
+      <ProcessSteps steps={steps} step={pstep} />
     </div>
   );
 }

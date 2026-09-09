@@ -156,8 +156,46 @@ function buyPlan(code: string, qty: number, book: Book, bars: Bar[]): Plan | nul
     headEn: `A buy goes in at FIVE different prices - it is never in a hurry — an unfilled buy costs nothing, an expensive one costs every time. So the levels come from this stock's own habit rather than from the book: three months of "how far did it fall from its own open today", sorted, using only the depths it genuinely reaches. The likelier a level, the more shares stand there.` };
 }
 
-export default function PricePlan({ code, book, onPlan }:
-  { code: string; book: Book | null; onPlan?: (p: Plan | null, side: "BUY" | "SELL") => void }) {
+/** 🧠 THE WORK, AS ITS OWN BLOCK (boss 2026-09-09: "please move 'what it is
+    doing right now' under the live executions - it is hiding other text"). It
+    was standing beside the plan table and squeezing it; it belongs at the foot
+    of the page, under the tape, where it has the full width to itself. */
+export function ProcessSteps({ steps, step }:
+  { steps: { ko: string; en: string; val: string }[]; step: number }) {
+  const { t } = useLanguage();
+  if (!steps.length) return null;
+  return (
+    <div className="rounded-xl border overflow-hidden"
+         style={{ borderColor: "rgba(106,27,154,0.45)" }}>
+      <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]"
+           style={{ borderColor: "var(--border-default)" }}>
+        <b className="text-[13px]" style={{ color: "#6a1b9a" }}>
+          🧠 {t("지금 하고 있는 일 — 가격을 고르는 과정",
+                "what it is doing right now - how the price is chosen")}</b>
+        <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
+          {t("아래 숫자는 캡션이 아니라 실제로 측정한 값이며, 호가가 바뀔 때마다 다시 계산됩니다.",
+             "every number below is a measured value, not a caption, and is recomputed each time the book ticks.")}
+        </div>
+      </div>
+      <div className="px-4 py-2">
+        {steps.map((sp, i) => (
+          <div key={i} className="flex gap-2 items-baseline text-[11.5px] py-[3px]"
+               style={{ opacity: i <= step ? 1 : 0.32, transition: "opacity .25s ease",
+                        borderTop: i ? "1px solid rgba(106,27,154,0.13)" : undefined }}>
+            <span className="shrink-0 tabular-nums" style={{ width: 14, color: "#6a1b9a" }}>
+              {i < step ? "✓" : i === step ? "◍" : "·"}</span>
+            <span className="flex-1 leading-[1.4]" style={{ color: "var(--text-secondary)" }}>
+              {t(sp.ko, sp.en)}</span>
+            <span className="shrink-0 font-bold tabular-nums text-right" style={{ color: "#6a1b9a" }}>
+              {i <= step ? sp.val : ""}</span>
+          </div>))}
+      </div>
+    </div>);
+}
+
+export default function PricePlan({ code, book, onPlan, onSteps }:
+  { code: string; book: Book | null; onPlan?: (p: Plan | null, side: "BUY" | "SELL") => void;
+    onSteps?: (s: { ko: string; en: string; val: string }[], step: number) => void }) {
   const { t } = useLanguage();
   const [side, setSide] = useState<"BUY" | "SELL">("BUY");
   const [qty, setQty] = useState(100);
@@ -231,6 +269,11 @@ export default function PricePlan({ code, book, onPlan }:
           val: plan ? `${filled.toLocaleString()}${t("주", " sh")}` : "…" },
       ];
 
+  useEffect(() => { onSteps?.(steps, step); },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify(steps), step]);
+
+
   return (
     <div className="mt-1.5 px-2.5 py-2 rounded-lg"
          style={{ background: "rgba(106,27,154,0.06)", border: "1px solid rgba(106,27,154,0.25)" }}>
@@ -257,8 +300,6 @@ export default function PricePlan({ code, book, onPlan }:
       {/* THE PLAN ON THE LEFT, THE WORK ON THE RIGHT (boss 2026-09-09: "on the
           right side there is a space, so please show the process like thinking,
           checking, choosing prices"). */}
-      <div className="flex gap-3 items-start">
-      <div className="flex-1 min-w-0">
       {plan && (
         <div className="text-[10.5px] mt-1.5 leading-[1.55]" style={{ color: "var(--text-secondary)" }}>
           {t(plan.headKo, plan.headEn)}
@@ -320,32 +361,6 @@ export default function PricePlan({ code, book, onPlan }:
             : t(`합계 ${filled.toLocaleString()}주 · ${won(plan.slices.reduce((a, s) => a + s.px * s.qty, 0))} — 매도는 나눠 걸지 않습니다. 나가야 할 물량은 가장 두꺼운 벽보다 한 호가 먼저 서서 한 번에 비웁니다.`,
                 `${filled.toLocaleString()} sh · ${won(plan.slices.reduce((a, s) => a + s.px * s.qty, 0))} — a sell is not spread. Stock that has to leave stands one tick in front of the thickest wall and clears in one go.`)}
         </div>)}
-      </div>
 
-      <div className="shrink-0 rounded-lg px-2 py-1.5 mt-1.5"
-           style={{ width: 246, background: "rgba(106,27,154,0.09)",
-                    border: "1px solid rgba(106,27,154,0.28)" }}>
-        <div className="text-[10px] font-extrabold mb-1" style={{ color: "#6a1b9a" }}>
-          🧠 {t("지금 하고 있는 일", "what it is doing right now")}
-        </div>
-        {steps.map((sp, i) => (
-          <div key={i} className="flex gap-1.5 items-baseline text-[10px] py-[2px]"
-               style={{ opacity: i <= step ? 1 : 0.32,
-                        transition: "opacity .25s ease",
-                        borderTop: i ? "1px solid rgba(106,27,154,0.13)" : undefined }}>
-            <span className="shrink-0 tabular-nums" style={{ width: 11, color: "#6a1b9a" }}>
-              {i < step ? "✓" : i === step ? "◍" : "·"}</span>
-            <span className="flex-1 leading-[1.35]" style={{ color: "var(--text-secondary)" }}>
-              {t(sp.ko, sp.en)}</span>
-            <span className="shrink-0 font-bold tabular-nums text-right"
-                  style={{ color: "#6a1b9a", maxWidth: 118 }}>
-              {i <= step ? sp.val : ""}</span>
-          </div>))}
-        <div className="text-[9px] mt-1 leading-[1.4]" style={{ color: "var(--text-muted)" }}>
-          {t("호가가 바뀔 때마다 위 숫자는 다시 계산됩니다.",
-             "every number above is recomputed each time the book ticks.")}
-        </div>
-      </div>
-      </div>
     </div>);
 }
