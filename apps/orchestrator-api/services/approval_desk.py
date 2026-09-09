@@ -690,7 +690,7 @@ def _enrich_log_rows(st: dict) -> None:
                     from services.kiwoom_tape import _day as _kd8x
                     _at8 = _disp_at(l)
                     if (_row_day(l) == _kd8x() and len(_at8) == 5
-                            and l.get("_gsnap_at") != _at8):
+                            and l.get("_gsnap_at") != _at8 + "|v2"):
                         from routers.approval import whynot_at as _wna8
                         _wr8 = _wna8(code, _at8, name) or {}
                         _gs8 = _wr8.get("gates") or []
@@ -718,7 +718,7 @@ def _enrich_log_rows(st: dict) -> None:
                             _keepe = [x for x in (l.get("reasons_en") or [])[:1]]
                             l["reasons"] = _keepk + _rk8
                             l["reasons_en"] = _keepe + _re8
-                            l["_gsnap_at"] = _at8
+                            l["_gsnap_at"] = _at8 + "|v2"
                 except Exception:
                     pass
             # AND THE PAIR LEADS WITH THE GAP (boss 2026-09-09: "in the buying

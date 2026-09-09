@@ -621,6 +621,18 @@ def whynot_at(code: str, hhmm: str, name: str = "") -> dict | None:
            f"{(gap if gap is not None else 0):+.2f}% vs yesterday's close "
            f"{W9(yc)}. With no gap-up this stock is never refused on position — "
            f"it buys on the three red candles. Gate 1 passed.")
+        # THE SHAPE, AT THAT MINUTE (boss 2026-09-09: "there is not a
+        # kepsangsing, then it should say at this time stopped decrease and
+        # started increase and on the 3rd bought"). The replay says it for the
+        # past minute exactly as the live board says it for now.
+        try:
+            from services.kiwoom_rules import exempt_turn as _xtf7
+            _xt7 = _xtf7(code, day, upto=hhmm)
+            if _xt7 and r["gates"]:
+                r["gates"][-1]["ko"] += "\n" + _xt7["ko"]
+                r["gates"][-1]["en"] += "\n" + _xt7["en"]
+        except Exception:
+            pass
     else:
         _g(1, "gap", True,
            f"갭상승 없이 출발 (시가 {W9(op)}, 어제 종가 {W9(yc)} 대비 "
@@ -930,7 +942,19 @@ def whynot(db: Session = Depends(get_db)):
         if _xg9 and _xg9.get("no_ko"):
             _gate(1, "gap", False, _xg9["no_ko"], _xg9["no_en"])
         elif _xg9 and _xg9.get("buy_ko"):
-            _gate(1, "gap", True, _xg9["buy_ko"], _xg9["buy_en"])
+            # NO 갭상승 -> the next thing he wants to read is the shape, with
+            # its minutes and prices (boss 2026-09-09: "there is not a
+            # kepsangsing, then it should say at this time stopped decrease
+            # and started increase and on the 3rd bought like this")
+            _tk9 = _te9 = ""
+            try:
+                from services.kiwoom_rules import exempt_turn as _xtf9
+                _xt9 = _xtf9(code, day)
+                if _xt9:
+                    _tk9, _te9 = "\n" + _xt9["ko"], "\n" + _xt9["en"]
+            except Exception:
+                pass
+            _gate(1, "gap", True, _xg9["buy_ko"] + _tk9, _xg9["buy_en"] + _te9)
         elif gap is not None and gap >= 0.3 and _gwv9(day):
             _gate(1, "gap", True,
                   f"갭상승 +{gap}%으로 출발 — 원래대로면 1관문에서 막혔을 자리입니다. "

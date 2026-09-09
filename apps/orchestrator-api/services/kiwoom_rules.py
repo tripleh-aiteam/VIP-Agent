@@ -481,6 +481,90 @@ def exempt_gap(code: str, day: str = "") -> dict | None:
             "buy_ko": buy_ko, "buy_en": buy_en, "no_ko": no_ko, "no_en": no_en}
 
 
+def exempt_turn(code: str, day: str = "", upto: str = "") -> dict | None:
+    """THE ENTRY, TOLD THE WAY HE TELLS IT (boss 2026-09-09: "there is not a
+    kepsangsing, then it should say at this time stopped decrease and started
+    increase and on the 3rd bought like this").
+
+    For SK하이닉스 / 삼성전자 the position gate never refuses, so the buy rests
+    on exactly two facts: no 갭상승, and the shape - it fell, it stopped, it
+    rose three times. This finds those minutes on the tape and says them with
+    their prices. `upto` replays any past minute. Returns the 'we bought'
+    wording and the 'not yet' wording; None for any other stock.
+    """
+    code = str(code or "")
+    if code not in POS_GATE_EXEMPT:
+        return None
+    if not day:
+        from services.kiwoom_tape import _day as _kd7
+        day = _kd7()
+    try:
+        from routers.paper_desk import live_tape
+        bars = (live_tape(code=code, period=60, tick=5, bars=400) or {}).get("bars") or []
+    except Exception:
+        bars = []
+    if upto:
+        bars = [b for b in bars if str(b.get("hhmm") or "")[:5] <= upto]
+    if len(bars) < 4:
+        return None
+    w = bars[-30:]
+    # the low of the dip, and the minute it stopped falling
+    lows = [float(b.get("close") or 0) for b in w]
+    ti = lows.index(min(x for x in lows if x)) if any(lows) else 0
+    stop_at = str(w[ti].get("hhmm") or "")[:5]
+    stop_px = float(w[ti].get("close") or 0)
+    # what it fell FROM, before that low
+    from_px = max([float(b.get("close") or 0) for b in w[:ti + 1]] or [stop_px])
+    fell = ((from_px - stop_px) / from_px * 100) if from_px else 0.0
+    # then count the rises, forgiving one small blue but not a slide
+    ups, third_at, third_px, peak = 0, None, None, stop_px
+    rise_times = []
+    for b in w[ti + 1:]:
+        c = float(b.get("close") or 0)
+        t = str(b.get("hhmm") or "")[:5]
+        if c > peak or (rise_times and c > float(rise_times[-1][1])):
+            pass
+        if c > (float(rise_times[-1][1]) if rise_times else stop_px):
+            ups += 1
+            rise_times.append((t, c))
+            if ups == 3 and third_at is None:
+                third_at, third_px = t, c
+        if c > peak:
+            peak = c
+        if peak and (peak - c) / peak * 100 > 0.2:
+            ups, third_at, third_px, peak, rise_times = 0, None, None, c, []
+    px_now = float(w[-1].get("close") or 0)
+    W = lambda v: f"₩{v:,.0f}" if v else "?"
+    nm = "SK하이닉스" if code == "000660" else "삼성전자"
+    nm_e = "SK hynix" if code == "000660" else "Samsung Electronics"
+    seq_k = " · ".join(f"{t} {W(c)}" for t, c in rise_times[:3])
+    seq_e = " · ".join(f"{t} {W(c)}" for t, c in rise_times[:3])
+
+    if third_at:
+        ko = (f"📉→📈 {stop_at}에 {W(stop_px)}까지 내려온 뒤 하락이 멈췄고"
+              + (f" (그 전 {W(from_px)}에서 -{fell:.2f}%)" if fell >= 0.05 else "")
+              + f", 이어서 세 번 올랐습니다 — {seq_k}. "
+                f"3번째 상승이 선 {third_at} {W(third_px)}이 매수 자리입니다. "
+                f"작은 음봉 하나는 무시하지만 고점에서 0.2% 넘게 밀리면 신호는 사라집니다.")
+        en = (f"📉→📈 It fell to {W(stop_px)} at {stop_at}"
+              + (f" (-{fell:.2f}% from {W(from_px)})" if fell >= 0.05 else "")
+              + f", the fall STOPPED there, and then it rose three times — {seq_e}. "
+                f"The 3rd rise stood at {third_at} {W(third_px)} — that is the buy. "
+                f"One small blue candle is forgiven, but a slide of more than 0.2% "
+                f"off the high cancels the signal.")
+    else:
+        ko = (f"⏳ 아직 매수 자리가 아닙니다 — {stop_at}에 {W(stop_px)}까지 내려왔지만, "
+              f"하락이 멈춘 뒤 세 번 오르는 신호가 아직 서지 않았습니다 "
+              f"(지금 {ups}번, 현재 {W(px_now)}). {nm}는 이 신호가 서야 삽니다.")
+        en = (f"⏳ Not the buy yet — it came down to {W(stop_px)} at {stop_at}, but the "
+              f"three rises after the fall have not stood up yet "
+              f"({ups} so far, now {W(px_now)}). {nm_e} is bought only when that "
+              f"signal stands.")
+    return {"ok": bool(third_at), "stop_at": stop_at, "stop_px": stop_px,
+            "from_px": from_px, "fell": round(fell, 2), "third_at": third_at,
+            "third_px": third_px, "ups": ups, "px": px_now, "ko": ko, "en": en}
+
+
 def exempt_hold_line(code: str, px: float, basis: float = 0.0,
                      day: str = "") -> tuple:
     """WHY -1% DOES NOT SELL THESE TWO (boss 2026-09-09: "for selling case need
@@ -863,6 +947,32 @@ def pos_story(code: str, px: float, day: str, bar: float = 65.0,
                     "At 65% the chances multiply 2.3×, the win rate is the best measured and "
                     "the per-trade loss the smallest; above it the numbers turn worse again, "
                     "and removing the gate entirely is far worse — so the top-zone line is 65%.")
+    # ── HIS TWO NAMES DO NOT GET THE LECTURE (boss 2026-09-09, reading the
+    # SK하이닉스 card: "in case of buying case of skhynix and samsungchonja
+    # should be different not like this ... we should check Gate 1, there is
+    # not a kepsangsing, then it should say at this time stopped decrease and
+    # started increase and on the 3rd bought").
+    # Gate 2 cannot refuse these two, so printing the 120-day read, the four
+    # windows, the worked arithmetic AND the 24-day court behind the 65% bar
+    # buries the two facts that actually decided the trade under a page of
+    # numbers that decided nothing. The score still shows - he asked to see
+    # where they stand - but as ONE line; gate 1 and the turn carry the story.
+    if str(code) in POS_GATE_EXEMPT:
+        sk = [f"ℹ️ 위치 점수 {score:.1f}% — 참고용입니다. SK하이닉스·삼성전자는 "
+              f"위치로는 막지 않습니다 (기준 {bar:.0f}%를 넘어도 삽니다). 판단은 "
+              f"갭상승 · 반등 신호(하락이 멈추고 3번째 상승) · 거래량 · 뉴스, "
+              f"이 넷이 합니다."]
+        se = [f"ℹ️ Position score {score:.1f}% — for information only. SK hynix / "
+              f"Samsung Electronics are never refused on position (they buy even "
+              f"above the {bar:.0f}% bar). Four things decide instead: the gap-up, "
+              f"the turn signal (the fall stops, then the 3rd rise), volume and news."]
+        if context == "hold":
+            _hk2, _he2 = exempt_hold_line(code, px, day=day)
+            sk.append(_hk2)
+            se.append(_he2)
+        return {"ko": "\n".join(sk), "en": "\n".join(se),
+                "blend": round(blend, 1), "ok": ok,
+                "parts": [round(p) for p in parts], "dist": dist}
     return {"ko": "\n".join(ko_l), "en": "\n".join(en_l),
             "blend": round(blend, 1), "ok": ok, "parts": [round(p) for p in parts],
             "dist": dist}
