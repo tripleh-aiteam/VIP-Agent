@@ -31,7 +31,9 @@ type Status = { ok: boolean; lanes: Lanes; acts: Act[]; positions: Pos[]; cfg: C
 type Trade = { at: string; code: string; name: string; side: "BUY" | "SELL"; qty: number;
                px: number; tag: string; pnl?: number | null; pnl_pct?: number | null;
                fee?: number; src?: string; ko: string; en: string };
-type Book = { ok: boolean; day?: string; trades: Trade[]; stats: Stats };
+type Book = { ok: boolean; day?: string; trades: Trade[]; stats: Stats;
+              archived?: boolean; days?: DayRow[] };
+type DayRow = { day: string; n: number; pct?: number | null; live?: boolean };
 
 const W = (n?: number | null) => (n == null ? "-" : "₩" + Math.round(n).toLocaleString());
 const M = (n?: number | null) => {           // ₩ in 억/만 so nine digits stay readable
@@ -63,13 +65,15 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
   const [open, setOpen] = useState(true);
   const [showRule, setShowRule] = useState(false);
   const [openTrip, setOpenTrip] = useState<string | null>(null);
+  const [day, setDay] = useState("");            // "" = today's live book
 
   const pull = useCallback(() => {
     fetch(`${base}/approval/wave/status`).then((r) => r.json())
       .then((d) => { if (d?.ok) setS(d); }).catch(() => {});
-    fetch(`${base}/approval/wave/auto-book?limit=300`).then((r) => r.json())
+    fetch(`${base}/approval/wave/auto-book?limit=300${day ? `&day=${day}` : ""}`)
+      .then((r) => r.json())
       .then((d) => { if (d?.ok) setBook(d); }).catch(() => {});
-  }, [base]);
+  }, [base, day]);
   useEffect(() => { pull(); const i = setInterval(pull, 5000); return () => clearInterval(i); }, [pull]);
 
   const lanes: Lanes = s?.lanes || { semi: true, auto: true };
@@ -230,6 +234,21 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
                   The lane trades every stock the desk watches from the open; the
                   replay stays available on /approval/wave/backfill for seeding a
                   past day, but it is not a button on his screen. */}
+              {/* A FINISHED SESSION IS STILL READABLE (2026-09-10): the lanes
+                  reset at the first candle of a new day, so yesterday's book is
+                  archived whole and reachable from these chips. */}
+              {(book?.days || []).slice(0, 6).map((dd) => {
+                const on = (day || (book?.days?.[0]?.day ?? "")) === dd.day;
+                return (
+                  <span key={dd.day} onClick={() => setDay(dd.live ? "" : dd.day)}
+                    style={{ cursor: "pointer", fontSize: 11.2, padding: "2px 9px",
+                             borderRadius: 999, fontWeight: on ? 800 : 400,
+                             background: on ? "rgba(198,40,40,0.15)" : "rgba(128,128,128,0.1)" }}>
+                    {dd.live ? t("오늘", "today") : `${dd.day.slice(4, 6)}/${dd.day.slice(6, 8)}`}
+                    {dd.n ? ` ${dd.n}` : ""}
+                    {dd.pct != null && dd.n ? ` ${dd.pct >= 0 ? "+" : ""}${dd.pct.toFixed(2)}%` : ""}
+                  </span>);
+              })}
               <span style={{ marginLeft: "auto", fontSize: 11.3, opacity: 0.7 }}>
                 {t("전 종목 · 장중 자동 기록", "all watched stocks · recorded live through the session")}</span>
             </div>

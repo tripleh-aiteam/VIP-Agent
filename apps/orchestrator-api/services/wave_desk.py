@@ -120,6 +120,28 @@ def _today() -> str:
     return _day()
 
 
+def _roll(d: dict) -> dict:
+    """CLOSE YESTERDAY'S BOOK, DO NOT BURN IT (2026-09-10, 08:1x - 49 minutes
+    before the bell). The lanes reset their state at the first tick of a new
+    session, and that reset emptied `trades` - so the 77-trade experiment he
+    asked to read THIS MORNING would have vanished the moment the market opened
+    and the first candle arrived. A finished day is now archived whole, with its
+    scoreboard, and the last ten sessions are kept."""
+    today = _today()
+    book = d.setdefault("auto", _blank()["auto"])
+    if book.get("day") and book["day"] != today and (book.get("trades")
+                                                     or book.get("positions")):
+        arch = d.setdefault("archive", {})
+        arch[book["day"]] = {"day": book["day"], "trades": book.get("trades") or [],
+                             "stats": auto_stats(book)}
+        for k in sorted(arch)[:-10]:
+            arch.pop(k, None)
+        book.update({"day": today, "state": {}, "positions": {}, "trades": []})
+    if d.get("day") and d["day"] != today:
+        d["day"], d["state"], d["acts"] = today, {}, []
+    return d
+
+
 # ── the ladder state each lane carries ───────────────────────────────────────
 def _state(bag: dict, code: str, name: str) -> dict:
     from services import wave_rule as W
@@ -277,7 +299,7 @@ def backfill(codes: list[str], day: str = "", clear: bool = True) -> dict:
     as a live one would be - same fees, same tax, same history row. Re-running
     it replaces that stock's backfilled rows instead of adding a second copy."""
     from services import wave_rule as W
-    d = _read()
+    d = _roll(_read())
     book = d.setdefault("auto", _blank()["auto"])
     day8 = day or _today()
     if book.get("day") != day8:
@@ -431,7 +453,7 @@ def run_all(db) -> dict:
     except Exception as e:
         out["errors"].append(str(e)[:80])
         return out
-    d = _read()
+    d = _roll(_read())
     for code, name, _score in rooms:
         # 🤖 AUTO — its own book, its own ladder state, no click and no desk
         if L.get("auto"):
@@ -513,10 +535,20 @@ def today_acts(limit: int = 60) -> list:
     return (d.get("acts") or [])[-limit:]
 
 
-def auto_book(limit: int = 400) -> dict:
-    """The auto lane's trading history and its scoreboard."""
-    d = _read()
+def auto_book(limit: int = 400, day: str = "") -> dict:
+    """The auto lane's trading history and its scoreboard - today's, or any
+    archived session (`day` = YYYYMMDD)."""
+    d = _roll(_read())
     book = d.get("auto") or {}
+    if day and day != (book.get("day") or ""):
+        arch = (d.get("archive") or {}).get(day)
+        if arch:
+            return {"ok": True, "day": day, "lanes": lanes(),
+                    "trades": (arch.get("trades") or [])[-limit:],
+                    "stats": arch.get("stats") or {}, "archived": True,
+                    "days": _day_list(d)}
+        return {"ok": False, "day": day, "error": "no book stored for that day",
+                "days": _day_list(d)}
     live = {}
     try:
         from services.paper_desk import fast_price
@@ -528,12 +560,26 @@ def auto_book(limit: int = 400) -> dict:
         pass
     return {"ok": True, "day": book.get("day"), "lanes": lanes(),
             "trades": (book.get("trades") or [])[-limit:],
-            "stats": auto_stats(book, live)}
+            "stats": auto_stats(book, live), "days": _day_list(d)}
+
+
+def _day_list(d: dict) -> list:
+    """Sessions the auto book can show, newest first: today, then the archive."""
+    out = []
+    book = d.get("auto") or {}
+    if book.get("day"):
+        out.append({"day": book["day"], "n": len(book.get("trades") or []),
+                    "pct": (auto_stats(book) or {}).get("pct"), "live": True})
+    for k in sorted((d.get("archive") or {}), reverse=True):
+        a = d["archive"][k]
+        out.append({"day": k, "n": len(a.get("trades") or []),
+                    "pct": (a.get("stats") or {}).get("pct"), "live": False})
+    return out
 
 
 def status() -> dict:
     from services import wave_rule as W
-    d = _read()
+    d = _roll(_read())
     live = d.get("day") == _today()
     book = d.get("auto") or {}
     return {"ok": True, "lanes": lanes(), "mode": mode(), "day": d.get("day"),
@@ -541,6 +587,7 @@ def status() -> dict:
             "auto_day": book.get("day"),
             "auto_stats": auto_stats(book),
             "auto_trades": len(book.get("trades") or []),
+            "days": _day_list(d),
             "positions": [{"code": c, "name": s.get("name"), "qty": s.get("qty"),
                            "avg": s.get("avg_px"), "first": s.get("first_px"),
                            "steps": s.get("steps"), "sold": s.get("sold"),

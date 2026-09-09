@@ -2478,12 +2478,12 @@ def wave_lane(name: str = Query(..., description="semi | auto"),
 
 
 @router.get("/wave/auto-book")
-def wave_auto_book(limit: int = Query(400)):
+def wave_auto_book(limit: int = Query(400), day: str = Query("")):
     """🤖 The auto lane's own trading history and scoreboard: every buy and sell
     with its reason, the invested capital, realised and unrealised gain, the
     win rate and the total - fees and the 0.18% sell tax already taken off."""
     from services.wave_desk import auto_book
-    return auto_book(limit)
+    return auto_book(limit, day)
 
 
 @router.post("/wave/backfill")
