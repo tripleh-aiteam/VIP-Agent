@@ -910,6 +910,30 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
             # anything mentioned the market was shut.
             if not market_is_open() and AFTER_HOURS_TEST:
                 _hd0 = closed_test_note("BUY", en) + "\n\n" + _hd0
+            # NO PRICE TOLD → RECOMMEND FIVE (boss 2026-09-10: "if we do not tell
+            # the price our chatbot should recommend 5 different efficient prices
+            # according to market and our historical data for buying"). Show the
+            # actual numbers and why each was picked — a recommendation he cannot
+            # see is not a recommendation. "네" takes all five as a ladder.
+            _rec = ""
+            try:
+                from services.price_ladder import buy_rungs as _brg
+                _rr = _brg(db, code, float(px), 5)
+                if len(_rr) == 5:
+                    _lines = [f"  {i}. ₩{r['price']:,.0f} — {r['en'] if en else r['ko']}"
+                              for i, r in enumerate(_rr, 1)]
+                    _rec = (("💡 **My recommendation — 5 efficient prices** "
+                             "(order book + our historical data):\n" if en else
+                             "💡 **추천 — 효율가 5자리** (호가창 + 우리 과거 데이터):\n")
+                            + "\n".join(_lines) + "\n"
+                            + ("· Say **\"yes\"** to take all five (I'll ask the total size next).\n\n"
+                               if en else
+                               "· **\"네\"** 라고 하시면 5자리 전부로 진행합니다 (다음에 총 수량을 여쭤봅니다).\n\n"))
+                    _PENDING["rec5"] = True
+                    _save_pending()
+            except Exception as _e6:
+                log.warning(f"5-price recommendation failed ({code}): {str(_e6)[:120]}")
+            _hd0 = _hd0 + _rec
             if en:
                 return (_hd0 +
                         f"🛒 **{name}** — step 1 of 2: what PRICE would you like?\n"
@@ -943,6 +967,26 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
         # must actually fill, at the last traded price — so no offer, market it
         # is. A price he names himself still wins (the branch above).
         pass
+    elif side == "SELL":
+        # HIS SELL RULE (boss 2026-09-10): "for selling it should be one down of
+        # the highest volume price". That is the price the most shares actually
+        # TRADED at today — where the buyers are — not the biggest resting offer
+        # in the book, which is what _book_offer reads. A tick under it sells
+        # into that demand instead of queuing behind it.
+        try:
+            from services.price_ladder import sell_price as _spx
+            _sp = _spx(code, px)
+            if _sp and float(_sp["price"]) > 0:
+                limit_price = float(_sp["price"])
+                offer = {"mode": "poc", "wall_price": _sp["poc"],
+                         "wall_qty": _sp["poc_volume"], "limit": limit_price,
+                         "ko": _sp["ko"], "en": _sp["en"]}
+        except Exception as _e7:
+            log.warning(f"sell POC price failed ({code}): {str(_e7)[:120]}")
+        if limit_price is None:
+            offer = _book_offer(code, side)
+            if offer:
+                limit_price = offer["limit"]
     elif not market_flag:
         offer = _book_offer(code, side)
         if offer:
@@ -1073,6 +1117,9 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
              f"· Live price: ₩{px:,.0f} → total ~₩{total:,.0f} (fee {fee}%)"]
         if price_asked:
             L.append(f"· Order: **LIMIT ₩{limit_price:,.0f}** (your price) — waits in the book until touched")
+        elif offer and offer.get("mode") == "poc":
+            L.append(f"· Order: **LIMIT ₩{limit_price:,.0f}** — {offer.get('en', '')} "
+                     f"· say 'market' for an instant fill")
         elif offer and offer.get("mode") == "cap":
             L.append(f"· Order: **LIMIT ₩{limit_price:,.0f}** — price-cap rule: we never queue "
                      f"more than ₩{offer.get('cap', 0):,.0f} from the live price, so the order "
@@ -1110,6 +1157,9 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
              f"· 현재가: ₩{px:,.0f} → 예상 금액 ~₩{total:,.0f} (수수료 {fee}%)"]
         if price_asked:
             L.append(f"· 주문: **지정가 ₩{limit_price:,.0f}** (직접 제시하신 가격) — 가격이 닿을 때까지 호가창에서 대기합니다")
+        elif offer and offer.get("mode") == "poc":
+            L.append(f"· 주문: **지정가 ₩{limit_price:,.0f}** — {offer.get('ko', '')} "
+                     f"· 즉시 팔려면 '시장가'라고 말씀하세요")
         elif offer and offer.get("mode") == "cap":
             L.append(f"· 주문: **지정가 ₩{limit_price:,.0f}** — 가격 제한 규칙: 현재가에서 "
                      f"₩{offer.get('cap', 0):,.0f} 이상 떨어진 곳에는 줄을 서지 않습니다 "
@@ -1494,36 +1544,59 @@ def ladder_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
         return ("⚠️ 현재가를 가져올 수 없어 주문을 만들 수 없습니다." if not en
                 else "⚠️ No live price - cannot build the ladder.")
     px = float(px)
-    slices, seen_p = [], set()
-    per = qty // n
-    if side == "BUY":
-        edge = _today_low(code) or px * 0.99
-        top = px - _tick(px)                   # first slice just under the market
-        floor = min(top - _tick(px), max(edge, px * 0.99))
-        step = (top - floor) / max(1, n - 1)
-        for i in range(n):
-            raw = top - step * i
-            tk = _tick(raw)
-            pr = float(int(raw // tk) * tk)    # round DOWN - cheaper is better to buy
-            while pr in seen_p:
-                pr -= tk
-            seen_p.add(pr)
-            slices.append([pr, int(per + (qty - per * n if i == 0 else 0))])
-        edge_ko, edge_en = "오늘 저가", "today's low"
+    # EVERY RUNG STANDS ON SOMETHING (boss 2026-09-10: "recommend 5 different
+    # efficient prices according to market and our historical data"). The old
+    # ladder divided the gap to today's low into equal steps, which rests orders
+    # at prices nothing happens at. price_ladder anchors each rung on a bid wall,
+    # the session's highest-volume price, today's low or the recent dip — and
+    # carries the reason, so every line of the confirmation can say WHY.
+    slices, per = [], qty // n
+    _reasons: list[str] = []
+    try:
+        from services import price_ladder as _pl
+        _rungs = (_pl.buy_rungs(db, code, px, n) if side == "BUY"
+                  else _pl.sell_rungs(code, px, n))
+    except Exception as _e:
+        log.warning(f"price_ladder failed ({code}): {str(_e)[:120]}")
+        _rungs = []
+    if len(_rungs) < n:                        # never ship a short ladder
+        _rungs = []
+    if _rungs:
+        for i, r in enumerate(_rungs):
+            slices.append([float(r["price"]),
+                           int(per + (qty - per * n if i == 0 else 0))])
+            _reasons.append(r["en"] if en else r["ko"])
+        edge_ko, edge_en = "시장·과거 데이터", "market + historical data"
     else:
-        edge = _today_high(code) or px * 1.01
-        base = px + _tick(px)                  # first slice just above the market
-        ceil_ = max(base + _tick(px), min(edge, px * 1.01))
-        step = (ceil_ - base) / max(1, n - 1)
-        for i in range(n):
-            raw = base + step * i
-            tk = _tick(raw)
-            pr = float(-(-raw // tk) * tk)     # round UP - richer is better to sell
-            while pr in seen_p:
-                pr += tk
-            seen_p.add(pr)
-            slices.append([pr, int(per + (qty - per * n if i == 0 else 0))])
-        edge_ko, edge_en = "오늘 고가", "today's high"
+        seen_p = set()
+        if side == "BUY":
+            edge = _today_low(code) or px * 0.99
+            top = px - _tick(px)               # first slice just under the market
+            floor = min(top - _tick(px), max(edge, px * 0.99))
+            step = (top - floor) / max(1, n - 1)
+            for i in range(n):
+                raw = top - step * i
+                tk = _tick(raw)
+                pr = float(int(raw // tk) * tk)   # round DOWN - cheaper is better to buy
+                while pr in seen_p:
+                    pr -= tk
+                seen_p.add(pr)
+                slices.append([pr, int(per + (qty - per * n if i == 0 else 0))])
+            edge_ko, edge_en = "오늘 저가", "today's low"
+        else:
+            edge = _today_high(code) or px * 1.01
+            base = px + _tick(px)              # first slice just above the market
+            ceil_ = max(base + _tick(px), min(edge, px * 1.01))
+            step = (ceil_ - base) / max(1, n - 1)
+            for i in range(n):
+                raw = base + step * i
+                tk = _tick(raw)
+                pr = float(-(-raw // tk) * tk)   # round UP - richer is better to sell
+                while pr in seen_p:
+                    pr += tk
+                seen_p.add(pr)
+                slices.append([pr, int(per + (qty - per * n if i == 0 else 0))])
+            edge_ko, edge_en = "오늘 고가", "today's high"
     total = sum(pr * q for pr, q in slices)
     _PENDING.clear()
     _PENDING.update({"ladder": True, "side": side, "code": code, "name": name,
@@ -1534,7 +1607,12 @@ def ladder_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
           f"🪜 **Split-{side.lower()} confirmation - {name}, {qty:,} shares over {n} price levels**")]
     if held_note:
         L.append(held_note)
-    if side == "BUY":
+    if _reasons:
+        L.append(f"현재가 ₩{px:,.0f} 기준 — 호가창과 우리 과거 데이터에서 고른 {n}개 자리입니다:"
+                 if not en else
+                 f"Live ₩{px:,.0f} — {n} prices chosen from the order book and our own "
+                 f"historical data:")
+    elif side == "BUY":
         L.append(f"현재가 ₩{px:,.0f} 바로 아래부터 {edge_ko}(₩{edge:,.0f}) 방향으로 사다리를 놓습니다:"
                  if not en else
                  f"Laddered from just under the live price ₩{px:,.0f} toward {edge_en} ₩{edge:,.0f}:")
@@ -1543,7 +1621,8 @@ def ladder_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
                  if not en else
                  f"Laddered from just above the live price ₩{px:,.0f} toward {edge_en} ₩{edge:,.0f}:")
     for i, (pr, q) in enumerate(slices, 1):
-        L.append(f"  {i}. ₩{pr:,.0f} × {q:,}" + ("주" if not en else " sh"))
+        _why = f" — {_reasons[i - 1]}" if i <= len(_reasons) else ""
+        L.append(f"  {i}. ₩{pr:,.0f} × {q:,}" + ("주" if not en else " sh") + _why)
     if side == "BUY":
         L.append((f"예상 총액 ~₩{total:,.0f} · 전부 지정가 대기 - 가격이 내려올수록 아래 단계가 "
                   f"차례로 체결되고, 체결마다 이 채팅으로 ✅ 알림이 옵니다. 취소: \"{name} 주문 취소\""
@@ -1745,6 +1824,24 @@ def finish(db, word: str) -> Optional[str]:
     _PENDING.clear()
     _save_pending()
     en = bool(p.get("en"))
+    # "네" to the 5-price recommendation: take all five and ask the total size.
+    # Without this the yes fell through to llm_chat and the recommendation the
+    # desk had just made could not actually be accepted (boss 2026-09-10).
+    if p.get("rec5") and p.get("offer") and p.get("price_first"):
+        if word == "no":
+            return ("알겠습니다 — 주문 없이 두겠습니다. 가격을 직접 정하셔도 됩니다."
+                    if not en else
+                    "Understood — nothing placed. You can name your own price anytime.")
+        _PENDING.clear()
+        _PENDING.update({"need_qty": True, "ladder_n": 5,
+                         "side": p.get("side") or "BUY", "code": p["code"],
+                         "name": p.get("name") or p["code"],
+                         "ts": time.time(), "en": en})
+        _save_pending()
+        return ("🪜 **5자리 전부로 진행합니다.** 총 몇 주로 할까요? "
+                "5개 가격에 나눠서 걸어드립니다.\n· 예: **\"1,000주\"**" if not en else
+                "🪜 **Taking all five prices.** How many shares IN TOTAL? "
+                "I'll split them across the 5 levels.\n· e.g. **\"1000 shares\"**")
     # a which-stock / which-price QUESTION is standing — "네" can't answer it;
     # re-ask instead of crashing into an execute with missing fields
     if p.get("need_stock") or p.get("need_price"):
