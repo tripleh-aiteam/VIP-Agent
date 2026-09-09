@@ -1218,8 +1218,9 @@ def ladder_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
     # already blanks the PRICE for exactly this reason; the ladder never blanked
     # the QUANTITY. Total quantity - "1000주" / "1000 stocks"; the ladder count
     # (10가지) is already consumed by its own pattern, so a bare big number is qty.
-    qm = (re.search(r"(\d[\d,]{2,})\s*(?:주|shares?|stocks?|개)", tl)
-          or re.search(r"\b(\d{3,6})\b", re.sub(m.re.pattern, " ", tl)))
+    _tl_nocount = re.sub(m.re.pattern, " ", tl)   # the "5가지"/"5 different prices" span
+    qm = (re.search(r"(\d[\d,]*)\s*(?:주|shares?|stocks?|개)", tl)
+          or re.search(r"\b(\d{2,6})\b", _tl_nocount))
     if not qm:
         return None
     qty = max(n, int(qm.group(1).replace(",", "")))

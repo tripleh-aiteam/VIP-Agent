@@ -5853,7 +5853,8 @@ _PORTFOLIO_RE = _re.compile(
     # ownership questions read the desk, they never ask the adviser
     r"|\bdo (i|we) (still )?(have|own|hold)\b|\bam i (still )?holding\b"
     r"|\bare we (still )?holding\b|\bhave (i|we) (got|bought)\b"
-    r"|(가지고|갖고|들고)\s*있|보유\s*(중|하고\s*있|했)|(아직|지금).{0,10}(있어|있나|있니)",
+    r"|(가지고|갖고|들고)\s*있|보유\s*(중|하고\s*있|했)|(아직|지금).{0,10}(있어|있나|있니)"
+    r"|보유\s*현황|잔고|포지션\s*현황|보유\s*(?:종목|리스트|목록)",
     _re.IGNORECASE)
 
 
@@ -7614,14 +7615,42 @@ def _run_agent_impl(
                                # imperative ORDERS go to the trade lane, which now
                                # carries the gate verdict itself (boss 2026-09-07:
                                # "I wanna buy skhynix right now" must make the order)
-                               r"|\d+\s*shares?|please\s+(buy|sell)|(buy|sell)\s+\d"
+                               # "100 stock(s)" and the split-order phrasing
+                               # ("5 different prices" / "5가지") are ORDERS too.
+                               # Boss 2026-09-09: "Sell skhynix 100 stock with 5
+                               # different price" matched none of the patterns
+                               # below - not \d+shares (he wrote "stock"), not
+                               # (sell)\s+\d (a name follows "sell") - so the
+                               # advice lane answered a ladder ORDER with a
+                               # holding verdict and the ladder never ran.
+                               r"|\d+\s*(?:shares?|stocks?)\b"
+                               r"|\d+\s*가지|\d+\s*(?:different|다른)\s*(?:prices?|가격)"
+                               r"|please\s+(buy|sell)|(buy|sell)\s+\d"
                                r"|wanna\s+(buy|sell)|want\s+to\s+(buy|sell)"
                                r"|사고\s*싶|팔고\s*싶|살래|팔래"
                                # time-EDIT orders belong to the trip editor, not
                                # advice ("this buying time to 10:26: …" was
                                # answered with a holding verdict, 2026-09-07)
                                r"|buying\s*time|selling\s*time|time\s*to\s*\d"
-                               r"|시간을|시간\s*변경|시간으로|remove|delete|삭제|지워",
+                               r"|시간을|시간\s*변경|시간으로|remove|delete|삭제|지워"
+                               # OWNERSHIP / COUNT questions are a desk readout, not
+                               # advice. _adv below matches a bare "hold\??", so
+                               # "how many SK hynix do we hold?" was answered with a
+                               # Menu 3 verdict and never said the share count - while
+                               # the Korean "SK하이닉스 몇 주 보유하고 있어?" answered
+                               # correctly, because it reached the portfolio lane 239
+                               # lines further down (boss 2026-09-09: "it even does not
+                               # know how many stock we are holding").
+                               # whole-position and fraction ORDERS carry no digit+unit,
+                               # so none of the patterns above caught them and the
+                               # advice lane answered "sell all SK hynix" with a
+                               # holding verdict instead of selling (2026-09-09).
+                               r"|\b(?:buy|sell)\s+(?:all|half)\b|전량|절반|\d+\s*%"
+                               r"|how many\b|how much.{0,12}\b(?:do|did)\s+(?:i|we)\b"
+                               r"|\bdo (?:i|we) (?:still )?(?:have|own|hold)\b"
+                               r"|\bwhat do (?:i|we) (?:own|hold)\b"
+                               r"|\bmy (?:holdings?|positions?|portfolio)\b"
+                               r"|몇\s*주|몇\s*종목|보유\s*현황",
                                transcript, _re.IGNORECASE)):
         _adv = bool(_re.search(
             r"살까|살\s*까|살가|사까|사야|사도|매수|팔까|팔가|팔아야|매도|어때|어떄|추천"
