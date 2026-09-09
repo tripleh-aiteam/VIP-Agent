@@ -580,7 +580,17 @@ def chat_mirror(code: str, name: str, side: str, qty: int, fill: float) -> bool:
             _trip = {"buy_at": _bat9, "buy_price": _bp9,
                      "pnl_pct": round((float(fill) / _bp9 - 1) * 100, 2),
                      "pnl_won": round((float(fill) - _bp9) * int(qty))}
-        st["held"] = [h for h in st.get("held") or [] if h["code"] != code]
+        # A PARTIAL SELL LEAVES WHAT IT DID NOT SELL (boss 2026-09-09: he told
+        # me to get rid of the duplicate 468 삼성중공업 shares, the sale went out
+        # correctly - and Menu 3 then dropped the WHOLE position, hiding the 96
+        # shares we still own. Same fault the desk's own ladder sell had; this
+        # is its twin on the chat's side.)
+        _lot9 = next((h for h in st.get("held") or [] if h["code"] == code), None)
+        _left9 = int((_lot9 or {}).get("qty") or 0) - int(qty)
+        if _lot9 and _left9 > 0:
+            _lot9["qty"] = _left9
+        else:
+            st["held"] = [h for h in st.get("held") or [] if h["code"] != code]
     if side == "SELL" and not _gko:
         _gko.append("데스크의 -1% 매도 규칙과 무관하게, 사장님의 지시로 실행된 매도입니다.")
         _gen.append("Sold on the boss's own order, independent of the desk's -1% sell rule.")
@@ -3081,6 +3091,15 @@ def _why_buy(code: str, name: str, hold: dict):
     if _xg9 and _xg9.get("buy_ko"):
         R.append(_xg9["buy_ko"])
         E.append(_xg9["buy_en"])
+        # then the shape, in his own words, with the minutes and the prices
+        try:
+            from services.kiwoom_rules import exempt_turn as _xtf8
+            _xt8 = _xtf8(code, upto=bt or "")
+            if _xt8:
+                R.append(_xt8["ko"])
+                E.append(_xt8["en"])
+        except Exception:
+            pass
     if gk:
         R.append("✅ 살 수 있는 자리입니다 — " + " · ".join(gk))
         E.append("✅ THIS IS A PLACE TO BUY — " + " · ".join(ge))
