@@ -690,50 +690,32 @@ def _enrich_log_rows(st: dict) -> None:
                     from services.kiwoom_tape import _day as _kd8x
                     _at8 = _disp_at(l)
                     if (_row_day(l) == _kd8x() and len(_at8) == 5
-                            and l.get("_gsnap_at") != _at8 + "|v4"):
+                            and l.get("_gsnap_at") != _at8 + "|v6"):
                         from routers.approval import whynot_at as _wna8
                         _wr8 = _wna8(code, _at8, name) or {}
                         _gs8 = _wr8.get("gates") or []
                         if _gs8:
-                            _hk8 = ("⚠️ 이 시각에 매수 관문이 막혀 있었지만, 사장님이 "
-                                    "챗봇으로 직접 승인하신 매매입니다. "
-                                    f"{_at8} 그 시각의 관문:"
-                                    if _wr8.get("stopped_at") else
-                                    "✅ 매매 시각에 매수 관문이 모두 열려 있었습니다 — "
-                                    f"규칙과 같은 방향의 매수입니다. {_at8} 그 시각의 관문:")
-                            _he8 = ("⚠️ The buy gates were BLOCKED at this minute, but "
-                                    "the boss approved it directly in chat. The gates "
-                                    f"as of {_at8}:"
-                                    if _wr8.get("stopped_at") else
-                                    "✅ Every buy gate was OPEN at the minute of the "
-                                    "trade — a buy in the same direction as the rule. "
-                                    f"The gates as of {_at8}:")
-                            _rk8, _re8 = [_hk8], [_he8]
+                            # NO PREAMBLE — THE GATES ARE THE EXPLANATION (boss
+                            # 2026-09-09: "please remove the first line of the
+                            # explanation and directly start explaining gates —
+                            # it is better in all stock"). That line also
+                            # printed the minute the ORDER went out ("as of
+                            # 12:34") beside a buy clock he had corrected to
+                            # 09:04 on the very same card - one trade wearing
+                            # two times.
+                            _rk8, _re8 = [], []
                             for _g8 in _gs8:
                                 _m8 = "✅" if _g8.get("passed") else "⛔"
                                 _rk8.append(f"{_m8} {_g8['n']}. {_g8['ko']}")
                                 _re8.append(f"{_m8} {_g8['n']}. {_g8['en']}")
-                            # keep the 💬 header, drop the stale snapshot lines
-                            _keepk = [x for x in (l.get("reasons") or [])[:1]]
-                            _keepe = [x for x in (l.get("reasons_en") or [])[:1]]
-                            # HIS TWO NAMES WERE NOT AN EXPERIMENT (boss
-                            # 2026-09-09: "pLEASE REMOVE CHATBOT ORDER WORD").
-                            # SK하이닉스 / 삼성전자 buying on the 3rd rise after a
-                            # clean open IS the standing law he wrote this
-                            # morning; they only came through chat because the
-                            # desk had not shipped it yet. Calling that a
-                            # chatbot experiment misfiles his own rule.
-                            if code in POS_GATE_EXEMPT:
-                                _keepk, _keepe = [], []
-                                _rk8[0] = (f"✅ 회장님이 정하신 예외 규칙대로 산 자리입니다 "
-                                           f"— 갭상승이 없고, 하락이 멈춘 뒤 3번째 상승이 "
-                                           f"선 자리. {_at8} 그 시각의 관문:")
-                                _re8[0] = (f"✅ Bought by your standing rule for these two "
-                                           f"— no gap-up, and the 3rd rise standing after "
-                                           f"the fall stopped. The gates as of {_at8}:")
+                            # and nothing kept in front of them either - not
+                            # the 💬 chatbot header (he had that removed for his
+                            # two names on 09-09) and not the 🏷 why-this-stock
+                            # line. The explanation opens at gate 1.
+                            _keepk, _keepe = [], []
                             l["reasons"] = _keepk + _rk8
                             l["reasons_en"] = _keepe + _re8
-                            l["_gsnap_at"] = _at8 + "|v4"
+                            l["_gsnap_at"] = _at8 + "|v6"
                 except Exception:
                     pass
             # AND THE PAIR LEADS WITH THE GAP (boss 2026-09-09: "in the buying
@@ -1634,23 +1616,12 @@ def scan(db) -> dict:
             # up with Menu 2, the approval clock shows when the money actually
             # moved - so the row carries both instead of overwriting either.
             _algo_t = str((a_hold or {}).get('buy_t') or '')[:5]
-            # WHY THIS COMPANY (boss 2026-09-03 10:5x: "for company name also
-            # add why this company with explanation") - stated before the price
-            _six9 = {"000660", "005930", "035420", "017670", "042660", "034020"}
-            if code in _six9:
-                reasons.insert(0, f"🏷 왜 {name}인가 — 회장님이 고정하신 6종목 중 하나입니다. "
-                                  f"체크리스트 순위와 상관없이 항상 감시하며, 아래 관문을 "
-                                  f"모두 통과했을 때만 삽니다.")
-                reasons_en.insert(0, f"🏷 WHY {name} — one of your six fixed stocks. It is watched "
-                                     f"every day regardless of rank, and bought only when every "
-                                     f"gate below passes.")
-            else:
-                reasons.insert(0, f"🏷 왜 {name}인가 — 오늘 에이전트가 뽑은 5종목 중 하나입니다. "
-                                  f"1개월·1년 평균 아래이고, 연속 상승이 아니며, 갭상승·매도존· "
-                                  f"악재뉴스 관문을 모두 통과해 상위에 올랐습니다.")
-                reasons_en.insert(0, f"🏷 WHY {name} — one of the five the agent picked today: below "
-                                     f"both its 1-month and 1-year averages, not on a rising run, "
-                                     f"and clear of the gap-up, selling-zone and bad-news gates.")
+            # NO HEADER IN FRONT OF THE GATES (boss 2026-09-09: "PLEASE REMOVE
+            # FIRST LINE OF EXPLANATION AND DIRECTLY START EXPLAINING GATES ...
+            # IT IS BETTER IN ALL STOCK"). The 🏷 "why this company" line that
+            # stood here since 09-03 said in a sentence what the gates below
+            # say with their own numbers; he wants the numbers first. Which
+            # basket a stock came from is still on its board card.
             # the price a person can actually place, off the live order book
             _bp, _pko, _pen = _book_price(code, "BUY", px)
             _bq = int(10_000_000 // _bp) if _bp else 0
@@ -2215,6 +2186,39 @@ def add_trip(day8: str, code: str, name: str, qty: int,
     _XTRIP.parent.mkdir(parents=True, exist_ok=True)
     _XTRIP.write_text(json.dumps(trips, ensure_ascii=False, indent=1), encoding="utf-8")
     return trip
+
+
+_PREAMBLE = ("🧾", "🏷")   # 🧾 ledger/bulk headers, 🏷 why-this-company
+
+
+def open_at_the_gates(rows: list) -> list:
+    """THE EXPLANATION STARTS AT THE GATES (boss 2026-09-09).
+
+    Rows written before that word - the two the 09-08 repair tool rebuilt from
+    the ledger, the bulk-buy batch, his own hand-added trips whose header was
+    once blanked and left an empty line - still carry a sentence in front of
+    the first gate. Their text lives in approval_desk.json, which is never
+    edited while the desk is running, so the line is dropped here, on the way
+    to the screen. Nothing is deleted: the record keeps every word it had.
+
+    Only a BUY is touched, and only leading lines: a blank, or one opening
+    with a header mark. The moment a real gate line is reached it stops.
+    """
+    out = []
+    for l in rows or []:
+        if str(l.get("side") or "BUY").upper() != "BUY":
+            out.append(l)
+            continue
+        n = dict(l)
+        for k in ("reasons", "reasons_en"):
+            rs = list(n.get(k) or [])
+            while rs and (not str(rs[0]).strip()
+                          or str(rs[0]).lstrip().startswith(_PREAMBLE)):
+                rs.pop(0)
+            if rs != (n.get(k) or []):
+                n[k] = rs
+        out.append(n)
+    return out
 
 
 def merge_extra_trips(log: list, day8: str) -> list:
@@ -3130,6 +3134,19 @@ def _why_buy(code: str, name: str, hold: dict):
                 E.append(_xt8["en"])
         except Exception:
             pass
+    # THE ONE-LINE WHY, FIRST (boss 2026-09-09: "In the why buying explaination
+    # add there is not kepsangsing and volume is too high then bought it like
+    # this meaning"). The two facts a person checks before anything else - did
+    # it open expensive, and was there real money behind the move - with their
+    # numbers, above the longer proof.
+    try:
+        from services.kiwoom_rules import buy_headline as _bh9
+        _hk9, _he9 = _bh9(code, at=bt or "")
+        if _hk9:
+            R.append(_hk9)
+            E.append(_he9)
+    except Exception:
+        pass
     if gk:
         R.append("✅ 살 수 있는 자리입니다 — " + " · ".join(gk))
         E.append("✅ THIS IS A PLACE TO BUY — " + " · ".join(ge))

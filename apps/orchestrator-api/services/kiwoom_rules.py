@@ -381,6 +381,84 @@ POS_GATE_EXEMPT = ("000660", "005930")   # boss 2026-09-09
 # them is the gap - and that is exactly what the words must say, on all three
 # surfaces, from ONE place so they can never drift apart.
 
+def vol_pace(code: str, day: str = "", hhmm: str = "") -> tuple:
+    """(shares so far, how many times the normal pace that is) at `hhmm`.
+
+    A day's volume means nothing without the clock: 96,263 shares is nothing by
+    15:00 and a stampede by 09:03. This measures against the share of the day
+    that has actually elapsed, the same way gate 3 does."""
+    if not day:
+        from services.kiwoom_tape import _day as _kd6
+        day = _kd6()
+    try:
+        from routers.paper_desk import live_tape
+        bars = (live_tape(code=code, period=60, tick=5, bars=400) or {}).get("bars") or []
+    except Exception:
+        bars = []
+    if hhmm:
+        bars = [b for b in bars if str(b.get("hhmm") or "")[:5] <= hhmm]
+    if not bars:
+        return (0.0, None)
+    cum = sum(float(b.get("vol") or 0) for b in bars)
+    t = str(bars[-1].get("hhmm") or "")[:5]
+    try:
+        mins = (int(t[:2]) - 9) * 60 + int(t[3:5]) + 1
+    except Exception:
+        return (cum, None)
+    frac = max(2.0, min(381.0, float(mins))) / 381.0
+    av = _vol5(code, day)
+    if not av or frac <= 0:
+        return (cum, None)
+    return (cum, (cum / (av * frac)) if av * frac else None)
+
+
+def buy_headline(code: str, day: str = "", at: str = "") -> tuple:
+    """THE ONE-LINE WHY, IN HIS WORDS (boss 2026-09-09: "In the why buying
+    explaination add there is not kepsangsing and volume is too high then
+    bought it like this meaning").
+
+    The two facts a person checks first - did it open expensive, and was there
+    real money behind the move - said in one sentence with their numbers,
+    before any of the longer proof."""
+    if not day:
+        from services.kiwoom_tape import _day as _kd5
+        day = _kd5()
+    try:
+        yc = float(_gap_ref(code, day) or 0) or None
+        from routers.paper_desk import live_tape
+        bars = (live_tape(code=code, period=60, tick=5, bars=400) or {}).get("bars") or []
+        op = float(bars[0].get("open") or 0) if bars else None
+    except Exception:
+        return ("", "")
+    if not (yc and op):
+        return ("", "")
+    gap = (op / yc - 1) * 100
+    cum, pace = vol_pace(code, day, at)
+    W = lambda v: f"₩{v:,.0f}" if v else "?"
+    if gap >= 0.3:
+        gk = (f"갭상승 {gap:+.2f}%로 출발했습니다 (시가 {W(op)}, 어제 종가 {W(yc)})")
+        ge = (f"it opened with a gap-up of {gap:+.2f}% ({W(op)} against yesterday's "
+              f"close {W(yc)})")
+    else:
+        gk = (f"갭상승이 없습니다 — 시가 {W(op)}, 어제 종가 {W(yc)} 대비 {gap:+.2f}%")
+        ge = (f"there is NO gap-up — it opened {W(op)}, {gap:+.2f}% against "
+              f"yesterday's close {W(yc)}")
+    if pace and pace >= 2.0:
+        vk = f"거래량이 그 시각 보통 페이스의 {pace:.1f}배로 몰렸습니다 ({cum:,.0f}주)"
+        ve = (f"volume came in at {pace:.1f}x the normal pace for that minute "
+              f"({cum:,.0f} shares)")
+    elif pace:
+        vk = f"거래량은 그 시각 보통 페이스의 {pace:.1f}배입니다 ({cum:,.0f}주)"
+        ve = f"volume is {pace:.1f}x the normal pace for that minute ({cum:,.0f} shares)"
+    else:
+        vk = ve = ""
+    tail_k = f" — 그래서 {at}에 샀습니다." if at else "."
+    tail_e = f" — that is why we bought at {at}." if at else "."
+    ko = "🟢 " + gk + (f", 그리고 {vk}" if vk else "") + tail_k
+    en = "🟢 " + ge + (f", and {ve}" if ve else "") + tail_e
+    return (ko, en)
+
+
 def exempt_gap(code: str, day: str = "") -> dict | None:
     """Today's gap story for SK하이닉스 / 삼성전자, with real numbers.
 

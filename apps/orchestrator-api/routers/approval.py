@@ -365,6 +365,13 @@ def feed(db: Session = Depends(get_db)):
     import time as _tm9
     _log9 = [{**l, "day": (_tm9.strftime("%Y-%m-%d", _tm9.gmtime(float(l.get("ts") or 0) + 9 * 3600))
                            if l.get("ts") else "")} for l in _log9]
+    # the explanation opens at the gates, on every board and every popup
+    # (boss 2026-09-09) - display only, the stored words are untouched
+    try:
+        _log9 = ad.open_at_the_gates(_log9)
+        _pend9x = ad.open_at_the_gates(st.get("pending") or [])
+    except Exception:
+        _pend9x = None
     # the stats card judges the SAME rows the boards render (post-filter)
     try:
         _st9 = _display_stats(_held9, _log9, rooms)
@@ -374,7 +381,7 @@ def feed(db: Session = Depends(get_db)):
             _st9 = semi_stats(db)
         except Exception:
             _st9 = None
-    _pend9 = st.get("pending") or []
+    _pend9 = _pend9x if _pend9x is not None else (st.get("pending") or [])
     _pulse9 = None
     try:
         _pulse9 = ad._market_pulse()      # 🌐 SOX + KOSPI weather (cached 5min)
@@ -2409,11 +2416,8 @@ def bulk_buy(dry: int = Query(1), budget: int = Query(10_000_000),
                 reasons, reasons_en = ad._why_buy(code, name, {})
             except Exception:
                 reasons, reasons_en = [], []
-            reasons.insert(0, "🧾 회장님 지시 일괄 매수 — 오늘 갭상승 관문 때문에 주문이 너무 적어, "
-                              "갭상승 관문만 면제하고 나머지 관문을 모두 따져 통과한 종목입니다.")
-            reasons_en.insert(0, "🧾 The boss's bulk order — too few orders were getting through "
-                                 "today's gap-up gate, so that gate ALONE was waived and every "
-                                 "other gate was judged and passed.")
+            # no header in front of the gates (boss 2026-09-09) - the waiver
+            # is still stated, by the gap gate itself, in the lines below
             reasons.append("✅ " + str(r.get("why") or ""))
             reasons_en.append("✅ " + str(r.get("why_en") or ""))
             _qko, _qen = ad._why_qty(_bp, qty, budget)
