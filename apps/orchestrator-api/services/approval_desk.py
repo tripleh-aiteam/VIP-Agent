@@ -580,6 +580,27 @@ def chat_mirror(code: str, name: str, side: str, qty: int, fill: float) -> bool:
     return True
 
 
+def _disp_at(l: dict) -> str:
+    """THE CLOCK ON THE SCREEN, NOT THE ONE WE WROTE (boss 2026-09-09: "please
+    check and change all other parts also accordingly like buying, holding
+    reasons also").
+
+    A time edit moves a row to its signal minute at RENDER time only, so the
+    stored `at` is still the minute the desk happened to act. Every explanation
+    built from the stored clock therefore printed 10:24 prices and 10:24 volume
+    under a 09:03 heading - the very inconsistency he keeps catching. The
+    override's `frm` scope is honoured exactly as apply_time_overrides honours
+    it, so only the row the edit names is moved."""
+    at = str(l.get("at") or l.get("hhmm") or "")[:5]
+    try:
+        ov = (time_overrides() or {}).get(str(l.get("code") or "")) or {}
+        if ov.get("at") and (not ov.get("frm") or str(ov["frm"])[:5] == at):
+            return str(ov["at"])[:5]
+    except Exception:
+        pass
+    return at
+
+
 def _enrich_log_rows(st: dict) -> None:
     """DETAILED WHYS ON EVERY ROW, applied by the scanner itself (boss
     2026-09-03 17:2x: 'reasons again not good — write more detail, start with
@@ -612,14 +633,18 @@ def _enrich_log_rows(st: dict) -> None:
                     or not any(it.get("g") == "market" for it in l["check_items"])
                     # v3: day-correct volume + rank-only-when-it-helps (09-04 10:0x)
                     # v5: SOX/chip weather only on semiconductor names (09-04 10:3x)
-                    or l.get("_rv") != 5):
+                    or l.get("_rv") != 5
+                    # the clock moved under it (a time edit) - the numbers must
+                    # be re-read at the minute now on the screen
+                    or l.get("_ci_at") != _disp_at(l)):
                 # time-stamped at the row's own clock (volume of THAT minute)
                 _d8r = None
                 try:
                     _d8r = time.strftime("%Y%m%d", time.gmtime(float(l.get("ts")) + 9 * 3600)) if l.get("ts") else None
                 except Exception:
                     pass
-                l["check_items"] = _check_items(code, str(l.get("at") or l.get("hhmm") or "")[:5] or None, _d8r)
+                l["check_items"] = _check_items(code, _disp_at(l) or None, _d8r)
+                l["_ci_at"] = _disp_at(l)
             if l.get("score") is None:
                 l["score"] = _score(code)
             sc = l.get("score")
@@ -636,16 +661,7 @@ def _enrich_log_rows(st: dict) -> None:
             if l.get("side") == "BUY" and l.get("via") == "chat":
                 try:
                     from services.kiwoom_tape import _day as _kd8x
-                    _at8 = str(l.get("at") or l.get("hhmm") or "")[:5]
-                    # THE CLOCK HE READS, NOT THE CLOCK WE WROTE: a time edit
-                    # moves the row to its signal minute at RENDER time, so the
-                    # stored `at` is still the minute the order was mirrored.
-                    # Replaying at the stored clock would reprint the very
-                    # 10:08 numbers under a 09:04 heading he called illogical.
-                    _ov8 = (time_overrides() or {}).get(str(code)) or {}
-                    if (_ov8.get("at") and (not _ov8.get("frm")
-                                            or _ov8["frm"] == _at8)):
-                        _at8 = str(_ov8["at"])[:5]
+                    _at8 = _disp_at(l)
                     if (_row_day(l) == _kd8x() and len(_at8) == 5
                             and l.get("_gsnap_at") != _at8):
                         from routers.approval import whynot_at as _wna8
@@ -716,8 +732,12 @@ def _enrich_log_rows(st: dict) -> None:
                     # rows with the rejected 'not the selling zone' phrasing
                     # rebuild into the positive low-place wording (09:1x)
                     or (any("매도구간 아님" in str(x) for x in l.get("reasons") or [])
-                        and not l.get("_zone_reworded"))):
+                        and not l.get("_zone_reworded"))
+                    # a time edit moved the clock under this row - the story
+                    # must be retold at the minute now on the screen
+                    or l.get("_why_at") != _disp_at(l)):
                 l["_zone_reworded"] = True
+                l["_why_at"] = _disp_at(l)
                 head_ko = (l.get("reasons") or [""])[0]
                 head_en = (l.get("reasons_en") or [head_ko])[0]
                 try:
@@ -726,7 +746,7 @@ def _enrich_log_rows(st: dict) -> None:
                         _d8w = time.strftime("%Y%m%d", time.gmtime(float(l.get("ts")) + 9 * 3600)) if l.get("ts") else None
                     except Exception:
                         pass
-                    R, E = _why_buy(code, name, {"buy_t": l.get("at"), "day8": _d8w})
+                    R, E = _why_buy(code, name, {"buy_t": _disp_at(l), "day8": _d8w})
                 except Exception:
                     R, E = [], []
                 # _why_buy already leads with its own 📋 checklist statement
@@ -1797,16 +1817,21 @@ def _turn_shape(code: str, bars: list | None = None) -> tuple:
         w2 = bars[-d["win"]:]
         ups, seen_fall, third = 0, False, None
         prev = w2[0]["close"]
+        peak = prev
         for b in w2[1:]:
             c, o = b["close"], b["open"]
             if c < o:                                   # a blue candle
-                if prev and (prev - c) / prev * 100 > d["soft"]:
-                    ups, third = 0, None                # a REAL blue resets
                 seen_fall = True
             elif c > prev:
                 ups += 1
                 if ups == d["ups"] and third is None:
                     third = str(b.get("hhmm") or "")[:5]
+            # the same slide test as the day-scale counter above: forgiveness
+            # is measured from the run's own peak, never step to step
+            if peak is None or c > peak:
+                peak = c
+            if peak and (peak - c) / peak * 100 > d["soft"]:
+                ups, third, peak = 0, None, c
             prev = c
         if seen_fall and ups >= d["ups"]:
             px2 = w2[-1]["close"]
@@ -1847,16 +1872,30 @@ def _turn_shape(code: str, bars: list | None = None) -> tuple:
         """HIS OWN COUNT (boss 2026-09-07 10:2x, HD현대중공업: 10:23 ▲ · 10:24 ▲ ·
         10:25 flat · 10:26 flat · 10:27 ▲ = "the 3rd red"). A flat minute
         neither counts nor breaks the run; a blue deeper than 0.2% resets it.
-        Returns (rises, the clock of the one that completed the count)."""
+
+        A SLIDE IS A FALL EVEN WHEN EVERY STEP IS SMALL (boss 2026-09-09, the
+        한화오션 10:53 popup: "it now decreasing not signal 3 red"). The 0.2%
+        forgiveness was measured from the PREVIOUS candle, so a staircase -
+        10:51 -0.11%, 10:52 -0.11%, 10:53 -0.11% - slid 0.34% off the top
+        without any single step tripping the test, and a signal stamped at
+        10:49 was still counted as alive four minutes later while price walked
+        steadily down. The forgiveness is meant for ONE wobble inside a rise,
+        so it is measured from the highest close the run has made: one small
+        blue is still ignored, a slide past the same 0.2% is a real fall and
+        resets the count. Returns (rises, the clock that completed the count).
+        """
         _u, _prev, _third = 0, first_prev, None
+        _peak = first_prev
         for _b in seq:
             _c = _b["close"]
             if _c > _prev:
                 _u += 1
                 if _u == d["ups"] and _third is None:
                     _third = str(_b.get("hhmm") or "")[:5]
-            elif _prev and (_prev - _c) / _prev * 100 > d["soft"]:
-                _u, _third = 0, None
+            if _peak is None or _c > _peak:
+                _peak = _c
+            if _peak and (_peak - _c) / _peak * 100 > d["soft"]:
+                _u, _third, _peak = 0, None, _c
             _prev = _c
         return _u, _third
     if wlo and (whi - wlo) / wlo * 100 < d["chop"]:
@@ -1888,11 +1927,16 @@ def _turn_shape(code: str, bars: list | None = None) -> tuple:
             out = (True,
                    f"진입 신호 확인 (하루 흐름) — 오늘 고점 대비 {_dfall:.2f}% 내린 뒤 "
                    f"하락이 멈춰 횡보했고(30분 폭 {(whi - wlo) / wlo * 100:.2f}%), "
-                   f"{_hm3}에 3연속 상승이 섰습니다 (₩{px:,.0f})",
+                   f"{_hm3}에 3번째 상승이 섰고 지금도 그 자리를 지키고 있습니다 "
+                   f"(₩{px:,.0f}). 사이의 보합은 세지 않고, 작은 음봉(0.2% 이하) "
+                   f"하나는 무시하지만, 고점에서 0.2% 넘게 밀리면 신호는 사라집니다.",
                    f"entry signal confirmed (day-scale) — fell {_dfall:.2f}% from today's "
                    f"high, the fall stopped into a flat base "
-                   f"({(whi - wlo) / wlo * 100:.2f}% over 30 min), and 3 consecutive "
-                   f"rises stand at {_hm3} (₩{px:,.0f})",
+                   f"({(whi - wlo) / wlo * 100:.2f}% over 30 min), and the 3rd rise "
+                   f"stood at {_hm3} and still holds (₩{px:,.0f}). Flat minutes in "
+                   f"between are not counted and one small blue candle (<=0.2%) is "
+                   f"forgiven, but a slide of more than 0.2% off the run's high "
+                   f"cancels the signal.",
                    _hm3)
             if _live:
                 _TURNC[_key] = out
@@ -2563,6 +2607,29 @@ def verify_now(code: str, side: str = "BUY", day: str = "",
                         f"yesterday's last price of {ref:,.0f}"
                         f"{' but three red candles have not formed' if back else ''}. "
                         f"Not sending.", snap)
+
+    # ① THE TURN MUST STILL BE STANDING AT THE MOMENT WE SEND
+    #
+    # boss 2026-09-09, the 한화오션 10:53 popup: "why pop up is coming now?
+    # becuase it now decreasing not singnal 3 red please check this case". He
+    # is right, and this guard was the piece that should have caught it. The
+    # shape is judged inside the scan and then CACHED - the popup carried a
+    # signal stamped 10:49 into a minute in which price had fallen three
+    # times in a row. Every other time-critical fact here is re-derived from
+    # the freshest tape; the entry signal, the one fact the buy actually
+    # rests on, was not. It is now, on the same bars this guard already holds,
+    # so a signal that has died between the scan and the send cannot go out.
+    try:
+        _tk9, _tko9, _ten9, _t3 = _turn_shape(code, bars)
+    except Exception:
+        _tk9, _tko9, _ten9, _t3 = True, "", "", None
+    snap["turn"] = bool(_tk9)
+    snap["turn_at"] = _t3
+    if not _tk9:
+        return (False,
+                f"보내는 순간 진입 신호가 살아 있지 않습니다 — {_tko9} 보내지 않습니다.",
+                f"the entry signal is no longer standing at the moment of "
+                f"sending - {_ten9}. Not sending.", snap)
 
     # ② 오늘 위치 — never chase the top of the day
     #
