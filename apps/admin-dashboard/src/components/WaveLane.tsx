@@ -259,7 +259,23 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
                    "no history yet — once the market opens the rule trades on its own and it fills in here")}</div>
             ) : (
               <div style={{ marginTop: 5, maxHeight: 380, overflowY: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}><tbody>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  {/* TWO COLUMNS, ONE FOR EACH SIDE (boss 2026-09-09: "you have
+                      to make buy and sell one column for buying and second one
+                      is selling"). Stacked, a campaign with five buys and eight
+                      sells was thirteen lines deep and the eye had to find where
+                      one side ended; side by side, the shape of the trip - what
+                      went in against what came back out - is one glance. */}
+                  <thead><tr style={{ fontSize: 10.8, opacity: 0.6, textAlign: "left" }}>
+                    <th style={{ fontWeight: 600, padding: "0 0 3px" }}>{t("종목", "stock")}</th>
+                    <th style={{ fontWeight: 600, padding: "0 0 3px", color: "#e53935" }}>
+                      ▲ {t("매수", "bought")}</th>
+                    <th style={{ fontWeight: 600, padding: "0 0 3px", color: "#1e88e5" }}>
+                      ▼ {t("매도", "sold")}</th>
+                    <th style={{ fontWeight: 600, padding: "0 0 3px", textAlign: "right" }}>
+                      {t("손익", "P&L")}</th>
+                  </tr></thead>
+                  <tbody>
                   {trips.map((g) => {
                     let left = g.legs.filter((x) => x.kind === "B")
                                      .reduce((a, x) => a + x.qty, 0);
@@ -278,11 +294,16 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
                             {g.open && <span style={{ marginLeft: 5, fontSize: 10.5, opacity: 0.7 }}>
                               {t("보유 중", "holding")}</span>}
                           </td>
-                          <td style={{ padding: "5px 0" }}>
-                            {g.legs.map((x, j) => {
-                              if (x.kind === "B") return (
-                                <div key={j} style={lineB}>
-                                  ▲ {x.tt} {W(x.px)} × {x.qty.toLocaleString()}{t("주", "sh")}</div>);
+                          {/* ▲ everything that went in */}
+                          <td style={{ padding: "5px 12px 5px 0", verticalAlign: "top",
+                                       width: "31%" }}>
+                            {g.legs.filter((x) => x.kind === "B").map((x, j) => (
+                              <div key={j} style={lineB}>
+                                ▲ {x.tt} {W(x.px)} × {x.qty.toLocaleString()}{t("주", "sh")}</div>))}
+                          </td>
+                          {/* ▼ everything that came back out */}
+                          <td style={{ padding: "5px 0", verticalAlign: "top" }}>
+                            {g.legs.filter((x) => x.kind === "S").map((x, j) => {
                               left -= x.qty;
                               return (
                                 <div key={j} style={lineS}>
@@ -293,14 +314,18 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
                                               color: (x.pct ?? 0) >= 0 ? "#e53935" : "#1e88e5" }}>
                                     {(x.pct ?? 0) >= 0 ? "+" : ""}{(x.pct ?? 0).toFixed(2)}%</b>
                                 </div>);
-                            })}</td>
+                            })}
+                            {!g.legs.some((x) => x.kind === "S") && (
+                              <span style={{ fontSize: 11.6, opacity: 0.6 }}>
+                                {t("아직 매도 없음 — 보유 중", "nothing sold yet — still holding")}</span>)}
+                          </td>
                           <td style={{ width: 112, textAlign: "right", verticalAlign: "top",
                                        paddingTop: 5, fontWeight: 800,
                                        color: g.won >= 0 ? "#e53935" : "#1e88e5" }}>
                             {wonFmt(g.won)}</td>
                         </tr>
                         {isOpen && (
-                          <tr><td colSpan={3} style={{ padding: "4px 6px 9px" }}>
+                          <tr><td colSpan={4} style={{ padding: "4px 6px 9px" }}>
                             {/* 🔴 why it bought — the rule's own sentence, per buy */}
                             {g.legs.filter((x) => x.kind === "B").map((x, k) => (
                               <div key={`b${k}`} style={{ borderLeft: "3px solid #e53935",
