@@ -143,8 +143,17 @@ def _save_scan(st: dict, seen_ids: set, seen_held: set | None = None) -> None:
         if h.get("code") not in have and h.get("code") not in closed9:
             st.setdefault("held", []).append(h)
     # 4. keep every log row either side wrote
+    # A ROW THE FOLD REMOVED MUST STAY REMOVED (boss 2026-09-09 read a card
+    # saying "×16696987183346145720095693343744"). _fold_notes collapses the
+    # guard's repeated refusals into one row and drops the copies - and then
+    # THIS merge saw those copies still sitting on disk, did not find their ids
+    # in memory, and put them all back. The next fold added their counts into
+    # the survivor again, so the count DOUBLED every cycle: 7 → 328 → 23,850 →
+    # 5×10^8 → 10^31. The refusals were real; the arithmetic was ours.
     seen_log = {l.get("id") for l in (st.get("log") or [])}
-    extra = [l for l in (cur.get("log") or []) if l.get("id") not in seen_log]
+    _gone = set(st.get("_folded") or [])
+    extra = [l for l in (cur.get("log") or [])
+             if l.get("id") not in seen_log and l.get("id") not in _gone]
     if extra:
         st["log"] = ((st.get("log") or []) + extra)[-200:]
     _save(st)
@@ -174,7 +183,7 @@ def _fold_notes(st: dict) -> bool:
     clock, the older copies collapse into `repeat` so nothing about how long
     the refusal stood is lost."""
     log = st.get("log") or []
-    first, keep, changed = {}, [], False
+    first, keep, changed, _dropped = {}, [], False, []
     for l in reversed(log):                       # newest first
         if l.get("decision") != "보류":
             keep.append(l)
@@ -186,9 +195,26 @@ def _fold_notes(st: dict) -> bool:
             keep.append(l)
         else:
             p9["repeat"] = int(p9.get("repeat") or 1) + int(l.get("repeat") or 1)
+            _dropped.append(l.get("id"))
             changed = True
     if changed:
         st["log"] = list(reversed(keep))
+        # the ids just folded away, so the disk merge cannot bring them back
+        st["_folded"] = ([i for i in (st.get("_folded") or []) if i is not None]
+                         + [i for i in _dropped if i is not None])[-4000:]
+    # AND A COUNT CANNOT EXCEED THE NUMBER OF TIMES WE COULD HAVE LOOKED. The
+    # desk checks at most a few times a second between 09:00 and now; anything
+    # past that is arithmetic, not history, so it is clamped and marked rather
+    # than shown as a number nobody can believe.
+    try:
+        _mins = max(1, (int(_hhmm()[:2]) - 9) * 60 + int(_hhmm()[3:5]))
+        _cap = _mins * 20
+        for l in st.get("log") or []:
+            if int(l.get("repeat") or 1) > _cap:
+                l["repeat"], l["repeat_capped"] = _cap, True
+                changed = True
+    except Exception:
+        pass
     return changed
 
 
