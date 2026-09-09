@@ -965,7 +965,9 @@ def _make_preview(db, code: str, name: str, side: str, qty_asked: Optional[int],
     _PENDING.clear()
     _PENDING.update({"code": code, "name": name, "side": side, "qty": qty,
                      "px": px, "ts": time.time(), "en": en, "closed": _closed,
-                     "order_type": order_type, "limit_price": limit_price})
+                     "order_type": order_type, "limit_price": limit_price,
+                     # a price HE named waits; the book's own offer may give up
+                     "own_price": bool(price_asked)})
     _save_pending()
     b = budget()
     qty_note_ko = (f"보유의 {pct}%" if (pct and side == "SELL") else
@@ -1802,12 +1804,27 @@ def finish(db, word: str) -> Optional[str]:
         _lsrc = test_source(_lclosed or bool(p.get("closed")))
         from services.paper_desk import place_order
         ok_n, fill_n, fail_n = 0, 0, 0
-        for pr, q in p.get("slices") or []:
+        _sl_tot = len(p.get("slices") or [])
+        for _sl_i, (pr, q) in enumerate(p.get("slices") or [], 1):
             try:
                 res = place_order(db, p["code"], _lside, int(q), order_type="limit",
                                   limit_price=float(pr), source=_lsrc, direct=True)
                 if res.get("ok"):
                     ok_n += 1
+                    # 🪜 marks a price the boss chose: it waits for its dip and is
+                    # exempt from the give-up law, which was measured on drifting
+                    # auto-offers and was cancelling whole ladders (2026-09-10).
+                    try:
+                        from sqlalchemy import text as _sqt9
+                        db.execute(_sqt9("UPDATE paper_desk_orders SET note=:n WHERE id=:i"),
+                                   {"i": int(res.get("order_id") or 0),
+                                    "n": (f"🪜 분할 {_sl_i}/{_sl_tot} — 사장님이 정한 "
+                                          f"자리이므로 체결될 때까지 기다립니다 "
+                                          f"(포기 규칙 미적용)")})
+                        db.commit()
+                    except Exception as _e9:
+                        db.rollback()
+                        log.warning(f"ladder slice note failed: {str(_e9)[:120]}")
                     if res.get("status") == "FILLED":
                         fill_n += 1
                         # a ladder slice that fills INSTANTLY reaches the Menu 3
@@ -1927,6 +1944,18 @@ def finish(db, word: str) -> Optional[str]:
     res = place_order(db, p["code"], p["side"], int(p["qty"]), order_type=_ot,
                       limit_price=p.get("limit_price"), source=_csrc,
                       ref_price=p.get("px"), direct=True)
+    if res.get("ok") and _ot == "limit" and p.get("own_price"):
+        # 📌 his own price — waits for it, never given up on
+        try:
+            from sqlalchemy import text as _sqt8
+            db.execute(_sqt8("UPDATE paper_desk_orders SET note=:n WHERE id=:i"),
+                       {"i": int(res.get("order_id") or 0),
+                        "n": "📌 사장님이 직접 정한 지정가 — 체결될 때까지 기다립니다 "
+                             "(포기 규칙 미적용)"})
+            db.commit()
+        except Exception as _e8:
+            db.rollback()
+            log.warning(f"own-price note failed: {str(_e8)[:120]}")
     if _ot == "limit" and res.get("ok") and res.get("status") == "OPEN":
         # queued in the book — the trading loop fills it when the price touches
         lp = p.get("limit_price") or 0

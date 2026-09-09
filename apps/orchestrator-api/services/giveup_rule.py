@@ -51,6 +51,20 @@ def tick_size(price: float) -> float:
     return 1000
 
 
+# Orders the BOSS priced himself never give up (boss 2026-09-10). The give-up
+# distances above were measured on the desk's own auto-offer — one order, queued
+# near the market, that the price then walked away from. They do not describe a
+# ladder, whose deeper slices are put below the market on purpose and whose whole
+# job is to wait for a dip. Marked at placement, honoured at the chokepoint.
+DELIBERATE_MARKS = ("🪜", "📌")
+
+
+def is_deliberate(note: str | None) -> bool:
+    """True for a price the boss set himself — a ladder slice (🪜) or a limit he
+    named (📌). These wait as long as it takes; only auto-offers give up."""
+    return bool(note) and str(note).lstrip().startswith(DELIBERATE_MARKS)
+
+
 def giveup_won(code: str, ref_price: float) -> float:
     d = GIVEUP_WON.get(str(code))
     if d is not None:

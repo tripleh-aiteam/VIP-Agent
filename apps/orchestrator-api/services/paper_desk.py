@@ -563,12 +563,13 @@ def check_limit_orders(db) -> int:
     """Fill OPEN limit orders whose trigger the live price has touched. Returns fills."""
     _ensure(db)
     rows = db.execute(text(
-        "SELECT id, ticker, name, side, qty, limit_price, COALESCE(source,'') "
+        "SELECT id, ticker, name, side, qty, limit_price, COALESCE(source,''), "
+        "       COALESCE(note,'') "
         "FROM paper_desk_orders "
         "WHERE status='OPEN' AND order_type='limit' ORDER BY id")).fetchall()
     fills = 0
     price_cache: dict[str, Optional[float]] = {}
-    for oid, ticker, name, side, qty, lp, src9 in rows:
+    for oid, ticker, name, side, qty, lp, src9, note9 in rows:
         if ticker not in price_cache:
             price_cache[ticker], _ = _live_price(ticker)
         px = price_cache[ticker]
@@ -602,8 +603,17 @@ def check_limit_orders(db) -> int:
         # loss, so the stale sell limit CONVERTS TO MARKET and exits now, the
         # same spirit as his -1% urgent-sell law.
         try:
-            from services.giveup_rule import giveup_won, should_give_up
-            if should_give_up(side, lp, px, ticker):
+            from services.giveup_rule import giveup_won, is_deliberate, should_give_up
+            # A PRICE HE CHOSE IS NOT A DRIFTING OFFER (boss 2026-09-10: "make
+            # sure it will join as normal waiting list"). The give-up law was
+            # measured on ONE auto-offer that the market walked away from. A
+            # LADDER is the opposite: its deeper slices are placed below the
+            # market ON PURPOSE and are supposed to wait for the dip. Judged by
+            # the same yardstick, every slice past the give-up distance was
+            # cancelled within a minute of being queued — his whole 기아 ladder
+            # died ₩400 from the price, the SK하이닉스 one ₩2,000 from it. So a
+            # deliberate price waits, and only the desk's own auto-offers give up.
+            if not is_deliberate(note9) and should_give_up(side, lp, px, ticker):
                 d = giveup_won(ticker, lp)
                 if side == "SELL":
                     res = _fill(db, oid, ticker, name, side, int(qty), px)
