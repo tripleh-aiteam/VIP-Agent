@@ -218,6 +218,7 @@ export default function PricePlan({ code, book, onPlan }:
               <th className="pr-2">{t("가격", "price")}</th>
               <th className="pr-2 text-right">{t("수량", "shares")}</th>
               <th className="pr-2 text-right">{t("금액", "value")}</th>
+              <th className="pr-2 text-right">{t("그 자리 잔량", "others waiting")}</th>
               <th>{t("왜 이 가격인가", "why this price")}</th>
             </tr>
           </thead>
@@ -232,6 +233,17 @@ export default function PricePlan({ code, book, onPlan }:
                 <td className="pr-2 font-bold">{won(s.px)}</td>
                 <td className="pr-2 text-right font-bold">{s.qty.toLocaleString()}</td>
                 <td className="pr-2 text-right text-[var(--text-muted)]">{won(s.px * s.qty)}</td>
+                {/* HOW MANY OTHERS ARE ALREADY QUEUED THERE (boss 2026-09-09:
+                    "we wanna see others volume also"). Our slice joins a line
+                    that already exists; its length is the whole reason one
+                    price is a better place to stand than another. */}
+                <td className="pr-2 text-right" style={{ color: "var(--text-muted)" }}>
+                  {(() => {
+                    const lvl = [...(book?.asks || []), ...(book?.bids || [])]
+                      .find(([p]) => Math.abs(p - s.px) < 0.5);
+                    return lvl ? lvl[1].toLocaleString() + t("주", " sh")
+                               : t("대기 없음", "none");
+                  })()}</td>
                 <td className="text-[10px]" style={{ color: "var(--text-secondary)" }}>
                   {t(s.ko, s.en)}</td>
               </tr>))}

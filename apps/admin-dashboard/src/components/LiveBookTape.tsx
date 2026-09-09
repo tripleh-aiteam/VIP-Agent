@@ -127,8 +127,15 @@ export default function LiveBookTape({ code, tapeHeight = 300 }:
               return (
               <tr key={"a" + i} className="border-t border-[var(--border-default)]/30"
                   style={sl ? { background: "rgba(106,27,154,0.10)" } : undefined}>
-                <td className="text-right px-3 py-[2px]" style={{ color: mark && !mine ? PURPLE : BLUE }}>
-                  {mark && !mine ? mark : fmt(q)}</td>
+                {/* BOTH NUMBERS, NEVER ONE INSTEAD OF THE OTHER (boss
+                    2026-09-09: "we wanna see others volume also, please do not
+                    hide it"). The crowd's queue keeps the place next to the
+                    price - it is what he checks against the Kiwoom HTS - and
+                    our own slice stands beside it. */}
+                <td className="text-right px-3 py-[2px]" style={{ color: BLUE }}>
+                  {mark && !mine && (
+                    <span className="mr-1.5" style={{ color: PURPLE }}>{mark}</span>)}
+                  {fmt(q)}</td>
                 <td className="text-center px-2 font-bold" style={{ color: BLUE }}>
                   ₩{fmt(p)}{p === book?.best_ask && <span className="text-[9px]"> {t("← 여기서 사면 바로 체결", "← buying here deals now")}</span>}
                 </td>
@@ -153,8 +160,10 @@ export default function LiveBookTape({ code, tapeHeight = 300 }:
                 <td className="text-center px-2 font-bold" style={{ color: RED }}>
                   ₩{fmt(p)}{p === book?.best_bid && <span className="text-[9px]"> {t("← 여기서 팔면 바로 체결", "← selling here deals now")}</span>}
                 </td>
-                <td className="text-left px-3 py-[2px]" style={{ color: mark && mine ? PURPLE : RED }}>
-                  {mark && mine ? mark : fmt(q)}</td>
+                <td className="text-left px-3 py-[2px]" style={{ color: RED }}>
+                  {fmt(q)}
+                  {mark && mine && (
+                    <span className="ml-1.5" style={{ color: PURPLE }}>{mark}</span>)}</td>
               </tr>);
             })}
           </tbody>
