@@ -430,13 +430,12 @@ def pos_story(code: str, px: float, day: str, bar: float = 65.0,
     # rule uses follows underneath as the detail.
     ko_l: list[str] = []
     en_l: list[str] = []
-    rng_ko = ["📐 규칙이 판정에 쓰는 계산 (최저~최고 방식) — 위 전체 분석은 '무엇이 사실인가'를 "
-              "보여주고, 매수/보류 판정은 아래 계산으로 내립니다. 각 %의 계산법: "
+    rng_ko = ["📐 두 번째 읽기 (최저~최고 방식) — 관문 2의 점수는 위 전체 분석과 이 계산을 "
+              "평균낸 값입니다. 각 %의 계산법: "
               "(지금 가격 − 그 기간의 최저가) ÷ (그 기간의 최고가 − 그 기간의 최저가) × 100 "
               "— 최저가·최고가는 모두 같은 기간 안의 값입니다."]
-    rng_en = ["📐 The ruler the rule DECIDES with (range method) — the whole read above shows "
-              "what is true; the buy/wait verdict is taken with the calculation below. "
-              "How each % is computed: (price now − that window's LOW) ÷ (that window's HIGH "
+    rng_en = ["📐 The second reading (range method) — gate 2's score is this AVERAGED with the "
+              "whole read above. How each % is computed: (price now − that window's LOW) ÷ (that window's HIGH "
               "− that window's LOW) × 100 — the high and the low both come from the same window."]
     for k, nk, ne in (("w", "1주일", "1 week"), ("m", "1개월", "1 month"),
                       ("q", "3개월", "3 months"), ("h", "6개월", "6 months")):
@@ -646,11 +645,11 @@ def pos_story(code: str, px: float, day: str, bar: float = 65.0,
                             "answers WHEN it was cheaper, not how cheap): "
                             + " · ".join(f"{x['en']} {x['pct']}%" for x in wins) + _shape_e)
             _agree = abs(weighted - blend) <= 7.0
-            ko_l.append(f"→ 전체 분석 {weighted:.0f}% · 규칙이 쓰는 최저~최고 방식 {blend:.1f}% — "
+            ko_l.append(f"→ 전체 분석 {weighted:.0f}% · 최저~최고 방식 {blend:.1f}% (관문 2는 둘의 평균으로 판정) — "
                         + ("두 방식이 같은 답을 줍니다 (판정 신뢰 ↑)." if _agree else
                            "두 방식이 다릅니다 — 최고·최저가 한두 날의 극단값에 끌려간 자리입니다."))
-            en_l.append(f"→ whole-read {weighted:.0f}% vs the range method the rule uses "
-                        f"{blend:.1f}% — "
+            en_l.append(f"→ whole-read {weighted:.0f}% vs range method {blend:.1f}% "
+                        f"(gate 2 judges on the AVERAGE of the two) — "
                         + ("both agree, so the verdict is solid." if _agree else
                            "they disagree, which means the high/low is being pulled by one or "
                            "two extreme days."))
