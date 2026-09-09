@@ -2609,29 +2609,22 @@ def history_buy_plan(code: str, qty: int, now_px: float) -> list[dict]:
     if len(picked) < 5:
         return []
     picked.sort(key=lambda x: -x["px"])                 # dearest first
-    # NO ODD LOTS, EVER (his standing complaint about "96 and 93"). Weights
-    # decide the shape; the KRX lot decides the numbers. Five real lots need
-    # 500 shares - below that the plan takes as many whole lots as it can, and
-    # under two it hands the order back to the book ladder.
-    n_sl = max(0, min(len(picked), int(qty) // MIN_LOT))
+    # FIVE EQUAL PIECES (boss 2026-09-10: "if we have a 6000 stock then for each
+    # 1200 will be buy with different 5 price"). The first version sized each
+    # price by how often it is reached times how many sessions traded through it
+    # - defensible, and not what he asked for. His way is one number a person can
+    # check against the screen: the order divided by five, the remainder riding
+    # the first slice so the pieces stay whole. 6,000 -> 1,200 x 5; 1,000 -> 200
+    # x 5; a 400-share lot in a thin name -> 80 x 5.
+    n_sl = max(0, min(len(picked), int(qty)))
     if n_sl < 2:
         return []
     picked = picked[:n_sl]
-    wsum = sum(x["reach"] * max(x["days"], 1) for x in picked) or 1.0
-    lots = int(qty) // MIN_LOT
-    alloc = [max(1, int(round(lots * (x["reach"] * max(x["days"], 1)) / wsum)))
-             for x in picked]
-    while sum(alloc) > lots:                 # trim from the smallest weight up
-        i = max(range(len(alloc)), key=lambda k: (alloc[k], -k))
-        if alloc[i] <= 1:
-            break
-        alloc[i] -= 1
-    alloc[0] += lots - sum(alloc)            # the remainder rides the likeliest price
+    each = int(qty) // len(picked)
+    first = int(qty) - each * (len(picked) - 1)
     out, left = [], int(qty)
     for i, x in enumerate(picked):
-        n = alloc[i] * MIN_LOT
-        if i == len(picked) - 1:
-            n = left                          # the last slice carries any odd tail
+        n = first if i == 0 else each
         n = min(n, left)
         if n <= 0:
             continue
@@ -2678,7 +2671,7 @@ def book_ladder(code: str, side: str, fallback: float, qty: int,
         try:
             _now9 = _touch_price(code, "BUY") or float(fallback or 0)
             _hist9 = history_buy_plan(code, qty, float(_now9 or 0))
-            if len(_hist9) >= 2 and all(r["qty"] >= MIN_LOT for r in _hist9):
+            if len(_hist9) >= 2:
                 # WHERE HIS TWO LAWS MEET (2026-09-09). All five prices stand
                 # below the market, which is right for a patient buy - "an
                 # unfilled buy costs nothing". But the ladder rule's entry is a
