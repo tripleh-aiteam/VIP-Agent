@@ -487,8 +487,22 @@ def gate_chart(code: str, tf: int = 1):
             if px and _lo and _hi and _hi > _lo:
                 _pc9.append(max(0.0, min(100.0, (px - _lo) / (_hi - _lo) * 100)))
         out["pos_blend"] = round(sum(_pc9) / len(_pc9), 1) if _pc9 else None
-        out["g2_ok"] = bool(out.get("pos_blend") is not None
-                            and out["pos_blend"] <= 35.0)
+        # THE CHART MUST JUDGE THE GATE THE DESK ACTUALLY RUNS (boss 2026-09-09,
+        # auditing the morning's popups: the desk bought 한화시스템 at a position
+        # score of 46.8 and 삼성중공업 at 49.2, both correct under the law he set
+        # on 09-07 - "gate 2 should only care about position: if it is TOP do
+        # not buy" - which refuses only above 65. This chart, and the board
+        # below, were still marking gate 2 ✗ at anything over the retired 35%
+        # blend, so the picture in the popup contradicted the popup itself.)
+        try:
+            from services.kiwoom_rules import pos_score as _ps2
+            from services.approval_desk import POS_GATE_EXEMPT as _pex2
+            _sc2 = _ps2(code, px, day) if px else None
+            out["pos_score"] = round(_sc2, 1) if _sc2 is not None else None
+            out["g2_ok"] = bool(str(code) in _pex2 or _sc2 is None or _sc2 <= 65.0)
+        except Exception:
+            out["g2_ok"] = bool(out.get("pos_blend") is not None
+                                and out["pos_blend"] <= 65.0)
         # gate 3: the pace
         avg5 = _vol5(code, day)
         cum = sum(float(b.get("v") or 0) for b in bars)
@@ -531,6 +545,10 @@ def whynot_at(code: str, hhmm: str, name: str = "") -> dict | None:
     except Exception:
         pass
     try:
+        from services.kiwoom_rules import POS_GATE_EXEMPT as _PGX9
+    except Exception:
+        _PGX9 = ()
+    try:
         from routers.paper_desk import live_tape
         d9 = live_tape(code=code, period=60, tick=5, bars=400)
         bars = [b for b in (d9.get("bars") or [])
@@ -563,7 +581,22 @@ def whynot_at(code: str, hhmm: str, name: str = "") -> dict | None:
         if not passed:
             r["stopped_at"] = n
     # ① 갭상승 — had it come back BY that minute?
-    if gap is not None and gap >= 0.3:
+    # the exempt pair keeps the same wording it has on the board, so "why did
+    # you not buy SK하이닉스 at 14:49" reads exactly like the menu (boss
+    # 2026-09-09). Only the LIVE story is shared; the minute-replay numbers
+    # below stay authoritative for the touch time.
+    if gap is not None and gap >= 0.3 and str(code) in _PGX9 and not touch_at:
+        _g(1, "gap", False,
+           f"🚫 갭상승이 있습니다 — {hhmm} 기준으로 시가 {W9(op)}는 어제 종가 "
+           f"{W9(yc)}보다 +{gap}% 높았고, 그때까지 어제 가격으로 내려오지 "
+           f"않았습니다. 이 종목은 위치 관문에서는 막지 않습니다 — 그 시각에 "
+           f"사지 않은 이유는 오직 이 갭상승 하나입니다.",
+           f"🚫 There IS a gap-up — as of {hhmm} the open {W9(op)} was +{gap}% "
+           f"above yesterday's close {W9(yc)} and it had not come back down to "
+           f"yesterday's price by then. This stock is no longer refused on "
+           f"position — that gap-up is the ONE reason it was not bought at "
+           f"that minute.")
+    elif gap is not None and gap >= 0.3:
         if touch_at:
             _g(1, "gap", True,
                f"갭상승(+{gap}%)으로 출발했지만 {touch_at}에 어제 가격(₩{yc:,.0f}) 부근까지 "
@@ -579,6 +612,15 @@ def whynot_at(code: str, hhmm: str, name: str = "") -> dict | None:
                f"{W9(yc)}) and had never come back to yesterday's price by {hhmm} "
                f"(then {W9(px)}, {at9:+.2f}%). We do not chase an expensive open — that is "
                f"why it was not bought at that minute.")
+    elif str(code) in _PGX9:
+        _g(1, "gap", True,
+           f"🟢 갭상승이 없습니다 — 시가 {W9(op)}, 어제 종가 {W9(yc)} 대비 "
+           f"{(gap if gap is not None else 0):+.2f}%. 이 종목은 갭상승만 없으면 "
+           f"위치로는 막지 않습니다 — 빨간 봉 3개가 뜨면 삽니다. 1관문 통과.",
+           f"🟢 There is NO gap-up — opened {W9(op)}, "
+           f"{(gap if gap is not None else 0):+.2f}% vs yesterday's close "
+           f"{W9(yc)}. With no gap-up this stock is never refused on position — "
+           f"it buys on the three red candles. Gate 1 passed.")
     else:
         _g(1, "gap", True,
            f"갭상승 없이 출발 (시가 {W9(op)}, 어제 종가 {W9(yc)} 대비 "
@@ -875,7 +917,21 @@ def whynot(db: Session = Depends(get_db)):
         # still SAYS so with the gap it would have refused, so the proof menu
         # never claims a gapped day was clean. Tomorrow this branch is dead.
         from services.kiwoom_rules import gap_gate_waived as _gwv9
-        if gap is not None and gap >= 0.3 and _gwv9(day):
+        # HIS TWO NAMES ARE EXPLAINED BY THE GAP ALONE (boss 2026-09-09: "in
+        # the why not buying case it should be there is a 갭상승"). Gate 2 no
+        # longer refuses SK하이닉스/삼성전자, so the gap IS the whole story -
+        # and the row says so, with yesterday's price they must come back to.
+        _xg9 = None
+        try:
+            from services.kiwoom_rules import exempt_gap as _xgf9
+            _xg9 = _xgf9(code, day)
+        except Exception:
+            _xg9 = None
+        if _xg9 and _xg9.get("no_ko"):
+            _gate(1, "gap", False, _xg9["no_ko"], _xg9["no_en"])
+        elif _xg9 and _xg9.get("buy_ko"):
+            _gate(1, "gap", True, _xg9["buy_ko"], _xg9["buy_en"])
+        elif gap is not None and gap >= 0.3 and _gwv9(day):
             _gate(1, "gap", True,
                   f"갭상승 +{gap}%으로 출발 — 원래대로면 1관문에서 막혔을 자리입니다. "
                   f"회장님 지시로 오늘 하루만 갭상승 관문을 면제했고, 아래 나머지 "
@@ -1573,18 +1629,30 @@ def _brain_compute():
                 _pde9 = " · ".join(_pe9)
         except Exception:
             pass
-        _pbad9 = bool(_pb9 is not None and _pb9 > 35.0)
+        # the same law the cascade and the guard run: the score is the range
+        # read averaged with the all-days read, and only the TOP zone refuses
+        # (>65). His two exempt names never fail this gate at all.
+        _psc2 = _pb9
+        try:
+            from services.kiwoom_rules import pos_score as _ps3
+            from services.approval_desk import POS_GATE_EXEMPT as _pex3
+            _v3 = _ps3(code, _px9, _kd()) if _px9 else None
+            if _v3 is not None:
+                _psc2 = _v3
+            _pbad9 = bool(str(code) not in _pex3 and _psc2 is not None and _psc2 > 65.0)
+        except Exception:
+            _pbad9 = bool(_psc2 is not None and _psc2 > 65.0)
         gates.append({
             "k": "위치(주·월·3개월·6개월)", "en": "blended position",
             "v": (f"{_pb9:.0f}%" if _pb9 is not None else "대기/wait"),
             "bad": _pbad9,
             "short": "위치가 높음 → 대기", "short_en": "position too high → WAIT",
             "why": (f"📍 위치가 높습니다 — 지금 ₩{_px9:,.0f}. {_pd9}. "
-                    f"네 구간을 더해 4로 나누면 {_pb9:.0f}%이고, 35% 이하일 때만 "
+                    f"네 구간을 더해 4로 나누면 {_pb9:.0f}%, 관문 2 점수는 {_psc2:.0f}%입니다. 65%를 넘으면 "
                     f"삽니다 → 더 내려오기를 기다립니다." if _pbad9 else ""),
             "why_en": (f"📍 Its position is high - now ₩{_px9:,.0f}. {_pde9}. "
                        f"Adding the four and dividing by 4 gives {_pb9:.0f}%, "
-                       f"and we buy only at 35% or less → we wait for it to come "
+                       f"and gate 2 scores it {_psc2:.0f}%; above 65% we do not buy → we wait for it to come "
                        f"down." if _pbad9 else "")})
         gates.append({
             "k": "1개월 평균", "en": "vs 1-month avg",
