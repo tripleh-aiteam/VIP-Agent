@@ -111,6 +111,9 @@ CFG: dict = {
     "eod": "15:20",
     "eod_from": "15:19",
     "vol_win": 20,       # bars in the trailing volume average
+    # ⑧ how big an order this stock can actually deal (boss 2026-09-10)
+    "liq_adv_pct": 0.5,  # at most this % of the 20-day average daily volume
+    "liq_min_mult": 3,   # ...and at most this many times the median minute now
 }
 
 # HIS TWO NAMES. The rule is the same for all twenty; these two are the ones he
@@ -306,17 +309,97 @@ def _vol_x(bars: list[dict], cfg: dict) -> float:
 
 
 # ── size ─────────────────────────────────────────────────────────────────────
-def base_lot(price: float) -> int:
-    """The first buy's share count, under his floor/ceiling law - then rounded
-    DOWN to a clean thousand so the 20% slices are whole lots a person can read.
-    SK하이닉스 at ₩1,812,000: the ₩2B budget allows 1,103, the rule sends 1,000 -
-    exactly the number he named ("for skhynix minimum stock buying in our case
-    is 1000")."""
-    from services.approval_desk import buy_qty
-    q = int(buy_qty(price) or 0)
+_ADVC: dict = {}          # (code, day) -> average daily volume
+
+
+def _adv_day() -> str:
+    try:
+        from services.kiwoom_tape import _day
+        return _day()
+    except Exception:
+        return ""
+
+
+def liquidity_cap(code: str, bars: list[dict] | None, cfg: dict) -> int:
+    """THE MOST SHARES THIS STOCK CAN ACTUALLY DEAL (boss 2026-09-10: "for other
+    the maximum number should be based on the market, because if we fix then if
+    there is not this much we cannot deal").
+
+    A flat ceiling of 10,000 shares is nothing in 삼성전자 and impossible in a
+    thin name. Measured on yesterday's tape, the fixed size was 0.1x a minute's
+    volume in SK하이닉스 and 0.3x in 삼성전자 - but 39.9x a minute in 한화시스템,
+    38.6x in 한국항공우주 and 35.5x in HD한국조선해양, which is not an order, it is
+    a wish. Two ceilings, whichever is lower:
+
+      · a share of the 20-day AVERAGE DAILY VOLUME (liq_adv_pct, default 0.5%)
+      · a multiple of the MEDIAN MINUTE traded right now (liq_min_mult, default
+        3x) - the live one, so a stock that has gone quiet today is sized for
+        today and not for its history
+
+    Returns 0 when neither can be read, and the caller then falls back to the
+    budget and the flat ceiling as before."""
+    import statistics
+    caps = []
+    # THE DAILY TABLE IS ASKED ONCE A DAY PER STOCK, NOT ONCE A MINUTE. This runs
+    # inside every decision, for every stock, on a 20-second clock - a database
+    # round trip there would be twenty queries a minute all session for a number
+    # that changes once a day.
+    key = (str(code), _adv_day())
+    if key in _ADVC:
+        adv = _ADVC[key]
+    else:
+        adv = 0.0
+        try:
+            from services.approval_desk import _daily3
+            vols = [b["v"] for b in (_daily3(str(code), 20) or []) if b.get("v")]
+            adv = (sum(vols) / len(vols)) if vols else 0.0
+        except Exception:
+            adv = 0.0
+        if len(_ADVC) > 400:
+            _ADVC.clear()
+        _ADVC[key] = adv
+    if adv:
+        caps.append(int(adv * cfg["liq_adv_pct"] / 100))
+    try:
+        if bars and len(bars) >= 10:
+            med = statistics.median([b.get("vol") or 0 for b in bars[-30:]])
+            if med > 0:
+                caps.append(int(med * cfg["liq_min_mult"]))
+    except Exception:
+        pass
+    caps = [c for c in caps if c > 0]
+    return min(caps) if caps else 0
+
+
+def base_lot(price: float, code: str = "", bars: list[dict] | None = None,
+             cfg: dict | None = None) -> int:
+    """The first buy's share count: his floor, the budget, and what the market
+    can take - whichever binds first - rounded DOWN to a clean lot.
+
+    SK하이닉스 at ₩1,812,000 still sends exactly 1,000, the number he named
+    ("for skhynix minimum stock buying in our case is 1000"): the ₩2B budget
+    allows 1,103 and its own volume would allow 19,000, so the budget binds and
+    rounds to 1,000. A thin name is now sized by its tape instead of by a
+    constant it could never fill."""
+    cfg = {**CFG, **(cfg or {})}
+    from services.approval_desk import BUY_BUDGET, MAX_QTY, MIN_QTY, MIN_LOT
+    try:
+        px = float(price or 0)
+    except Exception:
+        px = 0.0
+    if px <= 0:
+        return 0
+    q = min(int(BUY_BUDGET // px), MAX_QTY)
+    if q < MIN_QTY:
+        q = MIN_QTY                     # his floor: an expensive stock still gets a real position
+    lq = liquidity_cap(code, bars, cfg) if code or bars else 0
+    if lq:
+        q = min(q, lq)                  # ...but never more than the market can deal
     if q >= 1000:
         return (q // 1000) * 1000
-    return (q // 100) * 100 or q
+    if q >= MIN_LOT:
+        return (q // MIN_LOT) * MIN_LOT
+    return MIN_LOT
 
 
 def slice_qty(high_water: int, cfg: dict) -> int:
@@ -416,7 +499,7 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
             return None
         if st.get("last_at") and _mins(st["last_at"], now) < cfg["cool_min"]:
             return None
-        qty = base_lot(px)
+        qty = base_lot(px, st.get("code"), bars, cfg)
         return out("BUY", qty,
                    f"진입 — 하락이 멈추고 {third}에 3번째 양봉이 섰습니다. "
                    f"갭상승 없이 시작한 날이라 규칙대로 {qty:,}주를 ₩{px:,.0f}에 삽니다 "
@@ -507,7 +590,7 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
     # example tops out at 1,000 + 1,000), and a slice is only bought back BELOW
     # the price it was sold at - a ladder that buys its slices back higher is
     # just paying for the privilege of trading.
-    cap = cfg["max_lots"] * base_lot(px)
+    cap = cfg["max_lots"] * base_lot(px, st.get("code"), bars, cfg)
     if st["adds"] < cfg["max_adds"] and st["qty"] < cap:
         ok, third = _turn(bars, cfg)
         if ok and (not st.get("last_at") or _mins(st["last_at"], now) >= cfg["cool_min"]):
@@ -546,7 +629,7 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
             if not fresh and not _plain and st["sold"] > 0 and st.get("sell_px") and px > st["sell_px"]:
                 return None
             if fresh and st["sold"] == 0:
-                q = min(base_lot(px), cap - st["qty"])
+                q = min(base_lot(px, st.get("code"), bars, cfg), cap - st["qty"])
                 ko = (f"급락 뒤 회복 — {st['spike_at']}의 빠른 하락이 멈추고 {third}에 "
                       f"3번째 양봉이 섰습니다. 팔지 않고 기다린 자리에서 {q:,}주를 "
                       f"₩{px:,.0f}에 추가로 삽니다 (거래량 x{volx}).")
