@@ -376,7 +376,18 @@ def order_status_reply(db, transcript: Optional[str], lang: str) -> Optional[str
     if not L:
         return None
     head = "**💬 챗봇 주문 상태 (최신순)**" if not en else "**💬 Your chatbot orders (newest first)**"
-    return head + "\n" + "\n".join(L)
+    # the screen that shows the same waiting rows, with a Cancel button each
+    _wait_n = sum(1 for r in rows[:12] if r[4] == "OPEN")
+    _foot = ""
+    if _wait_n and en:
+        _foot = (f"\n\n⏳ Those {_wait_n} waiting order(s) are also on the "
+                 "**[Open Limit Orders board](nav:/testing/manual)**, "
+                 "with a Cancel button on each row.")
+    elif _wait_n:
+        _foot = (f"\n\n⏳ 대기 중인 {_wait_n}건은 "
+                 "**[대기 주문 (지정가) 보드](nav:/testing/manual)**"
+                 "에서도 보시고 줄마다 취소하실 수 있습니다.")
+    return head + "\n" + "\n".join(L) + _foot
 
 
 _BREAKEVEN_KW = ("본전", "break even", "breakeven", "break-even", "minimum price",
@@ -631,15 +642,23 @@ def queued_note(en: bool, n: int) -> str:
     with the three desk links, which say 'go and look' about boards that only
     ever show FILLS. A resting limit order lives in exactly one place until it
     fills, and the reply has to say which."""
+    # NAME THE SCREEN (boss 2026-09-10: "I could not find where is queue"). Saying
+    # "ask order status" answers in chat, but he wanted somewhere to LOOK — and the
+    # three desk links below point at Menu 1/2/3, none of which lists a resting
+    # order. The waiting queue is the '대기 주문 (지정가)' table on the paper desk,
+    # which also carries a Cancel button per row.
     if en:
-        return (f"👀 Where to see {'them' if n != 1 else 'it'} until then: ask "
-                f"**\"order status\"** here. The Menu 3 board and the trading history "
-                f"record FILLS, so nothing appears there while the "
-                f"{'orders rest' if n != 1 else 'order rests'} in the book — each slice "
-                f"shows up the moment it fills.")
-    return (f"👀 체결 전까지 확인하는 곳: 여기서 **\"주문 상태\"**라고 물어보세요. "
-            f"메뉴3 보드와 매매 기록은 **체결된 거래**만 남기기 때문에, 호가창에서 "
-            f"대기하는 동안에는 그곳에 보이지 않습니다 — 한 건씩 체결되는 순간 나타납니다.")
+        return (f"👀 Where to see {'them' if n != 1 else 'it'} until then: the "
+                f"**[⏳ Open Limit Orders board](nav:/testing/manual)** lists every "
+                f"waiting order with a Cancel button — or just ask **\"order status\"** "
+                f"here. Menu 1/2/3 and the trading history record FILLS, so nothing "
+                f"appears there while the {'orders rest' if n != 1 else 'order rests'} "
+                f"in the book — each slice shows up the moment it fills.")
+    return ("👀 체결 전까지 확인하는 곳: **[⏳ 대기 주문 (지정가) 보드](nav:/testing/manual)** "
+            "에 대기 중인 주문이 모두 보이고, 줄마다 취소 버튼이 있습니다 — 여기서 "
+            "**\"주문 상태\"**라고 물어보셔도 됩니다. 메뉴1·2·3과 매매 기록은 **체결된 "
+            "거래**만 남기기 때문에, 호가창에서 대기하는 동안에는 그곳에 보이지 않습니다 "
+            "— 한 건씩 체결되는 순간 나타납니다.")
 
 
 def has_cancel_word(t: str) -> bool:
