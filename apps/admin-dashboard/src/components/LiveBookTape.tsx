@@ -200,6 +200,14 @@ export default function LiveBookTape({ code, tapeHeight = 300 }:
                "no book for this stock right now (market closed, or Kiwoom did not answer).")}</div>)}
       </div>
 
+      {/* THE RIGHT COLUMN HOLDS THE TAPE AND THE WORK UNDER IT (boss
+          2026-09-09: "it is again on the left side - it should go to the right
+          side under the 실시간 체결, please make it consistent"). This is a two
+          column grid, so a third child does not land under the tape at all: it
+          wraps onto the next ROW and lands under the BOOK, on the left. The
+          tape and the panel are one column now, and no grid flow can separate
+          them again. */}
+      <div className="flex flex-col gap-3 min-w-0">
       {/* 체결 — the deals themselves, with their time */}
       <div className="rounded-xl border overflow-hidden" style={{ borderColor: GOLD }}>
         <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]" style={{ borderColor: "var(--border-default)" }}>
@@ -250,11 +258,9 @@ export default function LiveBookTape({ code, tapeHeight = 300 }:
         </div>
       </div>
 
-      {/* 🧠 UNDER THE TAPE, NOT BESIDE THE PLAN (boss 2026-09-09: "please move
-          'what it is doing right now' under the live executions, because it is
-          hiding other text"). Beside the table it stole 246px from the reasons
-          column; down here it has the full width. */}
+      {/* 🧠 the work, directly under the tape, in the same column */}
       <ProcessSteps steps={steps} step={pstep} />
+      </div>
     </div>
   );
 }
