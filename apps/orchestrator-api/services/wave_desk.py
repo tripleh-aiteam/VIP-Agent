@@ -401,8 +401,19 @@ def run_all(db) -> dict:
     out = {"lanes": L, "semi": [], "auto": [], "errors": []}
     if not (L.get("semi") or L.get("auto")) or not A.can_propose():
         return out
+    # EVERY STOCK THE DESK JUDGES, NOT ONLY THE TEN ROOMS (boss 2026-09-09:
+    # "this is not only for Samsung and SKhynix - we implement this idea
+    # tomorrow for other stocks also"). The scanner has walked rooms + board
+    # since 09-03; the ladder walks exactly the same universe, so a stock that
+    # can raise a card can also be traded by the auto lane.
     try:
-        rooms = A.desk_codes()
+        rooms = list(A.desk_codes())
+        seen = {c for c, _n, _s in rooms}
+        for e in (A._brain_rows() or []):
+            c = str(e.get("code") or "")
+            if c and c not in seen:
+                rooms.append((c, e.get("name") or c, e.get("score")))
+                seen.add(c)
     except Exception as e:
         out["errors"].append(str(e)[:80])
         return out

@@ -10,7 +10,7 @@
    its OWN book - its own positions, its own trade history, its own scoreboard -
    so the two can run on the same stocks all day without fighting over one
    position, which is the only way to compare them. */
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useLanguage } from "@/components/i18n";
 import { API } from "./api";
 
@@ -62,6 +62,7 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
   const [busy, setBusy] = useState("");
   const [open, setOpen] = useState(true);
   const [showRule, setShowRule] = useState(false);
+  const [openTrip, setOpenTrip] = useState<string | null>(null);
 
   const pull = useCallback(() => {
     fetch(`${base}/approval/wave/status`).then((r) => r.json())
@@ -87,15 +88,55 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
       .then((r) => r.json()).then(() => pull()).finally(() => setBusy(""));
   };
 
-  const refill = () => {
-    if (busy) return;
-    setBusy("fill");
-    fetch(`${base}/approval/wave/backfill?codes=000660,005930`, { method: "POST" })
-      .then((r) => r.json()).then(() => pull()).finally(() => setBusy(""));
-  };
-
   const C = s?.cfg;
   const st = book?.stats || s?.auto_stats;
+
+  /* ONE ROW PER ROUND TRIP, IN THE DESK'S OWN FORMAT (boss 2026-09-09: "please
+     use this format, use only stock name - when we click stock name it should
+     show reason, you get the idea from the semi-auto gates - and buying price
+     and stock number and selling time and stock number").
+
+     A trip opens when the ladder first buys a stock and closes when it is flat
+     again, so the four buys and five sells of one campaign read as one block
+     instead of nine rows scattered down a list. Legs print ALL ▲ buys first and
+     then every ▼ sell - Menu 2's exact shape, which is what the desk's own
+     history does - and the sells carry what was left after each one. */
+  const trips = useMemo(() => {
+    type Leg = { tt: string; kind: "B" | "S"; px: number; qty: number;
+                 pct?: number | null; ko: string; en: string; tag: string };
+    type Trip = { key: string; code: string; name: string; legs: Leg[];
+                  won: number; last: string; pos: number; open: boolean };
+    const out: Trip[] = [];
+    const live: Record<string, Trip> = {};
+    for (const x of (book?.trades || [])) {
+      let g = live[x.code];
+      if (!g) {
+        g = { key: `${x.code}|${x.at}|${out.length}`, code: x.code, name: x.name,
+              legs: [], won: 0, last: x.at, pos: 0, open: true };
+        live[x.code] = g;
+        out.push(g);
+      }
+      g.last = x.at;
+      g.legs.push({ tt: x.at, kind: x.side === "BUY" ? "B" : "S", px: x.px, qty: x.qty,
+                    pct: x.side === "SELL" ? x.pnl_pct : null, ko: x.ko, en: x.en, tag: x.tag });
+      if (x.side === "BUY") g.pos += x.qty;
+      else {
+        g.pos -= x.qty;
+        g.won += x.pnl || 0;
+        if (g.pos <= 0) { g.open = false; delete live[x.code]; }
+      }
+    }
+    for (const g of out) {
+      g.legs.sort((a, b) => (a.kind !== b.kind ? (a.kind === "B" ? -1 : 1)
+                                               : a.tt.localeCompare(b.tt)));
+    }
+    return out.sort((a, b) => b.last.localeCompare(a.last));
+  }, [book]);
+
+  const lineB: React.CSSProperties = { color: "#e53935", fontSize: 12.3, padding: "1px 0" };
+  const lineS: React.CSSProperties = { color: "#1e88e5", fontSize: 12.3, padding: "1px 0" };
+  const wonFmt = (v: number) => (v >= 0 ? `+₩${Math.round(v).toLocaleString()}`
+                                        : `₩-${Math.abs(Math.round(v)).toLocaleString()}`);
 
   /* ONE CARD, TWO CONTROLS. Clicking the card SHOWS that lane and hides the
      other one's screen entirely (his ask); the small 켜짐/꺼짐 pill inside it
@@ -177,12 +218,14 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
               <span style={{ fontSize: 11.3, opacity: 0.72 }}>
                 {t("수수료·거래세 제외 후", "after commission and the 0.18% sell tax")}
                 {book?.day ? ` · ${book.day.slice(4, 6)}/${book.day.slice(6, 8)}` : ""}</span>
-              <button onClick={refill} disabled={!!busy}
-                style={{ marginLeft: "auto", fontSize: 11.3, padding: "3px 10px", borderRadius: 999,
-                         cursor: busy ? "wait" : "pointer", border: "1px solid rgba(128,128,128,.5)",
-                         background: "transparent", color: "inherit", font: "inherit" }}>
-                {busy === "fill" ? t("채우는 중…", "replaying…")
-                                 : t("↻ 오늘 백업으로 다시 채우기 (하이닉스·삼성)", "↻ refill from today's backup (Hynix · Samsung)")}</button>
+              {/* NO REFILL BUTTON (boss 2026-09-09: "this is not only for Samsung
+                  and SKhynix, we implement this idea tomorrow for other stocks
+                  also, so please do not put button refill from today's backup").
+                  The lane trades every stock the desk watches from the open; the
+                  replay stays available on /approval/wave/backfill for seeding a
+                  past day, but it is not a button on his screen. */}
+              <span style={{ marginLeft: "auto", fontSize: 11.3, opacity: 0.7 }}>
+                {t("전 종목 · 장중 자동 기록", "all watched stocks · recorded live through the session")}</span>
             </div>
             {st && (
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 7 }}>
@@ -210,33 +253,80 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
             <b style={{ fontSize: 12.6 }}>
               {t("자동 매매 기록", "AUTO trading history")}
               {!!book?.trades?.length && <span style={{ opacity: 0.7, fontWeight: 400 }}> · {book.trades.length}</span>}</b>
-            {!book?.trades?.length ? (
+            {!trips.length ? (
               <div style={{ fontSize: 12, opacity: 0.68, marginTop: 4 }}>
-                {t("아직 기록이 없습니다 — 위의 ‘오늘 백업으로 다시 채우기’를 누르면 오늘 아침부터 규칙대로 다시 돌려 채웁니다.",
-                   "no history yet — press “refill from today's backup” to replay this morning through the rule")}</div>
+                {t("아직 기록이 없습니다 — 장이 열리면 규칙이 스스로 사고팔며 여기에 쌓입니다.",
+                   "no history yet — once the market opens the rule trades on its own and it fills in here")}</div>
             ) : (
-              <div style={{ marginTop: 5, maxHeight: 320, overflowY: "auto",
-                            display: "flex", flexDirection: "column", gap: 3 }}>
-                {[...book.trades].reverse().map((x, i) => (
-                  <div key={`${x.at}-${x.code}-${i}`}
-                       style={{ display: "flex", gap: 9, alignItems: "baseline", fontSize: 12,
-                                padding: "4px 9px", borderRadius: 8,
-                                background: x.side === "BUY" ? "rgba(229,57,53,0.07)" : "rgba(21,101,192,0.07)" }}>
-                    <b style={{ minWidth: 38 }}>{x.at}</b>
-                    <span style={{ minWidth: 82 }}>{x.name}</span>
-                    <b style={{ minWidth: 92, color: x.side === "BUY" ? "#c62828" : "#1565c0" }}>
-                      {x.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")} {x.qty.toLocaleString()}</b>
-                    <span style={{ minWidth: 86 }}>{W(x.px)}</span>
-                    <span style={{ minWidth: 110, fontSize: 11.3, opacity: 0.78 }}>
-                      {(lang === "ko" ? TAG_KO : TAG_EN)[x.tag] || x.tag}</span>
-                    <b style={{ minWidth: 96, textAlign: "right",
-                                color: (x.pnl ?? 0) > 0 ? "#c62828" : (x.pnl ?? 0) < 0 ? "#1565c0" : "inherit" }}>
-                      {x.pnl == null ? "" : M(x.pnl)}</b>
-                    <span style={{ minWidth: 54, textAlign: "right", fontSize: 11.4,
-                                   color: (x.pnl_pct ?? 0) > 0 ? "#c62828" : (x.pnl_pct ?? 0) < 0 ? "#1565c0" : "inherit" }}>
-                      {x.pnl_pct == null ? "" : `${x.pnl_pct >= 0 ? "+" : ""}${x.pnl_pct.toFixed(2)}%`}</span>
-                    <span style={{ flex: 1, fontSize: 11.4, opacity: 0.85 }}>{lang === "ko" ? x.ko : x.en}</span>
-                  </div>))}
+              <div style={{ marginTop: 5, maxHeight: 380, overflowY: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}><tbody>
+                  {trips.map((g) => {
+                    let left = g.legs.filter((x) => x.kind === "B")
+                                     .reduce((a, x) => a + x.qty, 0);
+                    const isOpen = openTrip === g.key;
+                    return (
+                      <Fragment key={g.key}>
+                        <tr style={{ borderTop: "1px solid rgba(128,128,128,0.15)" }}>
+                          {/* ONLY THE STOCK NAME — and it opens the reasons */}
+                          <td style={{ width: 148, padding: "5px 0", verticalAlign: "top",
+                                       cursor: "pointer" }}
+                              onClick={() => setOpenTrip(isOpen ? null : g.key)}
+                              title={t("클릭하면 이 거래의 매수·매도 이유를 보여줍니다",
+                                       "click for why the rule bought AND why it sold")}>
+                            <b style={{ textDecoration: "underline dotted", textUnderlineOffset: 3 }}>
+                              🎞 {g.name}</b> {isOpen ? "▲" : "▼"}
+                            {g.open && <span style={{ marginLeft: 5, fontSize: 10.5, opacity: 0.7 }}>
+                              {t("보유 중", "holding")}</span>}
+                          </td>
+                          <td style={{ padding: "5px 0" }}>
+                            {g.legs.map((x, j) => {
+                              if (x.kind === "B") return (
+                                <div key={j} style={lineB}>
+                                  ▲ {x.tt} {W(x.px)} × {x.qty.toLocaleString()}{t("주", "sh")}</div>);
+                              left -= x.qty;
+                              return (
+                                <div key={j} style={lineS}>
+                                  ▼ {x.tt} {W(x.px)} × {x.qty.toLocaleString()}{t("주", "sh")}
+                                  <span style={{ opacity: 0.65 }}>
+                                    {" "}({t("잔여", "left")} {Math.max(0, left).toLocaleString()})</span>
+                                  <b style={{ marginLeft: 6,
+                                              color: (x.pct ?? 0) >= 0 ? "#e53935" : "#1e88e5" }}>
+                                    {(x.pct ?? 0) >= 0 ? "+" : ""}{(x.pct ?? 0).toFixed(2)}%</b>
+                                </div>);
+                            })}</td>
+                          <td style={{ width: 112, textAlign: "right", verticalAlign: "top",
+                                       paddingTop: 5, fontWeight: 800,
+                                       color: g.won >= 0 ? "#e53935" : "#1e88e5" }}>
+                            {wonFmt(g.won)}</td>
+                        </tr>
+                        {isOpen && (
+                          <tr><td colSpan={3} style={{ padding: "4px 6px 9px" }}>
+                            {/* 🔴 why it bought — the rule's own sentence, per buy */}
+                            {g.legs.filter((x) => x.kind === "B").map((x, k) => (
+                              <div key={`b${k}`} style={{ borderLeft: "3px solid #e53935",
+                                        borderRadius: 6, background: "rgba(229,57,53,0.06)",
+                                        padding: "6px 9px", fontSize: 12, lineHeight: 1.55,
+                                        marginBottom: 5 }}>
+                                <b style={{ color: "#c62828" }}>
+                                  🔴 {t("매수 이유", "Why it bought")} ({x.tt}) —{" "}
+                                  {(lang === "ko" ? TAG_KO : TAG_EN)[x.tag] || x.tag}</b>
+                                <div style={{ marginTop: 2 }}>{lang === "ko" ? x.ko : x.en}</div>
+                              </div>))}
+                            {/* 🔵 why it sold */}
+                            {g.legs.filter((x) => x.kind === "S").map((x, k) => (
+                              <div key={`s${k}`} style={{ borderLeft: "3px solid #1e88e5",
+                                        borderRadius: 6, background: "rgba(30,136,229,0.06)",
+                                        padding: "6px 9px", fontSize: 12, lineHeight: 1.55,
+                                        marginBottom: 5 }}>
+                                <b style={{ color: "#1565c0" }}>
+                                  🔵 {t("매도 이유", "Why it sold")} ({x.tt}) —{" "}
+                                  {(lang === "ko" ? TAG_KO : TAG_EN)[x.tag] || x.tag}</b>
+                                <div style={{ marginTop: 2 }}>{lang === "ko" ? x.ko : x.en}</div>
+                              </div>))}
+                          </td></tr>)}
+                      </Fragment>);
+                  })}
+                </tbody></table>
               </div>)}
           </div>
 
