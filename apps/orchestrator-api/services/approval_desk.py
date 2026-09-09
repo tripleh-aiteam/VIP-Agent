@@ -2102,6 +2102,19 @@ def set_time_override(code: str, sug_at: str = "", at: str = "", frm: str = "") 
         cur["at"] = at
     if frm:
         cur["frm"] = frm[:5]
+    # AN EDIT BELONGS TO ITS DAY (boss 2026-09-09: today's five holdings were
+    # all wearing clocks he corrected on an earlier day - 현대차 09:01,
+    # 삼성중공업 09:05, SK하이닉스 09:04 - because this file is keyed by stock
+    # code alone and never expires. A held lot whose clock moves also takes the
+    # price of that moment, so his P&L was being shown against prices we never
+    # paid: 삼성중공업 read -0.69% off ₩21,600 when we actually paid ₩21,367.
+    # It is the same lesson as the 09-08 gap waiver: a one-day correction has
+    # to be a DATE, never a switch nobody remembers to flip back.)
+    try:
+        from services.kiwoom_tape import _day as _kd_ov
+        cur["day"] = _kd_ov()
+    except Exception:
+        pass
     o[code] = cur
     _TOVR.parent.mkdir(parents=True, exist_ok=True)
     _TOVR.write_text(json.dumps(o, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -2216,9 +2229,33 @@ def apply_time_overrides(held: list, log: list) -> None:
     o = time_overrides()
     if not o:
         return
+    # the day this file was last written - the only day a legacy entry (one
+    # saved before corrections carried a date) can honestly be said to describe
+    _legacy_day = ""
+    try:
+        import datetime as _dt_ov
+        _legacy_day = _dt_ov.datetime.fromtimestamp(
+            _TOVR.stat().st_mtime).strftime("%Y%m%d")
+    except Exception:
+        pass
     for row in list(held or []) + list(log or []):
         ov = o.get(str(row.get("code") or ""))
         if not ov:
+            continue
+        # A CORRECTION MAY ONLY TOUCH THE DAY IT WAS MADE FOR (boss 2026-09-09).
+        # A HELD lot carries no clock of its own - it is a position we are in
+        # right now, and this desk never holds one overnight, so its day is
+        # today. Without this the guard would read an empty day and wave every
+        # stale correction straight through onto the very rows he is looking at.
+        _rd = str(_row_day(row) or "").replace("-", "")
+        if not _rd:
+            try:
+                from services.kiwoom_tape import _day as _kd_ov2
+                _rd = _kd_ov2()
+            except Exception:
+                _rd = ""
+        _od = str(ov.get("day") or _legacy_day)
+        if _rd and _od and _rd != _od:
             continue
         # LESSON OF THE 한화시스템 BLOCK (boss 2026-09-03 15:2x: "selling time
         # and buying time is not matching — learn lesson, do not repeat"):
