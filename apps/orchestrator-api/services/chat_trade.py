@@ -88,12 +88,52 @@ _ADVICE_BLOCK = ("should", "할까", "살까", "팔까", "괜찮", "어때", "ca
                  "good idea", "good right now", "opinion")
 
 
+# ---------------------------------------------------------------------------
+# THE BOSS'S LAW (2026-09-09): "IF I ASK A QUESTION IT MUST ANSWER, NOT ACT."
+#
+# _ADVICE_BLOCK is a keyword list, so it only caught the phrasings someone had
+# thought of. It saved "should we sell SK hynix or not?" purely because that
+# sentence happens to contain "should" — while every one of these parsed as a
+# live order proposal:
+#       "sell SK hynix?"        -> SELL
+#       "SK하이닉스 매도?"        -> SELL
+#       "삼성전자 5주 매수?"      -> BUY
+#       "buy Samsung?"          -> BUY
+# A question mark is the one unambiguous marker of a question in both languages
+# and it was never checked. Now it is, and it wins over every command pattern.
+#
+# Deliberately NOT treated as questions: "can you buy X" / "please buy X" with no
+# '?'. Boss 2026-08-26 ruled those ARE orders that must simply ask once more
+# before executing, and _CMD_EN2 handles them. Add a '?' and they become
+# questions again — which is exactly the law above.
+_Q_MARK_RE = re.compile(r"[?？]")
+# interrogative openers that are questions even with no '?' typed
+_Q_LEAD_RE = re.compile(
+    r"^\s*(?:so|and|but|ok|okay|well)?\s*"
+    r"(?:should|shall|do|does|did|is|are|was|were|what|which|when|where|why|who|how)",
+    re.I)
+# Korean question endings ('팔까요', '매도하나요', '살까', '어떤가요' …)
+_Q_KO_RE = re.compile(r"(?:까요|나요|을까|ㄹ까|는가요?|은가요?|인가요?|런가요?|"
+                      r"어떤가|어떠한가|맞나요?|겠죠|겠나요)\s*[?？]?\s*$")
+
+
+def is_question(transcript: Optional[str]) -> bool:
+    """True when the message asks rather than commands. A True here must NEVER
+    produce an order — the caller returns None and the answer path takes over."""
+    t = (transcript or "").strip()
+    if not t:
+        return False
+    return bool(_Q_MARK_RE.search(t) or _Q_LEAD_RE.match(t) or _Q_KO_RE.search(t))
+
+
 def parse(transcript: Optional[str]) -> Optional[dict]:
     """An imperative BUY/SELL command naming a stock → {side, code, name, qty, all_}.
     None for questions/advice or when no stock resolves."""
     t = (transcript or "").strip()
     tl = t.lower()
     if not t or len(t) > 120 or any(w in tl for w in _ADVICE_BLOCK):
+        return None
+    if is_question(t):          # a question is answered, never executed
         return None
     side = None
     m = _CMD_EN.match(tl) or _CMD_EN2.search(tl)
@@ -1195,6 +1235,8 @@ def multi_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
     tl = t.lower()
     if not t or len(t) > 140 or any(w in tl for w in _ADVICE_BLOCK):
         return None
+    if is_question(t):          # a question is answered, never executed
+        return None
     side = None
     m = _CMD_EN.match(tl) or _CMD_EN2.search(tl)
     if m:
@@ -1264,6 +1306,8 @@ def verb_only_side(transcript: Optional[str]) -> Optional[str]:
     t = (transcript or "").strip()
     tl = t.lower()
     if not t or len(t) > 60 or any(w in tl for w in _ADVICE_BLOCK):
+        return None
+    if is_question(t):          # a question is answered, never executed
         return None
     # '공매도가 뭐야?' asked WHICH STOCK TO SELL (2026-09-02 exam): 공매도 contains
     # 매도 but is a CONCEPT, and Korean question shapes are never orders

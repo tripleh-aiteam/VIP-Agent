@@ -50,8 +50,19 @@ _LIST_CUE = re.compile(r"조건\s*주문|conditional\s*orders?|예약\s*주문|s
 
 
 def is_conditional(transcript: Optional[str]) -> bool:
-    """A trading phrase carrying an if/when trigger."""
+    """A trading phrase carrying an if/when trigger.
+
+    A QUESTION is never one. This lane had no advice guard of any kind, and
+    parse() defaults side to BUY, so "if SK hynix drops to 1,800,000 should we
+    buy?" proposed a standing BUY order instead of answering — the boss's law
+    (2026-09-09) is that a question is answered, never acted on."""
     t = transcript or ""
+    try:
+        from services.chat_trade import is_question
+        if is_question(t):
+            return False
+    except Exception:
+        pass
     return bool(_COND_CUE.search(t) and (_BUY_CUE.search(t) or _SELL_CUE.search(t))
                 and _PRICE_RE.search(t.replace(",", "")))
 
