@@ -2574,7 +2574,14 @@ def verify_now(code: str, side: str = "BUY", day: str = "",
                 if _a9 > 0:
                     _now9 = float(bars[-1].get("vol") or 0) / _a9
                     snap["vol_now"] = round(_now9, 2)
-            if _now9 is not None and _now9 < 1.2:
+            # HIS TWO NAMES BUY ON THE SHAPE, NOT ON A VOLUME SPIKE (boss
+            # 2026-09-09: "after 3 red we should buy"). Demanding 1.2x the
+            # 30-minute average in the very minute of the 3rd red would veto
+            # most of the moments his rule names - it refused SK하이닉스 at
+            # 0.48x and 삼성전자 at 0.26x this morning. The DAY-level pace
+            # check below still applies to them, so a genuinely dead tape is
+            # still refused; only the per-minute spike requirement steps aside.
+            if _now9 is not None and _now9 < 1.2 and str(code) not in POS_GATE_EXEMPT:
                 return (False,
                         f"지금 이 분봉의 거래량이 약합니다 — 최근 30분 평균의 "
                         f"{_now9:.2f}배입니다 (1.20배 이상 필요). 사는 그 순간에 "
@@ -2599,7 +2606,10 @@ def verify_now(code: str, side: str = "BUY", day: str = "",
         d = _daily20(code, _d0)
         ma20, mayr = float(d[3] or 0), float(d[4] or 0)
         snap.update({"ma20": ma20, "mayr": mayr})
-        if ma20 and mayr and px > ma20 and px > mayr:
+        # the averages are a POSITION test by another name, and his two
+        # names are exempt from position (boss 2026-09-09) - otherwise the
+        # law he just wrote could never fire on a stock that has risen
+        if ma20 and mayr and px > ma20 and px > mayr and str(code) not in POS_GATE_EXEMPT:
             return (False,
                     f"지금 ₩{px:,.0f}은 1개월 평균(₩{ma20:,.0f})과 1년 평균"
                     f"(₩{mayr:,.0f}) 둘 다 위입니다 — 보내지 않습니다.",
