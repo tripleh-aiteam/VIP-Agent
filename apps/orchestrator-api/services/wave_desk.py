@@ -115,6 +115,15 @@ def set_mode(m: str) -> dict:
     return {"ok": False, "error": "mode must be semi | auto | both | off"}
 
 
+def _weekday() -> bool:
+    from datetime import datetime
+    try:
+        from services.kiwoom_tape import KST
+        return datetime.now(KST).weekday() < 5
+    except Exception:
+        return datetime.now().weekday() < 5
+
+
 def _today() -> str:
     from services.kiwoom_tape import _day
     return _day()
@@ -451,7 +460,21 @@ def run_all(db) -> dict:
     from services import approval_desk as A
     L = lanes()
     out = {"lanes": L, "semi": [], "auto": [], "errors": []}
-    if not (L.get("semi") or L.get("auto")) or not A.can_propose():
+    if not (L.get("semi") or L.get("auto")):
+        return out
+    # THE CLOSE IS THE ONE MINUTE THE LANE MUST NOT BE ASLEEP FOR. can_propose()
+    # goes false AT 15:20 - it is about asking him a question the exchange can no
+    # longer honour - and the runner used to bail on it entirely. With the flat
+    # moved to 15:20 (boss 2026-09-10) that would have meant the auto book never
+    # sold: its positions would sit open overnight and the "nothing is carried
+    # overnight" law would quietly stop being true. The SEMI lane still obeys the
+    # rule to the letter (no card after 15:20, and place_order refuses anyway);
+    # the AUTO lane is allowed to run a few minutes past it, for the one thing it
+    # has left to do - go flat.
+    _open = A.can_propose()
+    _hh = A._hhmm()
+    _closing = (not _open) and ("15:20" <= _hh <= "15:35") and _weekday()
+    if not _open and not (L.get("auto") and _closing):
         return out
     # EVERY STOCK THE DESK JUDGES, NOT ONLY THE TEN ROOMS (boss 2026-09-09:
     # "this is not only for Samsung and SKhynix - we implement this idea
@@ -481,8 +504,8 @@ def run_all(db) -> dict:
             except Exception as e:
                 log.warning(f"wave auto {code}: {str(e)[:100]}")
                 out["errors"].append(f"auto {code}: {str(e)[:50]}")
-        # 🙋 SEMI — the approval card on the real desk book
-        if L.get("semi"):
+        # 🙋 SEMI — the approval card on the real desk book (never after 15:20)
+        if L.get("semi") and _open:
             try:
                 st0 = A._load()
                 pend = {(p.get("side"), p.get("code")) for p in (st0.get("pending") or [])}

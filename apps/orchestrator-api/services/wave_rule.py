@@ -96,7 +96,17 @@ CFG: dict = {
     # ⑥ housekeeping
     "cool_min": 3,       # minutes between two decisions in one stock
     "slice_gap": 10,     # ...and this many between two slices coming off the same rise
-    "eod": "15:15",      # everything is flat before the close
+    # EVERYTHING IS FLAT AT THE CLOSE (boss 2026-09-10: "it should be 15:20, like
+    # market closing time") - the same minute the desk's own flat close fires.
+    # `eod` is the DEADLINE, `eod_from` is the minute the selling starts, and the
+    # two differ for a reason found while making this change: continuous trading
+    # ends at 15:20 and the next print is the 15:30 closing auction, so today's
+    # tape runs …15:18, 15:19, 15:30. A flat triggered at "15:20" therefore fired
+    # at 15:30 - inside the auction, where place_order refuses and no order of
+    # ours can deal. It starts at 15:19 instead: the last price the desk can
+    # actually trade before the bell.
+    "eod": "15:20",
+    "eod_from": "15:19",
     "vol_win": 20,       # bars in the trailing volume average
 }
 
@@ -370,15 +380,19 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
                 "volx": volx, "peak": peak_px, "peak_at": peak_at,
                 "ko": why_ko, "en": why_en}
 
-    # ① THE BELL. Everything is flat before the close - his last sentence.
-    if now >= cfg["eod"]:
+    # ① THE BELL. Everything is flat at the close - his last sentence.
+    if now >= cfg.get("eod_from", cfg["eod"]):
         if st["qty"] > 0:
             pnl = (px / st["avg_px"] - 1) * 100 if st["avg_px"] else 0.0
             return out("SELL", st["qty"],
-                       f"장 마감 정리 — {cfg['eod']} 전량 매도. 남은 {st['qty']:,}주를 "
-                       f"₩{px:,.0f}에 정리합니다 (평균가 대비 {pnl:+.2f}%).",
-                       f"closing flat - everything out before the bell: {st['qty']:,} sh at "
-                       f"₩{px:,.0f} ({pnl:+.2f}% on average cost)", "eod")
+                       f"장 마감 정리 — {cfg['eod']} 마감 전 전량 매도. 남은 {st['qty']:,}주를 "
+                       f"₩{px:,.0f}에 정리합니다 (평균가 대비 {pnl:+.2f}%). "
+                       f"{cfg['eod']} 이후는 종가 단일가라 주문이 체결되지 않아, 그 직전 "
+                       f"가격에 냅니다.",
+                       f"closing flat - everything out by {cfg['eod']}: {st['qty']:,} sh at "
+                       f"₩{px:,.0f} ({pnl:+.2f}% on average cost). After {cfg['eod']} the "
+                       f"market is in its closing auction where our orders cannot deal, so "
+                       f"this goes at the last price before it.", "eod")
         return None
 
     # ② NOTHING HELD: the day gate, then his 3 red.
