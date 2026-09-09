@@ -370,6 +370,9 @@ def closes120(code: str, day: str) -> list[float]:
     return cl
 
 
+POS_GATE_EXEMPT = ("000660", "005930")   # boss 2026-09-09
+
+
 def whole_read(code: str, px: float, day: str) -> float | None:
     """The all-days position: what share of the last 120 daily closes were
     CHEAPER than `px`, with recent days carrying more weight (half-life 20
@@ -467,6 +470,14 @@ def pos_story(code: str, px: float, day: str, bar: float = 65.0,
     _wh0 = whole_read(code, px, day)
     score = ((blend + _wh0) / 2) if _wh0 is not None else blend
     ok = score <= bar
+    # HIS TWO NAMES SKIP THIS GATE (boss 2026-09-09: "gate 2 is exceptional
+    # for SK하이닉스 and 삼성전자 - if there is no 갭상승, or there is one and
+    # it came back to yesterday's price or lower, it should start trading").
+    # The score is still SHOWN - he wants to see where they stand - it just
+    # no longer refuses the buy. Gate 1, volume, news and the turn still do.
+    exempt = str(code) in POS_GATE_EXEMPT and context != "hold"
+    if exempt:
+        ok = True
     rule_ko: list[str] = []
     rule_en: list[str] = []
     if _wh0 is not None:
@@ -474,7 +485,17 @@ def pos_story(code: str, px: float, day: str, bar: float = 65.0,
                        f"{_wh0:.1f}%) ÷ 2 = {score:.1f}%")
         rule_en.append(f"🧮 Gate 2's score = (range method {blend:.1f}% + all-days method "
                        f"{_wh0:.1f}%) ÷ 2 = {score:.1f}%")
-    if context == "hold":
+    if exempt:
+        rule_ko.append(f"⚖ 규칙: 이 종목은 회장님 지정 예외 2종목(SK하이닉스·삼성전자)입니다 — "
+                       f"위치 점수 {score:.1f}%는 참고로만 보고, 위치로는 막지 않습니다. "
+                       f"갭상승 관문(어제 가격으로 돌아왔는가)·거래량·뉴스·반등 신호는 "
+                       f"그대로 지킵니다.")
+        rule_en.append(f"⚖ Rule: this is one of the two EXEMPT names (SK hynix · Samsung "
+                       f"Electronics) — its position score {score:.1f}% is shown for "
+                       f"information only and never refuses the buy. Gate 1 (the gap and "
+                       f"the return to yesterday's price), volume, news and the turn "
+                       f"still apply.")
+    elif context == "hold":
         rule_ko.append(f"→ 지금 {score:.1f}% 지점입니다 (낮을수록 싼 자리). "
                        f"보유 중의 매도는 이 위치가 아니라 -1% 규칙이 결정합니다.")
         rule_en.append(f"→ It sits at {score:.1f}% (lower = cheaper). While holding, the "

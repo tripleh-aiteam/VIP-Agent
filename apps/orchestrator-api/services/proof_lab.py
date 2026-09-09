@@ -2018,6 +2018,9 @@ def _rebound_entry(s: dict, v: dict, i: int, ups: int, closes: list[float]) -> b
     return True
 
 
+POS_GATE_EXEMPT = ("000660", "005930")   # boss 2026-09-09
+
+
 def _pos_ok(s: dict, c: float, v: dict) -> bool:
     """GATE 2, in whichever form is being tested. `pos_mode` picks the ruler:
        week_low   price at or under the week's lowest close  (deployed)
@@ -2058,6 +2061,16 @@ def _pos_ok(s: dict, c: float, v: dict) -> bool:
             if not (lo and hi and hi > lo):
                 return True
             return (c - lo) / (hi - lo) * 100 <= tol
+    # ── HIS TWO NAMES ARE EXEMPT FROM GATE 2 (boss 2026-09-09: "gate 2 case
+    # is exceptional for SK하이닉스 and 삼성전자 - if there is no 갭상승, or
+    # there is a 갭상승 and it came back to yesterday's price or lower, it
+    # should start trading"). These are the same pair the -1% stop already
+    # spares: he holds them through noise and wants the position gate out of
+    # their way. Gate 1 (갭상승 + the return to yesterday's price) still
+    # rules them, and so do volume, news and the turn - only the position
+    # gate steps aside.
+    if str(s.get("code") or "") in POS_GATE_EXEMPT:
+        return True
     if m == "allinfo":
         # GATE 2 = POSITION ONLY, AND ONLY THE TOP IS REFUSED (boss
         # 2026-09-07 evening: "gate 2 is too heavy, it is blocking

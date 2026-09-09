@@ -1660,6 +1660,9 @@ _TURN = {"win": 30, "drop": 0.7, "ups": 3, "soft": 0.2,
 _TURNC: dict = {}       # (code, minute) -> answer; the tape only moves once a minute
 
 
+POS_GATE_EXEMPT = ("000660", "005930")   # boss 2026-09-09
+
+
 def _turn_shape(code: str, bars: list | None = None) -> tuple:
     """(ok, ko, en, at) — does the 3rd rise stand on the 1-minute tape right now?
 
@@ -1681,6 +1684,43 @@ def _turn_shape(code: str, bars: list | None = None) -> tuple:
             bars = _bt(_ld(str(code), _dy()), 60)
         except Exception:
             bars = []
+    # ── HIS TWO NAMES USE HIS OWN SHAPE (boss 2026-09-09, pointing at the
+    # SK하이닉스 tape: "in the skhynix case it should be at 09:04 - price
+    # decreased and stopped decreasing and started to increase and the 3rd
+    # (small blue ignore, like before)"). He is right and our detector missed
+    # it twice over: it refuses to answer before 8 bars exist (so nothing can
+    # fire before 09:08) and it demands a 0.7% fall, while his 09:01 dip was
+    # 0.39%. For the two exempt names the shape is exactly as he describes it:
+    # a blue candle of ANY size, then 3 consecutive rises, a small blue
+    # (<=0.2%) ignored as the soft-up law already does elsewhere. Everything
+    # else - gate 1, volume, news - still guards the buy.
+    if str(code) in POS_GATE_EXEMPT and bars and len(bars) >= 4:
+        w2 = bars[-d["win"]:]
+        ups, seen_fall, third = 0, False, None
+        prev = w2[0]["close"]
+        for b in w2[1:]:
+            c, o = b["close"], b["open"]
+            if c < o:                                   # a blue candle
+                if prev and (prev - c) / prev * 100 > d["soft"]:
+                    ups, third = 0, None                # a REAL blue resets
+                seen_fall = True
+            elif c > prev:
+                ups += 1
+                if ups == d["ups"] and third is None:
+                    third = str(b.get("hhmm") or "")[:5]
+            prev = c
+        if seen_fall and ups >= d["ups"]:
+            px2 = w2[-1]["close"]
+            out = (True,
+                   f"진입 신호 확인 (예외 2종목 규칙) — 하락이 멈추고 {third}에 3번째 "
+                   f"양봉이 섰습니다 (현재 ₩{px2:,.0f}). 작은 음봉은 무시합니다.",
+                   f"entry signal confirmed (exempt-pair rule) - the fall stopped and the "
+                   f"3rd rising candle stood at {third} (now W{px2:,.0f}); small blue "
+                   f"candles are ignored",
+                   third)
+            if _live:
+                _TURNC[_key] = out
+            return out
     w = bars[-d["win"]:] if bars else []
     if len(w) < 8:
         out = (False, "1분봉이 아직 충분하지 않습니다 — 신호를 셀 수 없습니다",
@@ -2465,16 +2505,30 @@ def verify_now(code: str, side: str = "BUY", day: str = "",
             _blend = sum(_ps) / len(_ps)
             snap["pos_blend"] = round(_blend, 1)
             snap["pos_detail"] = " · ".join(_det)
-            if _blend > 35.0:
+            # THE GUARD READS THE SAME GATE 2 AS THE BOARD (caught 2026-09-09:
+            # the board said "gate 2 open" while this guard still refused on
+            # the retired 35% blend - the exact board-vs-popup divergence the
+            # 09-03 lesson forbids). Current law: the score averages the range
+            # read with the all-days read and refuses only the TOP zone (>65),
+            # and the boss's two exempt names (SK하이닉스·삼성전자, 09-09)
+            # skip the position gate altogether.
+            _sc9 = _blend
+            try:
+                from services.kiwoom_rules import pos_score as _psc9
+                _sc9 = _psc9(code, px, _d0) or _blend
+            except Exception:
+                pass
+            snap["pos_score"] = round(_sc9, 1)
+            if str(code) in POS_GATE_EXEMPT:
+                pass                    # his two names: position never refuses
+            elif _sc9 > 65.0:
                 return (False,
-                        f"위치가 높습니다 — 주·월·3개월·6개월 평균 위치 "
-                        f"{_blend:.0f}% ({' · '.join(_det)}). 하위 35% 이하에서만 "
-                        f"삽니다. 보내지 않습니다.",
-                        f"its position is high - blended across week / month / "
-                        f"3-month / 6-month it sits at {_blend:.0f}% "
-                        f"({' · '.join(_det)}). We buy only in the bottom 35%. "
+                        f"위치가 고점권입니다 — 관문 2 점수 {_sc9:.0f}% "
+                        f"({' · '.join(_det)}). 65% 초과는 사지 않습니다. 보내지 않습니다.",
+                        f"its position is in the TOP zone - gate 2 score {_sc9:.0f}% "
+                        f"({' · '.join(_det)}). We do not buy above 65%. "
                         f"Not sending.", snap)
-        elif _low5 and px > _low5:
+        elif _low5 and px > _low5 and str(code) not in POS_GATE_EXEMPT:
             return (False,
                     f"이번 주 최저가 ₩{_low5:,.0f}보다 위입니다 (지금 ₩{px:,.0f}) — "
                     f"보내지 않습니다.",
