@@ -97,7 +97,16 @@ def desk_roundtrips(source: str = Query("algo1"), limit: int = Query(150),
     of the same ticker (entry price/time shown = that buy; P&L stays the desk's
     avg-cost number, net of 0.23% fees)."""
     from sqlalchemy import text
-    src = source if source in ("manual", "algo1", "algo2", "algo3", "algo4", "guard") else "algo1"
+    # 💬 CHAT IS AN ACTOR TOO (boss 2026-09-09: "in the trading history I do not
+    # see"). The whitelist had no chat entry at all, so a chatbot round trip could
+    # never be asked for, whatever it was tagged — the fallback silently answered
+    # with algo1's table instead. `source=chat` now means the whole chat family:
+    # chat / chatbot / algo2-chat / test-chat.
+    src = source if source in ("manual", "algo1", "algo2", "algo3", "algo4",
+                               "guard", "chat") else "algo1"
+    _src_sql = ("(COALESCE(s.source,'') IN ('chat','chatbot') "
+                "OR COALESCE(s.source,'') LIKE '%-chat')" if src == "chat"
+                else "COALESCE(s.source, 'manual') = :src")
     rows = db.execute(text(
         "SELECT s.name, s.qty, COALESCE(b.fill_price, s.fill_price) AS entry, "
         "       s.fill_price AS exit_price, s.realized_pnl, s.realized_pnl_pct, "
@@ -109,9 +118,10 @@ def desk_roundtrips(source: str = Query("algo1"), limit: int = Query(150),
         "    AND b.filled_at <= s.filled_at "
         "  ORDER BY b.filled_at DESC LIMIT 1) b ON true "
         "WHERE s.side = 'SELL' AND s.status = 'FILLED' AND s.realized_pnl IS NOT NULL "
-        "  AND COALESCE(s.source, 'manual') = :src "
+        f"  AND {_src_sql} "
         "ORDER BY s.filled_at DESC LIMIT :lim"),
-        {"src": src, "lim": max(1, min(int(limit), 500))}).fetchall()
+        ({"lim": max(1, min(int(limit), 500))} if src == "chat"
+         else {"src": src, "lim": max(1, min(int(limit), 500))})).fetchall()
     return {"ok": True, "source": src, "trips": [
         {"name": r[0], "qty": int(r[1] or 0), "entry": (float(r[2]) if r[2] is not None else None),
          "exit_price": (float(r[3]) if r[3] is not None else None),

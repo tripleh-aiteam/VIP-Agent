@@ -424,14 +424,19 @@ export default function Desk({ mode }: { mode: TradeMode }) {
   const [rtRes, setRtRes] = useState<"ALL" | "WIN" | "LOSE">("ALL");
   const [rtStock, setRtStock] = useState("ALL");
   const [rtTime, setRtTime] = useState<"ALL" | "AM" | "PM" | "1H">("ALL");
+  // WHOSE trades this table shows. It was pinned to algo1, so a chatbot trade
+  // could never appear here however it was tagged — boss 2026-09-09: "in the
+  // trading history or in menu 3 I do not see". 'chat' covers the whole family
+  // (chat / chatbot / algo2-chat / test-chat).
+  const [rtSrc, setRtSrc] = useState("algo1");
   useEffect(() => {
     const loadRt = () => {
-      api<{ trips: RoundTrip[] }>("/paper-desk/roundtrips?source=algo1").then((r) => setRt(r.trips || [])).catch(() => {});
+      api<{ trips: RoundTrip[] }>(`/paper-desk/roundtrips?source=${rtSrc}`).then((r) => setRt(r.trips || [])).catch(() => {});
     };
     loadRt();
     const i = setInterval(loadRt, 15000);
     return () => clearInterval(i);
-  }, []);
+  }, [rtSrc]);
 
   const load = () => {
     api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
@@ -1635,6 +1640,16 @@ export default function Desk({ mode }: { mode: TradeMode }) {
           const fWins = rows.filter((r) => (r.won || 0) > 0).length;
           return (<>
           <div className="px-3 py-2 flex items-center gap-2 flex-wrap border-b border-[var(--border-default)]/40" style={{ background: "var(--bg-elevated)" }}>
+            <select value={rtSrc} onChange={(e) => setRtSrc(e.target.value)}
+              className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
+              <option value="algo1">{t("주체: 알고1", "by: algo 1")}</option>
+              <option value="algo2">{t("주체: 알고2", "by: algo 2")}</option>
+              <option value="algo3">{t("주체: 알고3", "by: algo 3")}</option>
+              <option value="algo4">{t("주체: 알고4", "by: algo 4")}</option>
+              <option value="chat">{t("주체: 💬 챗봇", "by: 💬 chatbot")}</option>
+              <option value="guard">{t("주체: 가드", "by: guard")}</option>
+              <option value="manual">{t("주체: 수동", "by: manual")}</option>
+            </select>
             <select value={rtRes} onChange={(e) => setRtRes(e.target.value as typeof rtRes)}
               className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
               <option value="ALL">{t("결과: 전체", "result: all")}</option>

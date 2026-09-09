@@ -331,14 +331,18 @@ def order_status_reply(db, transcript: Optional[str], lang: str) -> Optional[str
     if _stk:
         _q9 += " AND ticker=:t"
         _p9["t"] = _stk[0]
-    rows = db.execute(_sqt(_q9 + " ORDER BY id DESC LIMIT 8"), _p9).fetchall()
+    # A LADDER IS ONE ORDER TO HIM, N ROWS TO US (boss 2026-09-09): he queued a
+    # 5-slice ladder and the status listed 4 of them, so the desk looked like it
+    # had lost one. 20 fetched / 12 shown holds the biggest ladder we allow and
+    # still leaves room for the fills around it.
+    rows = db.execute(_sqt(_q9 + " ORDER BY id DESC LIMIT 20"), _p9).fetchall()
     if not rows:
         if _stk:
             return (f"아니요 — 챗봇으로 {_stk[1]}을(를) 주문한 기록이 없습니다." if not en
                     else f"No — there is no chatbot order for {_stk[1]} on record.")
         return None
     L = []
-    for r in rows[:4]:
+    for r in rows[:12]:
         try:
             tm = r[7].astimezone(KST).strftime("%H:%M") if r[7] is not None else ""
         except Exception:
@@ -618,6 +622,24 @@ def _fuzzy_word(t: str, targets: tuple, cutoff: float = 0.75) -> bool:
     import difflib
     return any(difflib.get_close_matches(w, targets, n=1, cutoff=cutoff)
                for w in re.findall(r"[a-z]{4,12}", t or ""))
+
+
+def queued_note(en: bool, n: int) -> str:
+    """Where a WAITING order can and cannot be seen (boss 2026-09-09: "chatbot
+    said ladder placed ... but in the trading history or in menu 3 I do not
+    see"). It was telling the truth — the rows were in the book — but it ended
+    with the three desk links, which say 'go and look' about boards that only
+    ever show FILLS. A resting limit order lives in exactly one place until it
+    fills, and the reply has to say which."""
+    if en:
+        return (f"👀 Where to see {'them' if n != 1 else 'it'} until then: ask "
+                f"**\"order status\"** here. The Menu 3 board and the trading history "
+                f"record FILLS, so nothing appears there while the "
+                f"{'orders rest' if n != 1 else 'order rests'} in the book — each slice "
+                f"shows up the moment it fills.")
+    return (f"👀 체결 전까지 확인하는 곳: 여기서 **\"주문 상태\"**라고 물어보세요. "
+            f"메뉴3 보드와 매매 기록은 **체결된 거래**만 남기기 때문에, 호가창에서 "
+            f"대기하는 동안에는 그곳에 보이지 않습니다 — 한 건씩 체결되는 순간 나타납니다.")
 
 
 def has_cancel_word(t: str) -> bool:
@@ -1789,15 +1811,17 @@ def finish(db, word: str) -> Optional[str]:
                     + (f" ({fill_n} filled instantly)" if fill_n else "")
                     + (f" · {fail_n} failed" if fail_n else "")
                     + f". {wait_n} waiting in the book — each fill ✅-announced here. "
-                    f"\"order status\" shows the ladder; \"cancel {p['name']} orders\" pulls it."
-                    + (closed_fill_note(True, filled=False) if _lsrc == "test-chat" else "") + "\n\n"
+                    f"\"cancel {p['name']} orders\" pulls it."
+                    + (closed_fill_note(True, filled=False) if _lsrc == "test-chat" else "")
+                    + (("\n" + queued_note(True, wait_n)) if wait_n else "") + "\n\n"
                     + _desk_links(True))
         return (f"🪜 **분할 {_lside_ko} 접수 — {p['name']}**: {ok_n}건 접수"
                 + (f" (즉시 체결 {fill_n}건)" if fill_n else "")
                 + (f" · 실패 {fail_n}건" if fail_n else "")
                 + f". 대기 {wait_n}건 — 체결될 때마다 이 채팅에 ✅ 알림이 옵니다. "
-                f"\"주문 상태\"로 확인, \"{p['name']} 주문 취소\"로 전체 회수."
-                + (closed_fill_note(False, filled=False) if _lsrc == "test-chat" else "") + "\n\n"
+                f"\"{p['name']} 주문 취소\"로 전체 회수."
+                + (closed_fill_note(False, filled=False) if _lsrc == "test-chat" else "")
+                + (("\n" + queued_note(False, wait_n)) if wait_n else "") + "\n\n"
                 + _desk_links(False))
     # a CONDITIONAL rule waiting for its "네" (Step 3): yes stores the standing
     # rule (no order yet — the watchdog fires it at the trigger), no drops it
@@ -1915,6 +1939,7 @@ def finish(db, word: str) -> Optional[str]:
               f"중간 확인은 \"주문 상태\", 취소는 \"{p['name']} 주문 취소\"라고 말씀하세요."])
         if _csrc == "test-chat":
             L.append(closed_fill_note(en, filled=False).strip())
+        L.append(queued_note(en, 1))
         L += ["", _desk_links(en)]
         return "\n".join(L)
     if not res.get("ok"):
