@@ -300,10 +300,20 @@ def backfill(codes: list[str], day: str = "", clear: bool = True) -> dict:
     it replaces that stock's backfilled rows instead of adding a second copy."""
     from services import wave_rule as W
     d = _roll(_read())
-    book = d.setdefault("auto", _blank()["auto"])
     day8 = day or _today()
-    if book.get("day") != day8:
-        book.update({"day": day8, "state": {}, "positions": {}, "trades": []})
+    # A PAST DAY IS WRITTEN INTO THE ARCHIVE, NEVER OVER THE LIVE BOOK. The
+    # first version reset the running book to whatever day it was asked for, so
+    # seeding 09-08 at 11:00 would have thrown away the morning's real trades
+    # and stamped them with the wrong date. Today's book is only ever touched
+    # when today is what was asked for.
+    if day8 != _today():
+        book = {"day": day8, "state": {}, "positions": {}, "trades": []}
+        arch_target = True
+    else:
+        book = d.setdefault("auto", _blank()["auto"])
+        arch_target = False
+        if book.get("day") != day8:
+            book.update({"day": day8, "state": {}, "positions": {}, "trades": []})
     # EVERY STOCK GETS ITS KOREAN NAME, not just the pinned six - a history of
     # twenty rows reading "012330" helps nobody (boss 2026-09-09: "use 20 stock").
     names = {}
@@ -350,8 +360,14 @@ def backfill(codes: list[str], day: str = "", clear: bool = True) -> dict:
         out.append({"code": code, "name": name, "trades": len(r.get("trades") or []),
                     "gap": r.get("gap"), "ok": True})
     book["trades"].sort(key=lambda t: str(t.get("at") or ""))
+    if arch_target:
+        arch = d.setdefault("archive", {})
+        arch[day8] = {"day": day8, "trades": book["trades"], "stats": auto_stats(book)}
+        for k in sorted(arch)[:-10]:
+            arch.pop(k, None)
     _write(d)
-    return {"ok": True, "day": day8, "codes": out, "stats": auto_stats(book)}
+    return {"ok": True, "day": day8, "archived": arch_target,
+            "codes": out, "stats": auto_stats(book)}
 
 
 # ── one stock, one minute ────────────────────────────────────────────────────

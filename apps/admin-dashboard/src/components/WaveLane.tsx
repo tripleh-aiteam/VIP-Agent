@@ -234,21 +234,36 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
                   The lane trades every stock the desk watches from the open; the
                   replay stays available on /approval/wave/backfill for seeding a
                   past day, but it is not a button on his screen. */}
-              {/* A FINISHED SESSION IS STILL READABLE (2026-09-10): the lanes
-                  reset at the first candle of a new day, so yesterday's book is
-                  archived whole and reachable from these chips. */}
-              {(book?.days || []).slice(0, 6).map((dd) => {
-                const on = (day || (book?.days?.[0]?.day ?? "")) === dd.day;
-                return (
-                  <span key={dd.day} onClick={() => setDay(dd.live ? "" : dd.day)}
-                    style={{ cursor: "pointer", fontSize: 11.2, padding: "2px 9px",
-                             borderRadius: 999, fontWeight: on ? 800 : 400,
-                             background: on ? "rgba(198,40,40,0.15)" : "rgba(128,128,128,0.1)" }}>
-                    {dd.live ? t("오늘", "today") : `${dd.day.slice(4, 6)}/${dd.day.slice(6, 8)}`}
-                    {dd.n ? ` ${dd.n}` : ""}
-                    {dd.pct != null && dd.n ? ` ${dd.pct >= 0 ? "+" : ""}${dd.pct.toFixed(2)}%` : ""}
-                  </span>);
-              })}
+              {/* 📅 PICK A DAY — the same control the semi-auto history carries
+                  (boss 2026-09-10: "dropdown menu for remembering other days
+                  also in the Menu 3 auto mode, like you have done in the semi
+                  auto"). The lanes reset at the first candle of a new session,
+                  so every finished day is archived whole and reachable here -
+                  scoreboard and all legs, not just a summary line. */}
+              {!!(book?.days || []).length && (
+                <select value={day || (book!.days![0]?.day ?? "")}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    const row = (book?.days || []).find((x) => x.day === v);
+                    setDay(row?.live ? "" : v);
+                    setOpenTrip(null);
+                  }}
+                  style={{ fontSize: 11.5, padding: "3px 7px", borderRadius: 8,
+                           cursor: "pointer", fontWeight: 700,
+                           border: "1px solid rgba(128,128,128,0.45)",
+                           background: "var(--card,#fff)", color: "inherit" }}>
+                  {(book?.days || []).map((dd) => (
+                    <option key={dd.day} value={dd.day}>
+                      {(dd.live ? t(`오늘 (${dd.day})`, `today (${dd.day})`) : dd.day)
+                       + (dd.n ? ` · ${dd.n}${t("건", " trades")}` : t(" · 기록 없음", " · nothing yet"))
+                       + (dd.pct != null && dd.n
+                          ? ` · ${dd.pct >= 0 ? "+" : ""}${dd.pct.toFixed(2)}%` : "")}
+                    </option>))}
+                </select>)}
+              {book?.archived && (
+                <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 8px",
+                               borderRadius: 999, background: "rgba(128,128,128,0.18)" }}>
+                  {t("지난 기록", "PAST SESSION")}</span>)}
               <span style={{ marginLeft: "auto", fontSize: 11.3, opacity: 0.7 }}>
                 {t("전 종목 · 장중 자동 기록", "all watched stocks · recorded live through the session")}</span>
             </div>
@@ -276,12 +291,17 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
           {/* ── the trading history itself ── */}
           <div style={{ marginTop: 9 }}>
             <b style={{ fontSize: 12.6 }}>
-              {t("자동 매매 기록", "AUTO trading history")}
+              {book?.archived
+                ? t(`자동 매매 기록 — ${book.day?.slice(4, 6)}/${book.day?.slice(6, 8)}`,
+                    `AUTO trading history — ${book.day?.slice(4, 6)}/${book.day?.slice(6, 8)}`)
+                : t("자동 매매 기록", "AUTO trading history")}
               {!!book?.trades?.length && <span style={{ opacity: 0.7, fontWeight: 400 }}> · {book.trades.length}</span>}</b>
             {!trips.length ? (
               <div style={{ fontSize: 12, opacity: 0.68, marginTop: 4 }}>
-                {t("아직 기록이 없습니다 — 장이 열리면 규칙이 스스로 사고팔며 여기에 쌓입니다.",
-                   "no history yet — once the market opens the rule trades on its own and it fills in here")}</div>
+                {book?.archived
+                  ? t("이 날은 규칙이 거래하지 않았습니다.", "the rule did not trade on this day")
+                  : t("아직 기록이 없습니다 — 장이 열리면 규칙이 스스로 사고팔며 여기에 쌓입니다.",
+                      "no history yet — once the market opens the rule trades on its own and it fills in here")}</div>
             ) : (
               <div style={{ marginTop: 5, maxHeight: 380, overflowY: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
