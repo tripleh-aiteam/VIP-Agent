@@ -2466,7 +2466,17 @@ def verify_now(code: str, side: str = "BUY", day: str = "",
                         f"Not sending.", snap)
 
     # ② 오늘 위치 — never chase the top of the day
-    if hi > lo:
+    #
+    # HIS TWO NAMES ARE JUDGED BY THE SHAPE, NOT BY THIS RULER (boss
+    # 2026-09-09, making it a standing law: "from today, if there is no
+    # 갭상승, or there is a 갭상승 and the price came back to the original
+    # price or lower, then SK하이닉스 and 삼성전자 - after 3 red we should
+    # buy"). His entry already contains its own anti-chase test: it needs a
+    # FALL first and only then the 3 rises, so a runaway top never fires it
+    # (that is why SK하이닉스 was refused at 10:00 - "no dip at all right
+    # now"). Leaving this cruder day-range veto on top of it would forbid
+    # the very buy he just defined, so for these two the shape decides.
+    if hi > lo and str(code) not in POS_GATE_EXEMPT:
         rng = (hi - lo) / lo * 100
         pos = (px - lo) / (hi - lo) * 100
         snap.update({"pos": round(pos, 1), "range": round(rng, 2)})
