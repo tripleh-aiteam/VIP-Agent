@@ -1490,6 +1490,53 @@ def finish(db, word: str) -> Optional[str]:
             return closed_reply(p["side"], en)
     except Exception:
         pass
+    # ── THE LAST CHECK BEFORE THE MONEY MOVES (boss 2026-09-09: "even though
+    # the condition matches it should wait - stop decreasing, start increasing,
+    # and on the 3rd red then buy. Moreover before buying our agent should
+    # check one more time whether it is a good time to buy").
+    #
+    # Menu 3 has run that check since 09-04: verify_now re-derives the gates
+    # from the freshest tape at the instant of sending, and the turn (a real
+    # fall, the fall stopping, the 3rd rising candle) must stand. THE CHAT
+    # NEVER DID. Two of today's five holdings - SK하이닉스 and 삼성전자 - came
+    # through here, which is exactly why they carry no gate record at all.
+    #
+    # His own order still wins: the check REPORTS and asks once more rather
+    # than refusing outright, because an order he typed himself is his
+    # decision. One more "네" and it goes.
+    if p["side"] == "BUY" and not p.get("forced"):
+        _stop_ko = _stop_en = ""
+        try:
+            from services.approval_desk import verify_now as _vn9, _turn_shape as _ts9
+            _vok9, _vk9, _ve9, _vs9 = _vn9(p["code"], "BUY")
+            if not _vok9:
+                _stop_ko, _stop_en = _vk9, _ve9
+            else:
+                _tok9, _tk9, _te9, _tat9 = _ts9(p["code"])
+                if not _tok9:
+                    _stop_ko, _stop_en = _tk9, _te9
+        except Exception:
+            _stop_ko = _stop_en = ""
+        if _stop_ko or _stop_en:
+            p["forced"] = True
+            _PENDING.clear()
+            _PENDING.update(p)
+            _PENDING["ts"] = time.time()
+            _save_pending()
+            if en:
+                return (f"🛡 **One more look before I buy {p['name']}** — the desk's own "
+                        f"last check says this is not the moment:\n\n"
+                        f"· {_stop_en}\n\n"
+                        f"Our rule waits for the fall to stop and the 3rd rising candle. "
+                        f"Say **\"네\"** once more and I will buy it anyway; say "
+                        f"**\"아니요\"** and I will drop it and watch for the turn.")
+            return (f"🛡 **{p['name']} 매수 직전 한 번 더 확인했습니다** — 지금은 "
+                    f"좋은 자리가 아닙니다:\n\n"
+                    f"· {_stop_ko}\n\n"
+                    f"우리 규칙은 하락이 멈추고 3번째 양봉이 설 때 삽니다. "
+                    f"그래도 지금 사시려면 **\"네\"**라고 한 번 더 말씀해 주세요. "
+                    f"**\"아니요\"**라고 하시면 취소하고 진입 신호를 기다리겠습니다.")
+
     from services.paper_desk import place_order
     _ot = p.get("order_type") or "market"
     res = place_order(db, p["code"], p["side"], int(p["qty"]), order_type=_ot,
