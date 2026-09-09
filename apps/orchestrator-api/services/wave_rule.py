@@ -95,6 +95,12 @@ CFG: dict = {
     # ⑤ the floors (his standing -1% law, and the one that overrides the hold)
     "stop_pct": -1.0,
     "hard_stop": -2.0,   # a fast fall is forgiven, but never past this
+    # ⑨ TWO DIFFERENT ANIMALS (boss 2026-09-10). The "do not hurry, it jumps back"
+    # law is HIS TWO NAMES ONLY. Everything else answers a -1% fall by selling a
+    # slice, another slice at every further -1%, and buying the first lot back
+    # when the fall stops and the 3rd rise stands.
+    "stop_step": 1.0,    # each -1% below average cost sheds one slice
+    "stop_slices": 1,    # 1 = the ladder (other stocks) · 0 = sell everything
     # ⑥ housekeeping
     "cool_min": 3,       # minutes between two decisions in one stock
     "add_gap": 10,       # ...and between two pullback buys inside one holding
@@ -417,6 +423,8 @@ def new_state(code: str, name: str = "") -> dict:
             "avg_px": 0.0, "high_water": 0, "steps": 0, "adds": 0, "sold": 0,
             "spike_at": None, "last_at": None, "peak": 0.0, "cost": 0.0,
             # the three marks that stop the ladder repeating itself
+            "first_qty": 0,      # what the first buy took - the size we rebuy at
+            "stop_steps": 0,     # how many -1% slices have come off
             "last_side": "",     # a buy-back may not follow a buy-back
             "buy_at": None,      # when we last bought - a spike after it re-opens the door
             "drift_at": "",      # the peak a drift slice was already taken from
@@ -458,7 +466,12 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
     # do NOT sit through (boss 2026-09-09).
     if kind == "fast" and shape != "cascade":
         st["spike_at"] = now
-    protected = bool(st.get("spike_at")
+    # "DO NOT HURRY TO SELL, IT JUMPS UP AGAIN" IS ABOUT TWO STOCKS (boss
+    # 2026-09-10: "this rule only related to SKhynix and Samsungchongja"). He has
+    # watched those two come back off a three-minute drop all year; he has not
+    # said that about the others, and the others are not asked to be patient.
+    _exempt = str(st.get("code") or "") in tuple(cfg.get("exempt") or TAUGHT_ON)
+    protected = bool(_exempt and st.get("spike_at")
                      and _mins(st["spike_at"], now) <= cfg["spike_hold"])
 
     def out(side, qty, why_ko, why_en, tag):
@@ -513,15 +526,37 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
     gain = (px / st["first_px"] - 1) * 100 if st["first_px"] else 0.0
     st["peak"] = max(float(st.get("peak") or 0), px)
 
-    # ③-a the floor no shape argues with
-    if pnl <= cfg["hard_stop"]:
+    # ③-a0 EVERY OTHER STOCK SHEDS A SLICE AT EACH -1% (boss 2026-09-10: "other
+    # stock cases, if there was a -1% decrease then sell 20% of the stock, then
+    # if again start to decrease -1% [sell another 20%]"). Five rungs and the
+    # position is gone, so the floor is still a floor - it just leaves in pieces
+    # instead of all at once, and every piece it leaves can be bought back.
+    if not _exempt and cfg["stop_slices"] and pnl <= -cfg["stop_step"]:
+        lvl = int(abs(pnl) // cfg["stop_step"])
+        if lvl > int(st.get("stop_steps") or 0):
+            if not st.get("sell_at") or _mins(st["sell_at"], now) >= cfg["cool_min"]:
+                q = min(st["qty"], slice_qty(st["high_water"], cfg))
+                return out("SELL", q,
+                           f"−{lvl * cfg['stop_step']:.0f}% 구간 — 평균 매수가 "
+                           f"₩{st['avg_px']:,.0f} 대비 {pnl:+.2f}%입니다. 규칙대로 "
+                           f"{cfg['slice_pct']}%인 {q:,}주를 ₩{px:,.0f}에 덜어냅니다. "
+                           f"하락이 멈추고 3번째 양봉이 서면 처음 산 만큼 다시 삽니다.",
+                           f"the −{lvl * cfg['stop_step']:.0f}% rung - {pnl:+.2f}% against an "
+                           f"average cost of ₩{st['avg_px']:,.0f}. One {cfg['slice_pct']}% "
+                           f"slice, {q:,} sh at ₩{px:,.0f}, comes off. When the fall stops and "
+                           f"the 3rd rise stands we buy the first lot back.", "stoprung")
+
+    # ③-a the floor no shape argues with (his two names keep the whole-position
+    # stop - they are the ones allowed to sit through a drop, so when they do
+    # break the floor they leave in one piece)
+    if _exempt and pnl <= cfg["hard_stop"]:
         return out("SELL", st["qty"],
                    f"손절 — 평균 매수가 ₩{st['avg_px']:,.0f} 대비 {pnl:+.2f}%. "
                    f"급락 보호도 여기까지입니다({cfg['hard_stop']}%). 전량 정리합니다.",
                    f"stop - {pnl:+.2f}% against an average cost of ₩{st['avg_px']:,.0f}; the "
                    f"fast-fall grace ends at {cfg['hard_stop']}%. Everything out.", "hardstop")
     # ③-b his -1% law - but a fast fall is given its minutes first
-    if pnl <= cfg["stop_pct"]:
+    if (_exempt or not cfg["stop_slices"]) and pnl <= cfg["stop_pct"]:
         if not protected:
             return out("SELL", st["qty"],
                        f"손절 — 평균 매수가 대비 {pnl:+.2f}% (기준 {cfg['stop_pct']}%). "
@@ -615,18 +650,19 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
             # cannot pass max_lots, and two adds cannot land inside add_gap
             # minutes of each other.
             _plain = not fresh and st["sold"] <= 0
+            _recover = int(st.get("stop_steps") or 0) > 0
             if _plain and st.get("buy_at") and _mins(st["buy_at"], now) < cfg["add_gap"]:
                 return None
-            if not fresh and not _plain and st["sold"] > 0 and int(st.get("owed") or 0) <= 0:
+            if not fresh and not _plain and not _recover and st["sold"] > 0 and int(st.get("owed") or 0) <= 0:
                 return None
             # AND THE LADDER ALTERNATES. Two buy-backs in a row is not a ladder,
             # it is an average-down: the replay stacked four of them between
             # 12:28 and 13:22, filled the position to its cap, and had nothing
             # left when his own 14:24 turn arrived. A slice bought back must be
             # sold again before the next one is bought.
-            if not fresh and not _plain and st["sold"] > 0 and st.get("last_side") == "BUY":
+            if not fresh and not _plain and not _recover and st["sold"] > 0 and st.get("last_side") == "BUY":
                 return None
-            if not fresh and not _plain and st["sold"] > 0 and st.get("sell_px") and px > st["sell_px"]:
+            if not fresh and not _plain and not _recover and st["sold"] > 0 and st.get("sell_px") and px > st["sell_px"]:
                 return None
             if fresh and st["sold"] == 0:
                 q = min(base_lot(px, st.get("code"), bars, cfg), cap - st["qty"])
@@ -635,6 +671,22 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
                       f"₩{px:,.0f}에 추가로 삽니다 (거래량 x{volx}).")
                 en = (f"back up after the fast fall - the drop at {st['spike_at']} stopped and "
                       f"the 3rd rising candle stood at {third}. We did not sell into it; we add "
+                      f"{q:,} sh at ₩{px:,.0f} (volume x{volx}).")
+            elif int(st.get("stop_steps") or 0) > 0:
+                # HIS SIZE, NOT A SLICE (boss 2026-09-10: "if in any time it stop
+                # decrease and started to increase, in the 3rd red buy again how
+                # much you bought on the first time"). The -1% rungs sold pieces;
+                # the recovery buys the first lot back whole, capped only by the
+                # position ceiling.
+                q = min(int(st.get("first_qty") or 0) or slice_qty(st["high_water"], cfg),
+                        cap - st["qty"])
+                if q <= 0:
+                    return None
+                ko = (f"−1% 이후 회복 — 하락이 멈추고 {third}에 3번째 양봉이 섰습니다. "
+                      f"처음 샀던 만큼인 {q:,}주를 ₩{px:,.0f}에 다시 삽니다 "
+                      f"(평균 ₩{st['avg_px']:,.0f} 대비 {pnl:+.2f}%, 거래량 x{volx}).")
+                en = (f"back up after the −1% rungs - the fall stopped and the 3rd rising "
+                      f"candle stood at {third}. We buy back what the first buy took, "
                       f"{q:,} sh at ₩{px:,.0f} (volume x{volx}).")
             elif st["sold"] > 0:
                 q = min(slice_qty(st["high_water"], cfg), cap - st["qty"])
@@ -665,6 +717,7 @@ def apply(st: dict, d: dict) -> dict:
         if st["qty"] <= 0:
             st["first_px"], st["cost"], st["qty"] = px, px * q, q
             st["steps"], st["sold"], st["adds"], st["spike_at"] = 0, 0, 0, None
+            st["first_qty"], st["stop_steps"] = q, 0
         else:
             st["cost"] += px * q
             st["qty"] += q
@@ -686,8 +739,10 @@ def apply(st: dict, d: dict) -> dict:
         st["sold"] += q
         st["sell_px"] = px
         st["sell_at"] = d["at"]
-        if d.get("tag") in ("step", "drift"):
+        if d.get("tag") in ("step", "drift", "stoprung"):
             st["owed"] = int(st.get("owed") or 0) + 1
+        if d.get("tag") == "stoprung":
+            st["stop_steps"] = int(st.get("stop_steps") or 0) + 1
         if d.get("tag") == "step":
             st["steps"] += 1
         if d.get("tag") == "drift":
