@@ -15,8 +15,9 @@
      ② low5  — the lowest close of the past week. We buy at or under it.
      ③ vol   — the volume bars, with the pace against a normal week-average day.
    He reads the verdict off the chart instead of taking our word for it. */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLanguage } from "@/components/i18n";
+import { API } from "@/components/api";
 
 export type GateChart = { ok: boolean; code: string; tf: number;
   bars: { t: string; o: number; h: number; l: number; c: number; v?: number }[];
@@ -112,10 +113,19 @@ export default function GateChartView({ gc, full = false }:
   const hPrev = hov != null && hov > 0 ? bs[hov - 1] : null;
   const chg = h && hPrev ? ((h.c - hPrev.c) / hPrev.c) * 100 : null;
 
+  const Shell = full
+    ? ({ children }: { children: React.ReactNode }) => (
+        // the svg takes whatever height is left and the readout sits UNDER it;
+        // as a bare fragment the 100%-tall svg pushed the readout on top of the
+        // gate cards below (seen 2026-09-09 in the first full-screen shot)
+        <div style={{ display: "flex", flexDirection: "column", height: "100%",
+                      minHeight: 0 }}>{children}</div>)
+    : ({ children }: { children: React.ReactNode }) => <>{children}</>;
   return (
-    <>
+    <Shell>
       <svg viewBox={`0 0 ${Wd} ${full ? Ht : priceH + volH + 4}`}
-           style={{ width: "100%", height: full ? "100%" : 168, display: "block" }}
+           style={{ width: "100%", display: "block",
+                    ...(full ? { flex: 1, minHeight: 0 } : { height: 168 }) }}
            preserveAspectRatio={full ? "xMidYMid meet" : undefined}
            onMouseLeave={() => setHov(null)}>
         {/* price gridlines + the axis on the right */}
@@ -132,14 +142,16 @@ export default function GateChartView({ gc, full = false }:
           <line x1={mL} x2={mL + plotW} y1={Y(gc.ref)} y2={Y(gc.ref)}
                 stroke={REF} strokeWidth={full ? 1.8 : 1} strokeDasharray={full ? "8 5" : "4 3"} />
           <text x={mL + 2} y={Y(gc.ref) - (full ? 6 : 2)} fontSize={full ? 13 : 7}
-                fill={REF} fontWeight={full ? 700 : 400}>
+                fill={REF} fontWeight={full ? 700 : 400}
+                stroke="#fff" strokeWidth={full ? 3.5 : 0} paintOrder="stroke">
             {t("어제 19:59", "yest 19:59")} {Math.round(gc.ref).toLocaleString()}</text></>}
         {/* ② the week's lowest close — the position line */}
         {gc.low5 && <>
           <line x1={mL} x2={mL + plotW} y1={Y(gc.low5)} y2={Y(gc.low5)}
                 stroke={LOW} strokeWidth={full ? 1.8 : 1} strokeDasharray={full ? "8 5" : "4 3"} />
           <text x={mL + 2} y={Y(gc.low5) - (full ? 6 : 2)} fontSize={full ? 13 : 7}
-                fill={LOW} fontWeight={full ? 700 : 400}>
+                fill={LOW} fontWeight={full ? 700 : 400}
+                stroke="#fff" strokeWidth={full ? 3.5 : 0} paintOrder="stroke">
             {t("주간 최저", "week low")} {Math.round(gc.low5).toLocaleString()}</text></>}
 
         {/* candles + volume */}
@@ -184,7 +196,8 @@ export default function GateChartView({ gc, full = false }:
       {/* the readout — outside the SVG so it never scales into illegibility */}
       {full && (
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center",
-                      fontSize: 12.5, color: "#37474f", marginTop: 6, minHeight: 22 }}>
+                      fontSize: 12.5, color: "#37474f", marginTop: 6, minHeight: 22,
+                      flex: "0 0 auto" }}>
           {h ? (<>
             <b style={{ fontSize: 13.5 }}>{h.t}</b>
             <span>{t("시가", "open")} <b>{W2(h.o)}</b></span>
@@ -209,5 +222,108 @@ export default function GateChartView({ gc, full = false }:
         <div style={{ display: "flex", justifyContent: "space-between",
                       fontSize: 9.5, color: "#5b6570", marginTop: -4 }}>
           <span>{bs[0]?.t}</span><span>{bs[bs.length - 1]?.t}</span></div>)}
-    </>);
+    </Shell>);
+}
+
+
+/* ⤢ THE FULL-SCREEN CHART, ON ITS OWN — self-fetching, so anywhere that knows
+   a stock code can raise it.
+
+   Boss 2026-09-09, having checked and found nothing changed: the chart was
+   reachable ONLY from inside a BUY/SELL proposal popup, and a proposal exists
+   only in the minute the agent is actually proposing. Screenshot at 11:21 that
+   day: no proposal on the board, the corner note reading "지금은 매수·매도 자리가
+   없습니다" — so the button he was told about did not exist on his screen. Proof
+   he can only see while a popup happens to be alive is not proof he can check.
+
+   So the same picture now hangs off the 관문 증명 board as well, where all
+   twenty stocks sit all day. One component, two entry points — the popup and
+   the board can never drift into showing different charts. */
+export function GateChartFull({ code, name, side, onClose }:
+  { code: string; name?: string; side?: "BUY" | "SELL"; onClose: () => void }) {
+  const { t } = useLanguage();
+  const [gc, setGc] = useState<GateChart | null>(null);
+  const [tf, setTf] = useState<1 | 15>(1);
+  const [busy, setBusy] = useState(true);
+
+  useEffect(() => {
+    let dead = false;
+    const pull = () => {
+      setBusy(true);
+      fetch(`${API}/approval/gate-chart/${code}?tf=${tf}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((d) => { if (!dead) setGc(d); })
+        .catch(() => { if (!dead) setGc(null); })
+        .finally(() => { if (!dead) setBusy(false); });
+    };
+    pull();
+    const iv = setInterval(pull, 5000);          // the desk's own 5s clock
+    return () => { dead = true; clearInterval(iv); };
+  }, [code, tf]);
+
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [onClose]);
+
+  return (
+    <div onClick={onClose}
+         style={{ position: "fixed", inset: 0, zIndex: 10000,
+                  background: "rgba(0,0,0,0.82)", display: "flex",
+                  alignItems: "center", justifyContent: "center", padding: "2vh 1.5vw" }}>
+      <div onClick={(e) => e.stopPropagation()}
+           style={{ width: "97vw", height: "96vh", display: "flex", flexDirection: "column",
+                    background: "#fff", color: "#22282f", borderRadius: 14, cursor: "default",
+                    border: "2px solid #37474f", padding: "12px 16px 14px",
+                    boxShadow: "0 20px 70px rgba(0,0,0,0.55)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+                      paddingBottom: 9, borderBottom: "1px solid #dfe4e9" }}>
+          <b style={{ fontSize: 18 }}>
+            📈 {name || gc?.code || code}{" "}
+            <span style={{ fontWeight: 600, color: "#5b6570", fontSize: 14 }}>({code})</span>
+          </b>
+          {side && (
+            <span style={{ fontSize: 12.5, fontWeight: 800, padding: "3px 10px", borderRadius: 999,
+                           background: side === "BUY" ? "#e53935" : "#1e88e5", color: "#fff" }}>
+              {side === "BUY" ? t("매수 제안", "BUY proposal") : t("매도 제안", "SELL proposal")}</span>)}
+          {gc?.price != null && <span style={{ fontSize: 14, fontWeight: 800 }}>{W2(gc.price)}</span>}
+          {gc?.gap_pct != null && (
+            <span style={{ fontSize: 12.5, fontWeight: 700,
+                           color: gc.gap_pct >= 0 ? "#e53935" : "#1e88e5" }}>
+              {t("갭상승", "gap")} {gc.gap_pct >= 0 ? "+" : ""}{gc.gap_pct}%</span>)}
+          <span style={{ display: "flex", gap: 6, marginLeft: 6 }}>
+            {([1, 15] as const).map((n) => (
+              <button key={n} onClick={() => setTf(n)}
+                style={{ fontSize: 13, fontWeight: 800, padding: "5px 14px", borderRadius: 8,
+                         cursor: "pointer", border: "1.5px solid #9aa5b1",
+                         background: tf === n ? "#1565c0" : "#fff",
+                         color: tf === n ? "#fff" : "#37474f" }}>
+                {n}{t("분봉", "-min")}</button>))}
+          </span>
+          <span style={{ fontSize: 11.5, color: "#5b6570" }}>
+            {busy ? t("불러오는 중…", "loading…") : t("5초마다 자동 갱신", "auto-refreshes every 5s")}</span>
+          <button onClick={onClose}
+                  style={{ marginLeft: "auto", fontSize: 13.5, fontWeight: 800,
+                           padding: "7px 16px", borderRadius: 9, cursor: "pointer",
+                           border: "2px solid #37474f", background: "#37474f", color: "#fff" }}>
+            ✕ {t("닫기 — 돌아가기", "close — go back")}</button>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, paddingTop: 8 }}>
+          {gc && gc.bars && gc.bars.length > 0
+            ? <GateChartView gc={gc} full />
+            : <div style={{ display: "flex", alignItems: "center", justifyContent: "center",
+                            height: "100%", fontSize: 14, color: "#5b6570" }}>
+                {busy ? t("차트를 불러오는 중…", "loading the chart…")
+                      : t("이 종목의 분봉이 아직 수집되지 않았습니다 — 수집기는 장중에만 봉을 쌓습니다.",
+                          "no minute bars collected for this stock yet — the tape only grows while the market is open.")}
+              </div>}
+        </div>
+        {gc && gc.bars && gc.bars.length > 0 && <GateVerdicts gc={gc} big />}
+        <div style={{ fontSize: 11.5, color: "#8a949e", marginTop: 8, textAlign: "center" }}>
+          {t("ESC 또는 바깥쪽을 클릭해도 닫힙니다 — 뒤 화면은 그대로 열려 있습니다.",
+             "ESC or a click outside closes this too — the screen underneath stays exactly as it was.")}
+        </div>
+      </div>
+    </div>);
 }

@@ -8,7 +8,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useLanguage } from "@/components/i18n";
 import { API } from "../../../components/api";
 import WhyNotPanel from "@/components/WhyNotPanel";
-import GateChartView, { GateVerdicts, type GateChart } from "@/components/GateChartView";
+import GateChartView, { GateVerdicts, GateChartFull, type GateChart } from "@/components/GateChartView";
 
 type Zone = { pos: number; zone: "buy" | "sell" | "mid" } | null;
 type Room = { code: string; name: string; score?: number | null; price?: number | null;
@@ -1773,61 +1773,14 @@ export default function ApprovePage() {
             underneath, so ✕ or ESC puts him back on the very card he was
             reading - his edited price and quantity untouched. Same 5s refresh
             keeps running, because it belongs to the chart, not to this view. */}
-        {gcFull && gc && gc.bars && gc.bars.length > 0 && (() => {
+        {/* ⤢ THE CHART, FULL SCREEN (boss 2026-09-09). The popup stays mounted
+            underneath, so ✕ or ESC puts him back on the very card he was
+            reading — his edited price and quantity untouched. Same component
+            the 관문 증명 board raises, so the two can never disagree. */}
+        {gcFull && gc?.code && (() => {
           const sg = (feed?.pending || []).find((x) => x.id === gcFor);
-          return (
-          <div onClick={() => setGcFull(false)}
-               style={{ position: "fixed", inset: 0, zIndex: 10000,
-                        background: "rgba(0,0,0,0.82)", display: "flex",
-                        alignItems: "center", justifyContent: "center", padding: "2vh 1.5vw" }}>
-            <div onClick={(e) => e.stopPropagation()}
-                 style={{ width: "97vw", height: "96vh", display: "flex", flexDirection: "column",
-                          background: "#fff", color: "#22282f", borderRadius: 14,
-                          border: "2px solid #37474f", padding: "12px 16px 14px",
-                          boxShadow: "0 20px 70px rgba(0,0,0,0.55)" }}>
-              {/* header */}
-              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
-                            paddingBottom: 9, borderBottom: "1px solid #dfe4e9" }}>
-                <b style={{ fontSize: 18 }}>
-                  📈 {sg ? sg.name : gc.code} <span style={{ fontWeight: 600, color: "#5b6570", fontSize: 14 }}>({gc.code})</span>
-                </b>
-                {sg && (
-                  <span style={{ fontSize: 12.5, fontWeight: 800, padding: "3px 10px", borderRadius: 999,
-                                 background: sg.side === "BUY" ? "#e53935" : "#1e88e5", color: "#fff" }}>
-                    {sg.side === "BUY" ? t("매수 제안", "BUY proposal") : t("매도 제안", "SELL proposal")}</span>)}
-                <span style={{ fontSize: 14, fontWeight: 800 }}>{W2(gc.price)}</span>
-                {gc.gap_pct != null && (
-                  <span style={{ fontSize: 12.5, fontWeight: 700,
-                                 color: gc.gap_pct >= 0 ? "#e53935" : "#1e88e5" }}>
-                    {t("갭상승", "gap")} {gc.gap_pct >= 0 ? "+" : ""}{gc.gap_pct}%</span>)}
-                <span style={{ display: "flex", gap: 6, marginLeft: 6 }}>
-                  {([1, 15] as const).map((tf) => (
-                    <button key={tf} onClick={() => { setGcTf(tf); loadGate(gc.code, tf); }}
-                      style={{ fontSize: 13, fontWeight: 800, padding: "5px 14px", borderRadius: 8,
-                               cursor: "pointer", border: "1.5px solid #9aa5b1",
-                               background: gcTf === tf ? "#1565c0" : "#fff",
-                               color: gcTf === tf ? "#fff" : "#37474f" }}>
-                      {tf}{t("분봉", "-min")}</button>))}
-                </span>
-                <span style={{ fontSize: 11.5, color: "#5b6570" }}>
-                  {gcBusy ? t("불러오는 중…", "loading…") : t("5초마다 자동 갱신", "auto-refreshes every 5s")}</span>
-                <button onClick={() => setGcFull(false)}
-                        style={{ marginLeft: "auto", fontSize: 13.5, fontWeight: 800,
-                                 padding: "7px 16px", borderRadius: 9, cursor: "pointer",
-                                 border: "2px solid #37474f", background: "#37474f", color: "#fff" }}>
-                  ✕ {t("닫기 — 팝업으로 돌아가기", "close — back to the popup")}</button>
-              </div>
-              {/* the chart fills whatever is left */}
-              <div style={{ flex: 1, minHeight: 0, paddingTop: 8 }}>
-                <GateChartView gc={gc} full />
-              </div>
-              <GateVerdicts gc={gc} big />
-              <div style={{ fontSize: 11.5, color: "#8a949e", marginTop: 8, textAlign: "center" }}>
-                {t("ESC 또는 바깥쪽을 클릭해도 닫힙니다 — 제안 팝업은 그대로 열려 있고, 수정하신 가격·수량도 그대로입니다.",
-                   "ESC or a click outside closes this too — the proposal popup stays open underneath, and your edited price and quantity are untouched.")}
-              </div>
-            </div>
-          </div>);
+          return <GateChartFull code={gc.code} name={sg?.name} side={sg?.side}
+                                onClose={() => setGcFull(false)} />;
         })()}
       </div>
       </div>

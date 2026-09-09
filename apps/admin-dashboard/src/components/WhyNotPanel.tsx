@@ -11,6 +11,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { useLanguage } from "@/components/i18n";
 import LiveBookTape from "@/components/LiveBookTape";
+import { GateChartFull } from "@/components/GateChartView";
 import { API } from "./api";
 
 type DistWin = { k: string; ko: string; en: string; n: number; below: number; pct: number };
@@ -130,6 +131,13 @@ export default function WhyNotPanel() {
   // ONE stock at a time on purpose - every poll is a real Kiwoom REST call on a
   // shared session, and LiveBookTape stops polling the moment this closes.
   const [popCode, setPopCode] = useState<string | null>(null);
+  // 📈 THE PROOF CHART, WHERE HE ACTUALLY LOOKS (boss 2026-09-09: "I said i
+  // wanna see chart in the pop up message but right now I have check nothing
+  // is changed"). It had been reachable only from inside a BUY/SELL proposal
+  // popup — and at 11:21 that day there was no proposal at all, so the button
+  // he was told about did not exist on his screen. The twenty stocks on THIS
+  // board are always here; the chart belongs here too.
+  const [chartCode, setChartCode] = useState<string | null>(null);
 
   useEffect(() => {
     let dead = false;
@@ -171,8 +179,8 @@ export default function WhyNotPanel() {
   return (
     <div>
       <p style={{ fontSize: 12.5, opacity: 0.7, margin: "0 0 10px", lineHeight: 1.5 }}>
-        {t("관문이 있으니 기회는 적습니다 — 팝업이 안 오는 시간 동안, 종목마다 어느 관문에서 왜 멈춰 있는지 실제 숫자로 증명합니다. 종목을 클릭하면 관문 판정이 펼쳐지고, 📗 버튼을 누르면 그 종목의 실시간 호가·체결 창이 이 화면 위에 뜹니다.",
-           "The gates make chances few — while no popup comes, this proves with real numbers which gate each stock is stopped at. Click a stock for its gate verdicts; press 📗 for its live order book and execution tape, over this page.")}
+        {t("관문이 있으니 기회는 적습니다 — 팝업이 안 오는 시간 동안, 종목마다 어느 관문에서 왜 멈춰 있는지 실제 숫자로 증명합니다. 종목을 클릭하면 관문 판정이 펼쳐지고, 📈 버튼은 3관문을 차트 위에서 전체 화면으로, 📗 버튼은 실시간 호가·체결 창을 이 화면 위에 띄웁니다.",
+           "The gates make chances few — while no popup comes, this proves with real numbers which gate each stock is stopped at. Click a stock for its gate verdicts; press 📈 for the three gates drawn on a full-screen chart, or 📗 for its live order book and execution tape.")}
       </p>
 
       {!data && !err && <div style={{ fontSize: 13, opacity: 0.6 }}>{t("불러오는 중…", "loading…")}</div>}
@@ -217,10 +225,20 @@ export default function WhyNotPanel() {
                 {W(r.px)}{r.now_vs_yc != null && <> ({r.now_vs_yc >= 0 ? "+" : ""}{r.now_vs_yc}% {t("vs 어제", "vs yesterday")})</>}
                 {r.score != null && <> · {r.score}{t("점", " pts")}{r.rank != null && ` · ${r.rank}/${r.tot}`}</>}
               </span>
-              {/* the live pair for THIS stock — never toggles the card */}
+              {/* the proof chart and the live pair for THIS stock — neither
+                  may toggle the card open or shut */}
+              <button onClick={(e) => { e.stopPropagation(); setChartCode(r.code); }}
+                      title={t("3관문을 차트 위에서 직접 확인 — 전체 화면",
+                               "check the 3 gates on the chart itself — full screen")}
+                      style={{ marginLeft: "auto", fontSize: 11, fontWeight: 800,
+                               padding: "3px 9px", borderRadius: 999, cursor: "pointer",
+                               border: "1.5px solid #37474f", background: "transparent",
+                               color: "#37474f" }}>
+                📈 {t("차트로 3관문 확인", "3 gates on the chart")}
+              </button>
               <button onClick={(e) => { e.stopPropagation(); setPopCode(r.code); }}
                       title={t("실시간 호가·체결 창 열기", "open the live order book and execution tape")}
-                      style={{ marginLeft: "auto", fontSize: 11, fontWeight: 800,
+                      style={{ fontSize: 11, fontWeight: 800,
                                padding: "3px 9px", borderRadius: 999, cursor: "pointer",
                                border: "1.5px solid #00838f", background: "transparent",
                                color: "#00838f" }}>
@@ -320,6 +338,13 @@ export default function WhyNotPanel() {
           </div>
           </Fragment>);
       })}
+
+      {/* 📈 the 3-gate proof chart, full screen, for any stock on the board */}
+      {chartCode && (
+        <GateChartFull code={chartCode}
+                       name={(() => { const r = rows.find((x) => x.code === chartCode);
+                                      return r ? (ko ? r.name : (r.name_en || r.name)) : chartCode; })()}
+                       onClose={() => setChartCode(null)} />)}
 
       {/* 📗📼 the live pair, over the board — the exact section from the live
           desk (/testing/live), rendered from the one shared component so the
