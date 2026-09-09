@@ -59,7 +59,20 @@ def budget() -> int:
 
 
 def advise_qty(price) -> int:
-    """The advised share count for one chat order: budget ÷ price, at least 1."""
+    """The advised share count for one chat order.
+
+    ONE SIZING LAW FOR BOTH SURFACES (boss 2026-09-09: "it is buiyng very small
+    number of stock so please choose minimum sstock 1000 and others can be
+    10.000 also"). The chatbot and Menu 3 are one desk; if chat kept the old
+    budget÷price it would still offer him 5 shares of SK하이닉스 while the board
+    proposed 1,078."""
+    try:
+        from services.approval_desk import buy_qty as _bq9
+        q = _bq9(float(price))
+        if q:
+            return q
+    except Exception:
+        pass
     try:
         return max(1, int(budget() // float(price)))
     except Exception:
@@ -1149,78 +1162,167 @@ def smart_price(code: str, px: float) -> float:
     return float(int(target // tk) * tk)
 
 
+def _today_high(code: str) -> Optional[float]:
+    """Today's high - the mirror of _today_low, used as the top of a SELL ladder."""
+    try:
+        from services.naver_stock import realtime_quote
+        q = realtime_quote(code)
+        if q and q.get("high"):
+            return float(q["high"])
+    except Exception:
+        pass
+    try:
+        from services.naver_stock import daily_history
+        h = daily_history(code, days=2)
+        if h and h[0].get("high"):
+            return float(h[0]["high"])
+    except Exception:
+        pass
+    return None
+
+
 def ladder_preview(db, transcript: Optional[str], lang: str) -> Optional[str]:
-    """'1000주를 10가지 다른 가격으로 최적화해서 주문' → a SPLIT BUY: N limit
-    slices laddered from just under the live price down toward today's low.
-    One confirmation covers the whole ladder; '네' queues every slice."""
+    """'100주를 5가지 다른 가격으로 주문' -> a SPLIT order in N limit slices.
+
+    BUY  ladders DOWN from just under the live price toward today's low  (buy dips).
+    SELL ladders UP   from just above the live price toward today's high (sell strength).
+    One confirmation covers the whole ladder; '네' queues every slice.
+
+    Boss 2026-09-09: "if I ask Buy skhynix 100 stock with 5 different price it
+    should do it, for selling also." SELL was missing entirely - and a sell-ladder
+    request fell through to the plain order desk and became ONE 100-share market
+    sell, with the "5 different prices" silently dropped."""
     t = transcript or ""
     tl = t.lower()
+    if is_question(t):            # a question is answered, never executed
+        return None
     m = re.search(r"(\d{1,2})\s*가지|(\d{1,2})\s*(?:different|다른)\s*(?:prices?|가격)"
                   r"|(\d{1,2})\s*개(?:의)?\s*가격", tl)
     if not m:
         return None
     n = max(2, min(20, int(m.group(1) or m.group(2) or m.group(3))))
-    if not (any(k in t for k in _KO_BUY) or re.search(r"\bbuy\b", tl)) \
-            or any(w in tl for w in _ADVICE_BLOCK):
+    if any(w in tl for w in _ADVICE_BLOCK):
         return None
-    from services.assistant_agent import _all_stocks_in_query
-    stocks = _all_stocks_in_query(t)
-    if len(stocks) != 1:
+    # WHICH SIDE. Sell is tested first: '팔아줘' / 'sell' is unambiguous, whereas a
+    # sentence can carry a stray buy-ish token alongside it.
+    if any(k in t for k in _KO_SELL) or re.search(r"\bsell\b", tl):
+        side = "SELL"
+    elif any(k in t for k in _KO_BUY) or re.search(r"\bbuy\b", tl):
+        side = "BUY"
+    else:
         return None
-    code, name = stocks[0]
     en = text_lang_en(transcript, lang)
-    # total quantity — "1000주" / "1000 stocks"; the ladder count (10가지) is
-    # already consumed by its own pattern, so a bare big number is the qty
+    # QUANTITY FIRST, then blank it before resolving the stock. A 6-digit share
+    # count ("999999 shares") is otherwise read as a TICKER CODE, the resolver
+    # returns two "stocks", and the ladder bailed with no message at all. parse()
+    # already blanks the PRICE for exactly this reason; the ladder never blanked
+    # the QUANTITY. Total quantity - "1000주" / "1000 stocks"; the ladder count
+    # (10가지) is already consumed by its own pattern, so a bare big number is qty.
     qm = (re.search(r"(\d[\d,]{2,})\s*(?:주|shares?|stocks?|개)", tl)
           or re.search(r"\b(\d{3,6})\b", re.sub(m.re.pattern, " ", tl)))
     if not qm:
         return None
     qty = max(n, int(qm.group(1).replace(",", "")))
+    # blank by VALUE, not span: the fallback regex matched against a substituted
+    # string, so its offsets do not line up with `transcript`.
+    t_res = t.replace(qm.group(1), " ", 1)
+    from services.assistant_agent import _all_stocks_in_query
+    stocks = _all_stocks_in_query(t_res)
+    if len(stocks) != 1:
+        return None
+    code, name = stocks[0]
     try:
         from services.kiwoom_tape import market_open
         if not market_open():
             _PENDING.clear()
-            return closed_reply("BUY", en)
+            return closed_reply(side, en)
     except Exception:
         pass
+    # You cannot ladder out more than you actually hold.
+    held_note = ""
+    if side == "SELL":
+        try:
+            held = _position_qty(db, code)
+        except Exception:
+            held = 0
+        if held <= 0:
+            return (f"📭 {name} 보유 수량이 없어 분할 매도를 만들 수 없습니다." if not en
+                    else f"📭 You hold no {name} - there is nothing to split-sell.")
+        if qty > held:
+            held_note = (f"⚠️ 보유가 {held:,}주뿐이라 {qty:,}주 대신 {held:,}주로 맞췄습니다."
+                         if not en else
+                         f"⚠️ You hold only {held:,} - the ladder was sized to {held:,}, not {qty:,}.")
+            qty = held
+        if qty < n:
+            n = max(2, qty)
     from services.paper_desk import _live_price
     px, _nm = _live_price(code)
     if not px:
         return ("⚠️ 현재가를 가져올 수 없어 주문을 만들 수 없습니다." if not en
-                else "⚠️ No live price — cannot build the ladder.")
+                else "⚠️ No live price - cannot build the ladder.")
     px = float(px)
-    lo = _today_low(code) or px * 0.99
-    top = px - _tick(px)                       # first slice just under the market
-    floor = min(top - _tick(px), max(lo, px * 0.99))
-    step = (top - floor) / max(1, n - 1)
     slices, seen_p = [], set()
     per = qty // n
-    for i in range(n):
-        raw = top - step * i
-        tk = _tick(raw)
-        p = float(int(raw // tk) * tk)
-        while p in seen_p:                     # ticks collapsed two levels → step one down
-            p -= tk
-        seen_p.add(p)
-        q_i = per + (qty - per * n if i == 0 else 0)
-        slices.append([p, int(q_i)])
-    total = sum(p * q for p, q in slices)
+    if side == "BUY":
+        edge = _today_low(code) or px * 0.99
+        top = px - _tick(px)                   # first slice just under the market
+        floor = min(top - _tick(px), max(edge, px * 0.99))
+        step = (top - floor) / max(1, n - 1)
+        for i in range(n):
+            raw = top - step * i
+            tk = _tick(raw)
+            pr = float(int(raw // tk) * tk)    # round DOWN - cheaper is better to buy
+            while pr in seen_p:
+                pr -= tk
+            seen_p.add(pr)
+            slices.append([pr, int(per + (qty - per * n if i == 0 else 0))])
+        edge_ko, edge_en = "오늘 저가", "today's low"
+    else:
+        edge = _today_high(code) or px * 1.01
+        base = px + _tick(px)                  # first slice just above the market
+        ceil_ = max(base + _tick(px), min(edge, px * 1.01))
+        step = (ceil_ - base) / max(1, n - 1)
+        for i in range(n):
+            raw = base + step * i
+            tk = _tick(raw)
+            pr = float(-(-raw // tk) * tk)     # round UP - richer is better to sell
+            while pr in seen_p:
+                pr += tk
+            seen_p.add(pr)
+            slices.append([pr, int(per + (qty - per * n if i == 0 else 0))])
+        edge_ko, edge_en = "오늘 고가", "today's high"
+    total = sum(pr * q for pr, q in slices)
     _PENDING.clear()
-    _PENDING.update({"ladder": True, "code": code, "name": name, "ts": time.time(),
-                     "en": en, "slices": slices})
+    _PENDING.update({"ladder": True, "side": side, "code": code, "name": name,
+                     "ts": time.time(), "en": en, "slices": slices})
     _save_pending()
-    L = [(f"🪜 **분할 매수 확인 — {name} 총 {qty:,}주 · {n}단계**" if not en else
-          f"🪜 **Split-buy confirmation — {name}, {qty:,} shares over {n} price levels**"),
-         (f"현재가 ₩{px:,.0f} 바로 아래부터 오늘 저가(₩{lo:,.0f}) 방향으로 사다리를 놓습니다:"
-          if not en else
-          f"Laddered from just under the live price ₩{px:,.0f} toward today's low ₩{lo:,.0f}:")]
-    for i, (p, q) in enumerate(slices, 1):
-        L.append(f"  {i}. ₩{p:,.0f} × {q:,}" + ("주" if not en else " sh"))
-    L.append((f"예상 총액 ~₩{total:,.0f} · 전부 지정가 대기 — 가격이 내려올수록 아래 단계가 "
-              f"차례로 체결되고, 체결마다 이 채팅으로 ✅ 알림이 옵니다. 취소: \"{name} 주문 취소\""
-              if not en else
-              f"Est. total ~₩{total:,.0f} · all LIMIT orders — deeper slices fill as the "
-              f"price dips, each fill ✅-announced here. Cancel: \"cancel {name} orders\""))
+    side_ko = "매수" if side == "BUY" else "매도"
+    L = [(f"🪜 **분할 {side_ko} 확인 - {name} 총 {qty:,}주 · {n}단계**" if not en else
+          f"🪜 **Split-{side.lower()} confirmation - {name}, {qty:,} shares over {n} price levels**")]
+    if held_note:
+        L.append(held_note)
+    if side == "BUY":
+        L.append(f"현재가 ₩{px:,.0f} 바로 아래부터 {edge_ko}(₩{edge:,.0f}) 방향으로 사다리를 놓습니다:"
+                 if not en else
+                 f"Laddered from just under the live price ₩{px:,.0f} toward {edge_en} ₩{edge:,.0f}:")
+    else:
+        L.append(f"현재가 ₩{px:,.0f} 바로 위부터 {edge_ko}(₩{edge:,.0f}) 방향으로 사다리를 놓습니다:"
+                 if not en else
+                 f"Laddered from just above the live price ₩{px:,.0f} toward {edge_en} ₩{edge:,.0f}:")
+    for i, (pr, q) in enumerate(slices, 1):
+        L.append(f"  {i}. ₩{pr:,.0f} × {q:,}" + ("주" if not en else " sh"))
+    if side == "BUY":
+        L.append((f"예상 총액 ~₩{total:,.0f} · 전부 지정가 대기 - 가격이 내려올수록 아래 단계가 "
+                  f"차례로 체결되고, 체결마다 이 채팅으로 ✅ 알림이 옵니다. 취소: \"{name} 주문 취소\""
+                  if not en else
+                  f"Est. total ~₩{total:,.0f} · all LIMIT orders - deeper slices fill as the "
+                  f"price dips, each fill ✅-announced here. Cancel: \"cancel {name} orders\""))
+    else:
+        L.append((f"예상 회수액 ~₩{total:,.0f} · 전부 지정가 대기 - 가격이 올라갈수록 위 단계가 "
+                  f"차례로 체결되고, 체결마다 이 채팅으로 ✅ 알림이 옵니다. 취소: \"{name} 주문 취소\""
+                  if not en else
+                  f"Est. proceeds ~₩{total:,.0f} · all LIMIT orders - higher slices fill as the "
+                  f"price rises, each fill ✅-announced here. Cancel: \"cancel {name} orders\""))
     L.append(("**정말 주문할까요?** \"네\" = 전체 접수 · \"아니요\" = 취소" if not en else
               "**Place the whole ladder?** \"yes\" = queue all · \"no\" = cancel"))
     return "\n".join(L)
@@ -1457,20 +1559,22 @@ def finish(db, word: str) -> Optional[str]:
         return "\n".join([head] + lines + ["", _desk_links(en)])
     # 🪜 a LADDER waiting for its "네": queue every slice as its own limit order
     if p.get("ladder"):
+        _lside = p.get("side", "BUY")           # SELL ladders exist since 2026-09-09
+        _lside_ko = "매수" if _lside == "BUY" else "매도"
         if word == "no":
-            return ("🚫 취소했습니다 — 분할 매수는 접수되지 않았습니다." if not en
-                    else "🚫 Cancelled — the split buy was NOT placed.")
+            return (f"🚫 취소했습니다 — 분할 {_lside_ko}는 접수되지 않았습니다." if not en
+                    else f"🚫 Cancelled — the split {_lside.lower()} was NOT placed.")
         try:
             from services.kiwoom_tape import market_open
             if not market_open():
-                return closed_reply("BUY", en)
+                return closed_reply(_lside, en)
         except Exception:
             pass
         from services.paper_desk import place_order
         ok_n, fill_n, fail_n = 0, 0, 0
         for pr, q in p.get("slices") or []:
             try:
-                res = place_order(db, p["code"], "BUY", int(q), order_type="limit",
+                res = place_order(db, p["code"], _lside, int(q), order_type="limit",
                                   limit_price=float(pr), source="chatbot", direct=True)
                 if res.get("ok"):
                     ok_n += 1
@@ -1482,7 +1586,7 @@ def finish(db, word: str) -> Optional[str]:
                         # Menu 2 AND Menu 3
                         try:
                             from services.approval_desk import chat_mirror
-                            chat_mirror(p["code"], p["name"], "BUY", int(q),
+                            chat_mirror(p["code"], p["name"], _lside, int(q),
                                         float(res.get("fill_price") or pr))
                         except Exception:
                             pass
@@ -1498,7 +1602,7 @@ def finish(db, word: str) -> Optional[str]:
                     + f". {wait_n} waiting in the book — each fill ✅-announced here. "
                     f"\"order status\" shows the ladder; \"cancel {p['name']} orders\" pulls it.\n\n"
                     + _desk_links(True))
-        return (f"🪜 **분할 매수 접수 — {p['name']}**: {ok_n}건 접수"
+        return (f"🪜 **분할 {_lside_ko} 접수 — {p['name']}**: {ok_n}건 접수"
                 + (f" (즉시 체결 {fill_n}건)" if fill_n else "")
                 + (f" · 실패 {fail_n}건" if fail_n else "")
                 + f". 대기 {wait_n}건 — 체결될 때마다 이 채팅에 ✅ 알림이 옵니다. "

@@ -2278,7 +2278,7 @@ def _gates_after_gap(code: str, day: str, mkt: bool) -> tuple:
 
 
 @router.post("/bulk-buy")
-def bulk_buy(dry: int = Query(1), budget: int = Query(10_000_000),
+def bulk_buy(dry: int = Query(1), budget: int = Query(0),
              include_answered: int = Query(0), db: Session = Depends(get_db)):
     """일괄 매수 — 갭상승 관문만 면제. dry=1 은 미리보기, dry=0 이 실제 주문.
 
@@ -2406,7 +2406,7 @@ def bulk_buy(dry: int = Query(1), budget: int = Query(10_000_000),
                 _bp, _pko, _pen = ad._book_price(code, "BUY", px)
             except Exception:
                 _bp, _pko, _pen = px, "현재가", "live price"
-            qty = int(budget // _bp) if _bp else 0
+            qty = ad.buy_qty(_bp, budget)          # his 1,000 / 10,000 law
             if qty < 1:
                 r.update({"ok": False, "gate": "qty",
                           "why": f"예산 ₩{budget:,}으로는 1주도 살 수 없습니다 (₩{_bp:,.0f}).",

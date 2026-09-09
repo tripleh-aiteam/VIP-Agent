@@ -1001,6 +1001,33 @@ def _reconcile_positions(db, st) -> bool:
 # big deal"). These two never trigger the -1% sale on any surface.
 NO_STOP = ("005930", "000660")
 
+# ── HOW BIG A BUY IS (boss 2026-09-09: "it is buiyng very small number of
+# stock so please choose minimum sstock 1000 and others can be 10.000 also.
+# For expensive one minimum buiying is 1000 like skhynix") ────────────────────
+# The old ₩10M-per-name budget was written when this desk was a demo. On a
+# ₩1.15조 book it bought FIVE shares of SK하이닉스 while 알고2 sat on 40,596 of
+# them - a position too small to matter and too small to read. His rule sizes
+# by SHARES, not by won: never fewer than 1,000 however expensive the stock,
+# never more than 10,000 however cheap, and the budget picks the number in
+# between so a ₩70,000 name and a ₩1,850,000 name still cost the same order of
+# money.
+BUY_BUDGET = 2_000_000_000      # ₩2B per name - lands SK하이닉스 just over 1,000
+MIN_QTY = 1_000                 # the floor he named, for the expensive ones
+MAX_QTY = 10_000                # the ceiling he named, for the cheap ones
+
+
+def buy_qty(price: float, budget: int = 0) -> int:
+    """Shares to buy at `price`, under his floor/ceiling law."""
+    try:
+        px = float(price or 0)
+    except Exception:
+        px = 0.0
+    if px <= 0:
+        return 0
+    q = int((int(budget) or BUY_BUDGET) // px)
+    return max(MIN_QTY, min(MAX_QTY, q))
+
+
 
 def _lot_basis(lot: dict) -> float:
     """The price the -1% selling law measures from.
@@ -1636,10 +1663,9 @@ def scan(db) -> dict:
             # basket a stock came from is still on its board card.
             # the price a person can actually place, off the live order book
             _bp, _pko, _pen = _book_price(code, "BUY", px)
-            _bq = int(10_000_000 // _bp) if _bp else 0
+            _bq = buy_qty(_bp)
             if not _bq:
-                from services.chat_trade import advise_qty
-                _bq = advise_qty(px)
+                _bq = buy_qty(px)
             _qko, _qen = _why_qty(_bp, _bq)
             reasons.append("💰 왜 이 가격인가 — " + _pko)
             reasons_en.append("💰 WHY THIS PRICE — " + _pen)
@@ -2598,14 +2624,30 @@ def _book_price(code: str, side: str, fallback: float):
     return px, (f"호가창이 아직 없어 현재가를 호가 단위로 맞춘 ₩{px:,.0f}입니다."),            (f"No order book yet - the live price rounded to a valid tick, ₩{px:,.0f}.")
 
 
-def _why_qty(price: float, qty: int, budget: int = 10_000_000):
+def _why_qty(price: float, qty: int, budget: int = 0):
     """WHY THIS MANY SHARES (boss 2026-09-03 10:5x: 'for price and number of
     stock also should have explanation')."""
+    bud = int(budget) or BUY_BUDGET
     cost = price * qty
-    ko = (f"예산 ₩{budget:,} 기준 · ₩{price:,.0f} × {qty:,}주 = ₩{cost:,.0f} "
-          f"— 한 종목에 예산을 넘기지 않는 크기입니다.")
-    en = (f"Budget ₩{budget:,} · ₩{price:,.0f} x {qty:,} sh = ₩{cost:,.0f} "
-          f"— sized so one stock never exceeds the budget.")
+    # SAY WHICH RULE PICKED THE NUMBER (boss 2026-09-09: minimum 1,000 shares,
+    # 10,000 for the cheap ones) - the floor, the ceiling, or the budget
+    if qty <= MIN_QTY:
+        why_k = (f"비싼 종목이라 예산으로는 {int(bud // price):,}주밖에 안 되지만, "
+                 f"최소 {MIN_QTY:,}주 규칙을 적용했습니다.")
+        why_e = (f"the budget alone would buy only {int(bud // price):,} sh at this "
+                 f"price, so the {MIN_QTY:,}-share floor applies — an expensive "
+                 f"stock still gets a position worth reading.")
+    elif qty >= MAX_QTY:
+        why_k = (f"싼 종목이라 예산으로는 {int(bud // price):,}주까지 가능하지만, "
+                 f"한 종목 최대 {MAX_QTY:,}주에서 멈췄습니다.")
+        why_e = (f"the budget would allow {int(bud // price):,} sh at this price, but "
+                 f"we stop at the {MAX_QTY:,}-share ceiling for any one stock.")
+    else:
+        why_k = f"예산 ₩{bud:,} 안에서 {MIN_QTY:,}~{MAX_QTY:,}주 사이로 정해졌습니다."
+        why_e = (f"sized inside the ₩{bud:,} budget, between the {MIN_QTY:,} and "
+                 f"{MAX_QTY:,} share limits.")
+    ko = f"₩{price:,.0f} × {qty:,}주 = ₩{cost:,.0f} — {why_k}"
+    en = f"₩{price:,.0f} x {qty:,} sh = ₩{cost:,.0f} — {why_e}"
     return ko, en
 
 
