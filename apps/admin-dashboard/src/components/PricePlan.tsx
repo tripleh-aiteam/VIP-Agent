@@ -24,7 +24,7 @@
 
    The split is deliberately UNEVEN. Equal fifths pretend every price is equally
    likely; these weights say what we actually believe. */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLanguage } from "@/components/i18n";
 import { API } from "@/components/api";
 
@@ -106,15 +106,24 @@ function buyPlan(code: string, qty: number, book: Book, bars: Bar[]): Plan | nul
   // this level. A level many days touched is a price the market kept agreeing
   // on; one nobody visited is a guess.
   const support = (px: number) => bars.filter((b) => b.l <= px && px <= b.h).length;
-  // FIVE DIFFERENT PRICES, ALWAYS (boss 2026-09-09: "for buying case we have
-  // to buy like 5 different prices"). Four history depths under the live ask,
-  // plus the leg that deals now. When two quantiles snap onto the SAME tick -
-  // which happens on a quiet stock, and used to silently leave the demo with
-  // three prices instead of five - the collision is stepped one tick lower so
-  // five real, distinct, placeable prices always stand.
+  // FIVE EFFICIENT PRICES - AND NOT ONE OF THEM THE MARKET PRICE (boss
+  // 2026-09-09: "in case of the buying you just put market price; we should buy
+  // efficient price, so you have to choose 5 different efficient prices").
+  //
+  // The first slice used to be the cheapest ask, 30% at whatever the screen
+  // said - which is the one price in the plan that was never chosen, only
+  // accepted. It is gone. All five now stand BELOW the market at depths this
+  // stock genuinely reaches, taken from five marks of its own three-month
+  // habit: 85 / 70 / 50 / 30 / 15% of days. A buy that does not fill costs
+  // nothing; a buy at a price nobody chose costs money every time.
+  //
+  // When two marks snap onto the SAME KRX tick - which happens on a quiet
+  // stock, and used to silently leave the plan with three prices instead of
+  // five - the collision steps one tick lower so five real, distinct,
+  // placeable prices always stand.
   const tkb = tickSize(now, code);
   const picked: { px: number; reach: number; days: number }[] = [];
-  [0.20, 0.40, 0.60, 0.80].forEach((p) => {
+  [0.15, 0.30, 0.50, 0.70, 0.85].forEach((p) => {
     let px = snap(now * (1 - q(p)), code);
     // bounded: snap() rounds to the KRX grid, and near a tick boundary it can
     // round straight back up - an unbounded while would then never terminate
@@ -126,34 +135,28 @@ function buyPlan(code: string, qty: number, book: Book, bars: Bar[]): Plan | nul
       picked.push({ px, reach: 1 - p, days: support(px) });
     }
   });
-  if (picked.length < 4) return null;
+  if (picked.length < 5) return null;
   picked.sort((a, b) => b.px - a.px);                     // dearest first
 
-  // 30% goes in at once so a decision always starts; the other 70% is split by
-  // (how supported the level is) x (how often we actually get there)
-  const nowQty = Math.max(1, Math.round(qty * 0.30));
-  const rest = qty - nowQty;
+  // size by (how often we actually get there) x (how many days really traded
+  // through it) - the likeliest, best-supported level carries the most
   const wsum = picked.reduce((s, p) => s + p.reach * Math.max(p.days, 1), 0) || 1;
-  const out: Slice[] = [{
-    px: snap(now, code), qty: nowQty, now: true,
-    ko: `지금 가장 싼 매도호가 — 여기서 사면 바로 체결됩니다. 결정이 났으면 30%는 반드시 들어갑니다.`,
-    en: `the cheapest ask on the book — this fills now. Once the decision is made, 30% always goes in.`,
-  }];
-  let left = rest;
+  const out: Slice[] = [];
+  let left = qty;
   picked.forEach((p, i) => {
     const w = (p.reach * Math.max(p.days, 1)) / wsum;
-    const n = i === picked.length - 1 ? left : Math.min(left, Math.max(1, Math.round(rest * w)));
+    const n = i === picked.length - 1 ? left : Math.min(left, Math.max(1, Math.round(qty * w)));
     if (n <= 0) return;
     left -= n;
     out.push({
       px: p.px, qty: n, now: false,
-      ko: `오늘 안에 여기까지 내려올 확률 ${Math.round(p.reach * 100)}% — 최근 ${bars.length}일 중 그만큼의 날이 시가에서 이 깊이(${pct(((p.px - now) / now) * 100)})까지 밀렸습니다. 이 가격대에서 실제로 거래된 날은 ${p.days}일.`,
-      en: `${Math.round(p.reach * 100)}% chance it reaches here today — that share of the last ${bars.length} sessions fell this far (${pct(((p.px - now) / now) * 100)}) from their own open. It actually traded at this level on ${p.days} of them.`,
+      ko: `오늘 안에 여기까지 내려올 확률 ${Math.round(p.reach * 100)}% — 최근 ${bars.length}일 중 그만큼의 날이 시가에서 이 깊이(${pct(((p.px - now) / now) * 100)})까지 밀렸습니다. 이 가격대에서 실제로 거래된 날은 ${p.days}일. 지금 값 ${won(now)}보다 ${won(now - p.px)} 싸게 삽니다.`,
+      en: `${Math.round(p.reach * 100)}% chance it reaches here today — that share of the last ${bars.length} sessions fell this far (${pct(((p.px - now) / now) * 100)}) from their own open. It actually traded at this level on ${p.days} of them, and it is ${won(now - p.px)} cheaper than the ${won(now)} on screen.`,
     });
   });
   return { slices: out.filter((s) => s.qty > 0), basis: "history",
-    headKo: `매수는 5개 가격으로 나눠 삽니다 — 서두를 이유가 없습니다. 안 사면 손해가 없고, 비싸게 사면 매번 손해입니다. 그래서 자리는 호가창이 아니라 이 종목 자신의 습관에서 고릅니다: 최근 ${bars.length}일 동안 시가에서 하루에 얼마나 밀렸는지를 줄 세워, 실제로 자주 닿는 깊이만 씁니다. 수량은 닿을 확률이 높을수록 많이 겁니다.`,
-    headEn: `A buy goes in at FIVE different prices - it is never in a hurry — an unfilled buy costs nothing, an expensive one costs every time. So the levels come from this stock's own habit rather than from the book: three months of "how far did it fall from its own open today", sorted, using only the depths it genuinely reaches. The likelier a level, the more shares stand there.` };
+    headKo: `매수는 시장가로 사지 않습니다 — 고른 5개 가격에만 겁니다. 안 사면 손해가 없고, 비싸게 사면 매번 손해입니다. 그래서 자리는 호가창이 아니라 이 종목 자신의 습관에서 고릅니다: 최근 ${bars.length}일 동안 시가에서 하루에 얼마나 밀렸는지를 줄 세워, 실제로 자주 닿는 깊이만 씁니다. 수량은 닿을 확률이 높을수록 많이 겁니다.`,
+    headEn: `A buy never takes the market price - it rests at FIVE chosen prices, and is never in a hurry — an unfilled buy costs nothing, an expensive one costs every time. So the levels come from this stock's own habit rather than from the book: three months of "how far did it fall from its own open today", sorted, using only the depths it genuinely reaches. The likelier a level, the more shares stand there.` };
 }
 
 /** 🧠 THE WORK, AS ITS OWN BLOCK (boss 2026-09-09: "please move 'what it is
@@ -163,18 +166,67 @@ function buyPlan(code: string, qty: number, book: Book, bars: Bar[]): Plan | nul
 export function ProcessSteps({ steps, step }:
   { steps: { ko: string; en: string; val: string }[]; step: number }) {
   const { t } = useLanguage();
+  // IT MUST BE SEEN TO BE LIVE (boss 2026-09-09: "make sure this one should be
+  // real time and must change automatically"). The book behind it has always
+  // polled on a 3s clock, so these numbers were already recomputing - but a
+  // screen where nothing moves cannot be told from a screen that is frozen.
+  // A value that changes now flashes for a moment, the header carries a
+  // pulsing LIVE mark, and the age of the last change counts up every second,
+  // so the panel proves its own freshness instead of asking to be believed.
+  const seen = useRef<string[]>([]);
+  const [hot, setHot] = useState<Record<number, number>>({});
+  const [changedAt, setChangedAt] = useState<number>(0);
+  const [beats, setBeats] = useState(0);
+  const [, setNowTick] = useState(0);
+  const vals = steps.map((x) => x.val).join("|");
+  useEffect(() => {
+    const cur = steps.map((x) => x.val);
+    const fresh: Record<number, number> = {};
+    cur.forEach((v, i) => {
+      if (seen.current.length && seen.current[i] !== undefined && seen.current[i] !== v) {
+        fresh[i] = Date.now();
+      }
+    });
+    const had = seen.current.length > 0;
+    seen.current = cur;
+    if (Object.keys(fresh).length) {
+      setHot((h) => ({ ...h, ...fresh }));
+      setChangedAt(Date.now());
+      setBeats((b) => b + 1);
+    } else if (!had) {
+      setChangedAt(Date.now());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vals]);
+  useEffect(() => {
+    const id = setInterval(() => setNowTick((v) => v + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const ago = changedAt ? Math.max(0, Math.round((Date.now() - changedAt) / 1000)) : null;
   if (!steps.length) return null;
   return (
     <div className="rounded-xl border overflow-hidden"
          style={{ borderColor: "rgba(106,27,154,0.45)" }}>
       <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]"
            style={{ borderColor: "var(--border-default)" }}>
-        <b className="text-[13px]" style={{ color: "#6a1b9a" }}>
-          🧠 {t("지금 하고 있는 일 — 가격을 고르는 과정",
-                "what it is doing right now - how the price is chosen")}</b>
+        <div className="flex items-center gap-2 flex-wrap">
+          <b className="text-[13px]" style={{ color: "#6a1b9a" }}>
+            🧠 {t("지금 하고 있는 일 — 가격을 고르는 과정",
+                  "what it is doing right now - how the price is chosen")}</b>
+          <span className="flex items-center gap-1 text-[9.5px] font-extrabold px-1.5 py-[1px] rounded-full"
+                style={{ background: "rgba(46,125,50,0.14)", color: "#2e7d32" }}>
+            <span className="inline-block rounded-full animate-pulse"
+                  style={{ width: 6, height: 6, background: "#2e7d32" }} />
+            LIVE · 3s
+          </span>
+          <span className="text-[9.5px] tabular-nums" style={{ color: "var(--text-muted)" }}>
+            {ago === null ? "" : t(`마지막 변화 ${ago}초 전 · 갱신 ${beats}회`,
+                                   `last change ${ago}s ago · ${beats} updates`)}
+          </span>
+        </div>
         <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
-          {t("아래 숫자는 캡션이 아니라 실제로 측정한 값이며, 호가가 바뀔 때마다 다시 계산됩니다.",
-             "every number below is a measured value, not a caption, and is recomputed each time the book ticks.")}
+          {t("아래 숫자는 캡션이 아니라 실제로 측정한 값이며, 호가가 3초마다 들어올 때마다 다시 계산됩니다. 값이 바뀌면 그 줄이 잠깐 켜집니다.",
+             "every number below is a measured value, not a caption, recomputed each time the book arrives (every 3s). A value that changes lights up for a moment.")}
         </div>
       </div>
       <div className="px-4 py-2">
@@ -186,7 +238,11 @@ export function ProcessSteps({ steps, step }:
               {i < step ? "✓" : i === step ? "◍" : "·"}</span>
             <span className="flex-1 leading-[1.4]" style={{ color: "var(--text-secondary)" }}>
               {t(sp.ko, sp.en)}</span>
-            <span className="shrink-0 font-bold tabular-nums text-right" style={{ color: "#6a1b9a" }}>
+            <span className="shrink-0 font-bold tabular-nums text-right px-1 rounded"
+                  style={{ color: "#6a1b9a",
+                           background: hot[i] && Date.now() - hot[i] < 1600
+                             ? "rgba(46,125,50,0.22)" : "transparent",
+                           transition: "background .5s ease" }}>
               {i <= step ? sp.val : ""}</span>
           </div>))}
       </div>
@@ -255,7 +311,7 @@ export default function PricePlan({ code, book, onPlan, onSteps }:
           val: plan ? `${filled.toLocaleString()}${t("주", " sh")}` : "…" },
       ]
     : [
-        { ko: "호가창을 읽습니다", en: "reading the order book",
+        { ko: "지금 시장 값이 얼마인지만 봅니다", en: "noting what the market costs right now",
           val: book ? `${t("최우선 매도 ", "best ask ")}${won(book.best_ask || book.last || 0)}` : "…" },
         { ko: "이 종목의 3개월 습관을 읽습니다", en: "reading this stock's own 3-month habit",
           val: bars === null ? "…" : `${bars.length}${t("일", " sessions")}` },
@@ -264,8 +320,8 @@ export default function PricePlan({ code, book, onPlan, onSteps }:
         { ko: "실제로 닿는 자리만 고릅니다", en: "keeping only the depths it truly reaches",
           val: plan ? `${plan.slices.length}${t("개 가격", " prices")}` : "…" },
         { ko: "닿을 확률만큼 수량을 나눕니다", en: "weighting the size by how likely each is",
-          val: plan?.slices[0] ? `${t("즉시 ", "now ")}${Math.round((plan.slices[0].qty / Math.max(filled, 1)) * 100)}%` : "…" },
-        { ko: "5개 가격으로 확정합니다", en: "settling on FIVE prices",
+          val: plan?.slices[0] ? `${t("첫 자리 ", "top ")}${plan.slices[0].qty.toLocaleString()}${t("주", " sh")}` : "…" },
+        { ko: "시장가는 쓰지 않습니다 — 5개 가격 확정", en: "no market price - FIVE chosen prices settled",
           val: plan ? `${filled.toLocaleString()}${t("주", " sh")}` : "…" },
       ];
 
