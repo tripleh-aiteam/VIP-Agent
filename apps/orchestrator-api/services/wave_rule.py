@@ -56,6 +56,14 @@ from typing import Optional
 CFG: dict = {
     # ① the day gate
     "gap_tol": 0.30,     # an open more than this % above yesterday's last is a 갭상승
+    # GATE 1, AND THE ONE NUMBER THAT ARGUES WITH HIM. He asked for "if there is
+    # not 갭상승, or it back to normal price, then buy" - so a gap-up day would
+    # re-open once price returned to yesterday's last. Measured over all 26
+    # stored days that opens 72 extra stock-days and every one of them is a
+    # drag: -16.8% between them, -0.233% a day, which turns the whole rule from
+    # +10.6% to -6.1%. A gap-up day is left alone until he says otherwise;
+    # gap_return=1 restores his version in one word.
+    "gap_return": 0,
     # ② the entry shape - his "3 red"
     "ups": 3,            # rises that must stand
     "soft": 0.20,        # one blue candle this small inside the run is forgiven
@@ -73,6 +81,15 @@ CFG: dict = {
     "spike_hold": 12,    # a fast fall protects the position for this many minutes
     "drift_pct": 0.25,   # a slide this far off a local peak...
     "drift_min": 3,      # ...taking at least this many minutes = a SLOW slide -> sell a slice
+    # ⑦ 계단 (staircase) vs 계단이 아닌 것 (a cascade of real drops) - boss 2026-09-09
+    "big_pct": 0.50,     # a candle must fall at least this much to count as a BIG drop
+                         # (his idea measured at 0.30 / 0.35 / 0.50: only 0.50 pays -
+                         # +12.0% against +10.6% without it, 23 slices in 26 days)
+    "big_x": 2.0,        # ...AND be this many times the tape's own typical minute
+    "cascade_win": 8,    # BIG drops inside this many minutes...
+    "cascade_n": 2,      # ...this many of them, with a pause or a bounce between
+    "cascade_sell": 1,   # 1 = sell a slice on a cascade, 0 = only ever hold (measured)
+    "cascade_profit_only": 0,   # 1 = a cascade slice only comes off a profit
     # ⑤ the floors (his standing -1% law, and the one that overrides the hold)
     "stop_pct": -1.0,
     "hard_stop": -2.0,   # a fast fall is forgiven, but never past this
@@ -204,6 +221,62 @@ def _fall_speed(bars: list[dict], cfg: dict) -> tuple[str, float, int, float, st
     return "", off, mins, peak, peak_at
 
 
+def _drop_shape(bars: list[dict], cfg: dict) -> tuple[str, int, float]:
+    """계단인가, 아닌가 — IS THIS FALL A STAIRCASE OR A CASCADE OF REAL DROPS?
+
+    Boss 2026-09-09: "in the SKhynix case if there is a 계단 3 drop then we do not
+    sell, because within 3 minutes it decreases and it jumps again... but if it is
+    NOT 계단 - like one big drop, then small, then one red, then again one big -
+    then it is a selling case, we do not wait and sell 20%."
+
+    Two shapes, and the difference is not the depth of the fall but how it is
+    BUILT. A staircase walks down in steps of the same size and snaps back; a
+    cascade drops hard, pauses or bounces feebly, and then drops hard AGAIN -
+    that second big candle is somebody still selling, and it is worth taking a
+    slice off rather than waiting.
+
+    WHAT "BIG" HAS TO MEAN. Read only against the tape's own typical minute, his
+    OWN hold-cases would flip to sells: 000660's 14:15-14:21 - which he pointed
+    at as "wait, then buy at 14:24" - is four drops of 0.22-0.32% that look 4-6x
+    typical simply because the early-afternoon tape was almost still (0.054% a
+    minute). So a BIG drop must clear an absolute floor as well as the relative
+    one. At 0.35% his 09:24-09:26 staircase holds one big candle and his
+    14:15-14:21 holds none, so both stay holds - exactly as he described them -
+    while a genuine two-punch cascade still registers.
+
+    Returns (shape, how many BIG drops, the fall off the window's high).
+    """
+    import statistics
+    w = bars[-(cfg["cascade_win"] + 1):]
+    if len(w) < 4:
+        return "", 0, 0.0
+    ref = bars[-(cfg["vol_win"] + 1):-1] or bars[:-1]
+    moves = [abs(ref[k]["close"] - ref[k - 1]["close"]) / ref[k - 1]["close"] * 100
+             for k in range(1, len(ref))]
+    typ = statistics.median(moves) if moves else 0.0
+    hi = max(b["close"] for b in w)
+    px = w[-1]["close"]
+    off = (hi - px) / hi * 100 if hi else 0.0
+    steps = [((w[k]["close"] - w[k - 1]["close"]) / w[k - 1]["close"] * 100)
+             for k in range(1, len(w))]
+    big = [i for i, ch in enumerate(steps)
+           if ch <= -cfg["big_pct"] and (not typ or abs(ch) >= typ * cfg["big_x"])]
+    if len(big) >= cfg["cascade_n"]:
+        # they must be SEPARATED - a run of big candles back to back is still a
+        # staircase, just a steep one; a cascade pauses and comes again
+        if any(big[i + 1] - big[i] >= 2 for i in range(len(big) - 1)):
+            return "cascade", len(big), off
+    downs = 0
+    for ch in reversed(steps):
+        if ch < 0:
+            downs += 1
+        elif abs(ch) > cfg["soft"]:
+            break
+    if downs >= 3 or off >= cfg["spike_pct"]:
+        return "stair", len(big), off
+    return "", len(big), off
+
+
 def _vol_x(bars: list[dict], cfg: dict) -> float:
     """This minute's volume against its own trailing average - the number he asked
     to be checked ("you should check volume also. In most case volume will be high
@@ -283,7 +356,11 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
         return None
     volx = _vol_x(bars, cfg)
     kind, off_peak, off_min, peak_px, peak_at = _fall_speed(bars, cfg)
-    if kind == "fast":
+    shape, n_big, off_win = _drop_shape(bars, cfg)
+    # A CASCADE IS NOT A SPIKE. Only a staircase earns the protection - the shape
+    # that snaps back. A fall that keeps landing big candles is the one shape we
+    # do NOT sit through (boss 2026-09-09).
+    if kind == "fast" and shape != "cascade":
         st["spike_at"] = now
     protected = bool(st.get("spike_at")
                      and _mins(st["spike_at"], now) <= cfg["spike_hold"])
@@ -306,8 +383,17 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
 
     # ② NOTHING HELD: the day gate, then his 3 red.
     if st["qty"] <= 0:
+        # ── GATE 1 (boss 2026-09-09: "if there is not 갭상승, or it back to normal
+        # price, then buy"). A day that opened above yesterday is not closed for
+        # ever - it is closed until the price comes BACK to yesterday's last. The
+        # desk's own send-time guard has read it that way since 09-03; the ladder
+        # now reads it the same, so the two cannot disagree about a gap day.
         if gap is not None and gap > cfg["gap_tol"]:
-            return None                      # 갭상승 day - the desk's own gate answers
+            if not cfg.get("gap_return"):
+                return None                  # the day is simply closed for buying
+            ref = bars[0]["open"] / (1 + gap / 100) if gap > -100 else 0
+            if not (ref and min(b["low"] for b in bars) <= ref):
+                return None                  # still above yesterday - nothing to buy yet
         ok, third = _turn(bars, cfg)
         if not ok:
             return None
@@ -343,6 +429,23 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
                        f"stop - {pnl:+.2f}% against average cost (the {cfg['stop_pct']}% law). "
                        f"This is a slow slide, not a fast fall, so the floor applies.", "stop")
         return None                          # protected: the fast fall gets its minutes
+
+    # ③-b2 계단이 아니면 기다리지 않는다 — the cascade slice (boss 2026-09-09:
+    # "we do not wait and sell 20%"). It comes off before the profit rung is
+    # considered, because the whole point is not waiting for a number.
+    if (cfg["cascade_sell"] and shape == "cascade"
+            and (not cfg["cascade_profit_only"] or gain > 0)):
+        if not st.get("sell_at") or _mins(st["sell_at"], now) >= cfg["cool_min"]:
+            q = min(st["qty"], slice_qty(st["high_water"], cfg))
+            return out("SELL", q,
+                       f"계단이 아닙니다 — 큰 음봉이 {n_big}번 나왔고 사이의 반등이 약합니다 "
+                       f"(최근 {cfg['cascade_win']}분 고점 대비 {off_win:.2f}%). 계단식 하락은 "
+                       f"기다리지만 이 모양은 기다리지 않습니다. {q:,}주를 ₩{px:,.0f}에 덜어냅니다 "
+                       f"(현재 {gain:+.2f}%).",
+                       f"not a staircase - {n_big} big down candles with only a feeble bounce "
+                       f"between them ({off_win:.2f}% off the {cfg['cascade_win']}-minute high). "
+                       f"A staircase is waited out; this shape is not. Taking {q:,} sh off at "
+                       f"₩{px:,.0f} ({gain:+.2f}%).", "cascade")
 
     # ③-c a slice at every +1.5% step (measured from the FIRST buy, his words)
     rung = cfg["step"] * (st["steps"] + 1)

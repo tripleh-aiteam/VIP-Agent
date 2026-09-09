@@ -130,7 +130,13 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
       g.legs.sort((a, b) => (a.kind !== b.kind ? (a.kind === "B" ? -1 : 1)
                                                : a.tt.localeCompare(b.tt)));
     }
-    return out.sort((a, b) => b.last.localeCompare(a.last));
+    // newest first, but a stock's own trips stay together so the border between
+    // two names always means "different stock"
+    out.sort((a, b) => b.last.localeCompare(a.last));
+    const order: string[] = [];
+    for (const g of out) if (!order.includes(g.code)) order.push(g.code);
+    return out.sort((a, b) => (order.indexOf(a.code) - order.indexOf(b.code))
+                              || b.last.localeCompare(a.last));
   }, [book]);
 
   const lineB: React.CSSProperties = { color: "#e53935", fontSize: 12.3, padding: "1px 0" };
@@ -276,21 +282,29 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
                       {t("손익", "P&L")}</th>
                   </tr></thead>
                   <tbody>
-                  {trips.map((g) => {
+                  {trips.map((g, gi) => {
                     let left = g.legs.filter((x) => x.kind === "B")
                                      .reduce((a, x) => a + x.qty, 0);
                     const isOpen = openTrip === g.key;
+                    // A LINE BETWEEN STOCKS, A FAINT ONE BETWEEN THAT STOCK'S OWN
+                    // TRIPS (boss 2026-09-09: "use border in the trading history
+                    // to differentiate stocks"). With twenty names in one table a
+                    // uniform hairline made SK하이닉스's second campaign look like
+                    // part of 삼성전자's; a stock's block now starts on a solid rule.
+                    const newStock = gi === 0 || trips[gi - 1].code !== g.code;
                     return (
                       <Fragment key={g.key}>
-                        <tr style={{ borderTop: "1px solid rgba(128,128,128,0.15)" }}>
+                        <tr style={{ borderTop: newStock ? "2px solid rgba(128,128,128,0.42)"
+                                                         : "1px dashed rgba(128,128,128,0.22)" }}>
                           {/* ONLY THE STOCK NAME — and it opens the reasons */}
                           <td style={{ width: 148, padding: "5px 0", verticalAlign: "top",
                                        cursor: "pointer" }}
                               onClick={() => setOpenTrip(isOpen ? null : g.key)}
                               title={t("클릭하면 이 거래의 매수·매도 이유를 보여줍니다",
                                        "click for why the rule bought AND why it sold")}>
-                            <b style={{ textDecoration: "underline dotted", textUnderlineOffset: 3 }}>
-                              🎞 {g.name}</b> {isOpen ? "▲" : "▼"}
+                            <b style={{ textDecoration: "underline dotted", textUnderlineOffset: 3,
+                                        opacity: newStock ? 1 : 0.55 }}>
+                              {newStock ? "🎞 " : "↳ "}{g.name}</b> {isOpen ? "▲" : "▼"}
                             {g.open && <span style={{ marginLeft: 5, fontSize: 10.5, opacity: 0.7 }}>
                               {t("보유 중", "holding")}</span>}
                           </td>

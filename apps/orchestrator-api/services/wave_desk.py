@@ -282,10 +282,24 @@ def backfill(codes: list[str], day: str = "", clear: bool = True) -> dict:
     day8 = day or _today()
     if book.get("day") != day8:
         book.update({"day": day8, "state": {}, "positions": {}, "trades": []})
+    # EVERY STOCK GETS ITS KOREAN NAME, not just the pinned six - a history of
+    # twenty rows reading "012330" helps nobody (boss 2026-09-09: "use 20 stock").
     names = {}
     try:
-        from services.approval_desk import SIX
-        names = dict(SIX)
+        from services import approval_desk as _A
+        names = dict(_A.SIX)
+        for c, n, _s in (_A.desk_codes() or []):
+            if n:
+                names[str(c)] = n
+        for e in (_A._brain_rows() or []):
+            if e.get("code") and e.get("name"):
+                names[str(e["code"])] = e["name"]
+    except Exception:
+        pass
+    try:
+        from services.kiwoom_tape import WATCH as _W9
+        for c, n in (_W9 or []):
+            names.setdefault(str(c), n)
     except Exception:
         pass
     out = []
