@@ -51,7 +51,10 @@ const TAG_EN: Record<string, string> = {
   drift: "slow roll-over", stop: "stop −1%", hardstop: "stop −2%", eod: "closing flat",
 };
 
-export default function WaveLane({ marketOpen }: { marketOpen?: boolean }) {
+export default function WaveLane({ marketOpen, view, onView, pendingN }: {
+  marketOpen?: boolean; view?: "semi" | "auto";
+  onView?: (v: "semi" | "auto") => void; pendingN?: number;
+}) {
   const base = API.replace(/\/$/, "");
   const { t, lang } = useLanguage();
   const [s, setS] = useState<Status | null>(null);
@@ -69,6 +72,7 @@ export default function WaveLane({ marketOpen }: { marketOpen?: boolean }) {
   useEffect(() => { pull(); const i = setInterval(pull, 5000); return () => clearInterval(i); }, [pull]);
 
   const lanes: Lanes = s?.lanes || { semi: true, auto: true };
+  const V: "semi" | "auto" = view || "semi";        // which lane he is LOOKING at
 
   /* ONE SWITCH TOUCHES ONE LANE — the other keeps running, which is the whole
      point of testing them side by side. */
@@ -93,26 +97,39 @@ export default function WaveLane({ marketOpen }: { marketOpen?: boolean }) {
   const C = s?.cfg;
   const st = book?.stats || s?.auto_stats;
 
+  /* ONE CARD, TWO CONTROLS. Clicking the card SHOWS that lane and hides the
+     other one's screen entirely (his ask); the small 켜짐/꺼짐 pill inside it
+     starts or stops that lane's trading, and never touches the other. Looking
+     is not switching: 자동 can keep trading while he reads 반자동. */
   const btn = (name: "semi" | "auto", icon: string, label: string, sub: string) => {
     const on = lanes[name];
+    const shown = V === name;
     const col = name === "auto" ? "#c62828" : "#2e7d32";
     return (
-      <button onClick={() => toggle(name)} disabled={!!busy}
-        style={{ flex: "1 1 240px", textAlign: "left", cursor: busy ? "wait" : "pointer",
+      <div onClick={() => onView?.(name)}
+        style={{ flex: "1 1 240px", textAlign: "left", cursor: "pointer",
                  padding: "11px 14px", borderRadius: 12, transition: "all .15s",
-                 border: on ? `2.5px solid ${col}` : "1.5px solid rgba(128,128,128,0.45)",
-                 background: on ? (name === "auto" ? "rgba(198,40,40,0.10)" : "rgba(46,125,50,0.10)") : "transparent",
-                 opacity: on ? 1 : 0.66, color: "inherit", font: "inherit" }}>
+                 border: shown ? `2.5px solid ${col}` : "1.5px solid rgba(128,128,128,0.4)",
+                 background: shown ? (name === "auto" ? "rgba(198,40,40,0.10)" : "rgba(46,125,50,0.10)") : "transparent",
+                 opacity: shown ? 1 : 0.72 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
           <span style={{ fontSize: 16 }}>{icon}</span>
-          <b style={{ fontSize: 14.5, color: on ? col : "inherit" }}>{label}</b>
-          <span style={{ marginLeft: "auto", fontSize: 10.5, fontWeight: 800, letterSpacing: ".06em",
-                         padding: "2px 9px", borderRadius: 999,
-                         background: on ? col : "rgba(128,128,128,0.3)", color: "#fff" }}>
-            {on ? t("켜짐", "ON") : t("꺼짐", "OFF")}</span>
+          <b style={{ fontSize: 14.5, color: shown ? col : "inherit" }}>{label}</b>
+          {shown && <span style={{ fontSize: 10.3, fontWeight: 800, letterSpacing: ".06em",
+                                   padding: "1px 7px", borderRadius: 999,
+                                   border: `1.5px solid ${col}`, color: col }}>
+            {t("보는 중", "VIEWING")}</span>}
+          <button onClick={(ev) => { ev.stopPropagation(); toggle(name); }} disabled={!!busy}
+            title={t("이 레인의 매매를 켜고 끕니다 (다른 레인은 그대로)",
+                     "start or stop THIS lane's trading — the other one is untouched")}
+            style={{ marginLeft: "auto", fontSize: 10.5, fontWeight: 800, letterSpacing: ".06em",
+                     padding: "2px 9px", borderRadius: 999, cursor: busy ? "wait" : "pointer",
+                     border: "none", font: "inherit",
+                     background: on ? col : "rgba(128,128,128,0.35)", color: "#fff" }}>
+            {on ? t("켜짐", "ON") : t("꺼짐", "OFF")}</button>
         </div>
         <div style={{ fontSize: 11.5, opacity: 0.82, marginTop: 3, lineHeight: 1.45 }}>{sub}</div>
-      </button>);
+      </div>);
   };
 
   const tile = (label: string, value: string, tone?: number, note?: string) => (
@@ -131,8 +148,8 @@ export default function WaveLane({ marketOpen }: { marketOpen?: boolean }) {
       <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
         <b style={{ fontSize: 15.5 }}>🌊 {t("사다리 규칙", "The Ladder Rule")}</b>
         <span style={{ fontSize: 11.5, opacity: 0.8 }}>
-          {t("20종목 공통 · 두 레인이 동시에 돌아갑니다 — 하나를 꺼도 다른 하나는 그대로입니다",
-             "one rule for all 20 · both lanes run at once — switching one never stops the other")}</span>
+          {t("20종목 공통 · 두 레인이 동시에 돌아갑니다 — 화면만 한 번에 하나씩 봅니다",
+             "one rule for all 20 · both lanes run at once — you just view one at a time")}</span>
         <span onClick={() => setOpen(!open)}
               style={{ marginLeft: "auto", fontSize: 11.5, cursor: "pointer", opacity: 0.8 }}>
           {open ? t("접기 ▲", "hide ▲") : t("펼치기 ▼", "show ▼")}</span>
@@ -149,7 +166,11 @@ export default function WaveLane({ marketOpen }: { marketOpen?: boolean }) {
 
       {open && (
         <>
-          {/* ── 🤖 the auto lane's scoreboard: exactly the five numbers he asked for ── */}
+          {/* ── 🤖 THE AUTO VIEW — its scoreboard and its own trading history.
+                 Shown only while 자동 is the lane being viewed; the semi desk
+                 below is hidden at the same time, so one screen means one lane
+                 (boss 2026-09-09: "if I use auto it should open only auto"). ── */}
+          {V === "auto" && (<>
           <div style={{ marginTop: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <b style={{ fontSize: 13 }}>🤖 {t("자동 레인 성적표", "AUTO lane scoreboard")}</b>
@@ -219,8 +240,23 @@ export default function WaveLane({ marketOpen }: { marketOpen?: boolean }) {
               </div>)}
           </div>
 
-          {/* ── 🙋 what the semi lane asked today ── */}
-          {!!s?.acts?.length && (
+          {/* the semi lane keeps working while he watches this one - its cards
+              wait for him rather than piling up unseen */}
+          {lanes.semi && !!pendingN && (
+            <div onClick={() => onView?.("semi")}
+                 style={{ marginTop: 9, padding: "7px 11px", borderRadius: 9, cursor: "pointer",
+                          fontSize: 12.2, border: "1.5px solid #2e7d32",
+                          background: "rgba(46,125,50,0.09)" }}>
+              🙋 <b>{t(`반자동 승인 카드 ${pendingN}장이 기다리고 있습니다`,
+                       `${pendingN} semi-auto card${pendingN > 1 ? "s" : ""} waiting for you`)}</b>
+              <span style={{ opacity: 0.8 }}> — {t("눌러서 반자동 화면으로", "click to open the semi-auto screen")}</span>
+            </div>)}
+          </>)}
+
+          {/* ── 🙋 THE SEMI VIEW — the cards this lane raised today. The desk's
+                 own holdings, scoreboard, history and popups sit below and are
+                 shown with this view only. ── */}
+          {V === "semi" && !!s?.acts?.length && (
             <div style={{ marginTop: 10 }}>
               <b style={{ fontSize: 12.6 }}>🙋 {t("반자동이 올린 카드", "cards the semi lane raised")}
                 <span style={{ opacity: 0.7, fontWeight: 400 }}> · {s.acts.length}</span></b>
@@ -235,6 +271,23 @@ export default function WaveLane({ marketOpen }: { marketOpen?: boolean }) {
                     <span style={{ flex: 1, opacity: 0.85 }}>{lang === "ko" ? a.ko : a.en}</span>
                   </div>))}
               </div>
+            </div>)}
+
+          {V === "semi" && !s?.acts?.length && (
+            <div style={{ marginTop: 11, fontSize: 12.2, opacity: 0.72 }}>
+              {marketOpen === false
+                ? t("장이 열리면 이 규칙이 승인 카드를 올립니다 — 카드는 아래에 나타납니다.",
+                    "when the market opens this rule raises the approval cards below")
+                : t("아직 조건에 맞는 자리가 없습니다 — 하락이 멈추고 3번째 양봉이 서면 카드를 올립니다.",
+                    "no setup yet — the moment a fall stops and the 3rd rise stands, a card comes up")}</div>)}
+          {V === "semi" && lanes.auto && !!st?.trades && (
+            <div onClick={() => onView?.("auto")}
+                 style={{ marginTop: 9, padding: "7px 11px", borderRadius: 9, cursor: "pointer",
+                          fontSize: 12.2, border: "1.5px solid #c62828",
+                          background: "rgba(198,40,40,0.07)" }}>
+              🤖 <b>{t(`자동 레인은 계속 돌고 있습니다 — 오늘 ${st.trades}건, ${st.pct >= 0 ? "+" : ""}${st.pct.toFixed(2)}%`,
+                       `the AUTO lane is still running — ${st.trades} trades today, ${st.pct >= 0 ? "+" : ""}${st.pct.toFixed(2)}%`)}</b>
+              <span style={{ opacity: 0.8 }}> — {t("눌러서 자동 화면으로", "click to open the auto screen")}</span>
             </div>)}
 
           {/* ── the rule in six lines, on demand ── */}

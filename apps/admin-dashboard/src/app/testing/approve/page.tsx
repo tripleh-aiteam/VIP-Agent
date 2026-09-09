@@ -86,6 +86,20 @@ function MiniCandles({ bars }: { bars: CBar[] }) {
 export default function ApprovePage() {
   const base = API.replace(/\/$/, "");
   const { t } = useLanguage();
+  // 🌊 WHICH LANE AM I LOOKING AT (boss 2026-09-09: "if I use semi auto it
+  // should see only semi auto, if I use auto it should open only auto"). Both
+  // lanes keep RUNNING whatever this says - this is the view, not the switch.
+  const [lane, setLane] = useState<"semi" | "auto">("semi");
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("wave-lane-view");
+      if (v === "auto" || v === "semi") setLane(v);
+    } catch { /* a private window is not a reason to break the page */ }
+  }, []);
+  const pickLane = (v: "semi" | "auto") => {
+    setLane(v);
+    try { localStorage.setItem("wave-lane-view", v); } catch { /* ignore */ }
+  };
   const [feed, setFeed] = useState<Feed | null>(null);
   // THE AGENT, THINKING OUT LOUD (boss 2026-09-03 #9): above the rooms the
   // agent visibly walks the whole universe gate by gate and keeps choosing
@@ -429,7 +443,8 @@ export default function ApprovePage() {
       </div>
 
       {/* ─ 🌊 THE LADDER LANE — 반자동 / 자동 (boss 2026-09-09) ─ */}
-      <WaveLane marketOpen={feed?.market_open} />
+      <WaveLane marketOpen={feed?.market_open} view={lane} onView={pickLane}
+                pendingN={(feed?.pending || []).length} />
 
       {/* ─ 🌐 MARKET WEATHER STRIP (boss 2026-09-04 09:3x: SOX + KOSPI as
           main factors, visible on the board) ─ */}
@@ -807,6 +822,14 @@ export default function ApprovePage() {
         </div>
       )}
 
+      {/* ── 🙋 EVERYTHING BELOW IS THE SEMI-AUTO BOOK ──────────────────────
+          Holdings, scoreboard, trading history and the proposal list are all
+          the approval desk's own record, so they belong to the 반자동 view. In
+          🤖 자동 the ladder keeps its own book and the strip above shows it -
+          two sets of holdings and two histories on one screen is exactly the
+          confusion he asked to end ("if I use auto it should open only auto").
+          The lanes both keep RUNNING either way; only the view changes. ─ */}
+      {lane === "semi" && (<>
       {/* ─ 📦 HOLDING LIST — always visible, even empty (boss 2026-09-02:
           "in any case please make a trading history and holding list") ─ */}
       <div style={{ marginTop: 18, border: "1px solid rgba(46,125,50,0.5)", borderRadius: 10, padding: 12 }}>
@@ -1449,6 +1472,7 @@ export default function ApprovePage() {
               })}</tbody>
             </table>}
       </div>
+      </>)}
 
       {/* ─ suggestion POPUPS — ONE full card at a time (boss 2026-09-03 17:3x:
           "if we have 2 popups I cannot see the top one — reorganize"): the
@@ -1457,7 +1481,10 @@ export default function ApprovePage() {
           even one card outgrows the screen. ─ */}
       <div style={{ position: "fixed", right: 14, bottom: 14,
                     width: popBig ? 480 : 290, zIndex: 60,
-                    display: "flex", flexDirection: "column", gap: 7,
+                    // hidden while he is watching 자동 - the cards keep coming and
+                    // wait for him; the strip above counts them so none is lost
+                    display: lane === "auto" ? "none" : "flex",
+                    flexDirection: "column", gap: 7,
                     maxHeight: "calc(100vh - 28px)", overflowY: "auto",
                     transition: "width .15s ease" }}>
         {(feed?.pending || []).map((p, _pi, _arr) => {
