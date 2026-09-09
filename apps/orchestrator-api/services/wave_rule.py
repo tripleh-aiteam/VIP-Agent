@@ -531,7 +531,7 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
     # if again start to decrease -1% [sell another 20%]"). Five rungs and the
     # position is gone, so the floor is still a floor - it just leaves in pieces
     # instead of all at once, and every piece it leaves can be bought back.
-    if not _exempt and cfg["stop_slices"] and pnl <= -cfg["stop_step"]:
+    if cfg["stop_slices"] and pnl <= -cfg["stop_step"] and not protected:
         lvl = int(abs(pnl) // cfg["stop_step"])
         if lvl > int(st.get("stop_steps") or 0):
             if not st.get("sell_at") or _mins(st["sell_at"], now) >= cfg["cool_min"]:
@@ -546,17 +546,24 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
                            f"slice, {q:,} sh at ₩{px:,.0f}, comes off. When the fall stops and "
                            f"the 3rd rise stands we buy the first lot back.", "stoprung")
 
-    # ③-a the floor no shape argues with (his two names keep the whole-position
-    # stop - they are the ones allowed to sit through a drop, so when they do
-    # break the floor they leave in one piece)
-    if _exempt and pnl <= cfg["hard_stop"]:
+    # ③-a THE ONE THING THAT ENDS THE PATIENCE. While his two names are sitting
+    # through a fast fall nothing sheds - that is what patience means - but the
+    # forgiveness is not unlimited: at -2% the position leaves whole, and from
+    # the next minute the ordinary rungs apply like everywhere else.
+    if protected and pnl <= cfg["hard_stop"]:
         return out("SELL", st["qty"],
                    f"손절 — 평균 매수가 ₩{st['avg_px']:,.0f} 대비 {pnl:+.2f}%. "
                    f"급락 보호도 여기까지입니다({cfg['hard_stop']}%). 전량 정리합니다.",
                    f"stop - {pnl:+.2f}% against an average cost of ₩{st['avg_px']:,.0f}; the "
                    f"fast-fall grace ends at {cfg['hard_stop']}%. Everything out.", "hardstop")
-    # ③-b his -1% law - but a fast fall is given its minutes first
-    if (_exempt or not cfg["stop_slices"]) and pnl <= cfg["stop_pct"]:
+    # ③-b the old whole-position -1% law, kept only for the case where the rung
+    # ladder is switched off (stop_slices=0). It used to apply to 000660 and
+    # 005930, which had them selling EVERYTHING at -1% while every other stock
+    # shed 20% - the opposite of the patience he asked for those two names
+    # (he caught it: "you are saying if price decrease -1% in the SKhynix and
+    # samsung then we will sell everything?"). Now the pair's only difference is
+    # that its rungs wait out a fast fall.
+    if not cfg["stop_slices"] and pnl <= cfg["stop_pct"]:
         if not protected:
             return out("SELL", st["qty"],
                        f"손절 — 평균 매수가 대비 {pnl:+.2f}% (기준 {cfg['stop_pct']}%). "
