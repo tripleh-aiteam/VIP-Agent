@@ -504,6 +504,14 @@ def manage_chat_positions(db) -> list[dict]:
         if not px:
             continue
         remain = min(qty0 - sold, held)
+        # THE PATIENT PAIR IS NOT MANAGED (boss 2026-09-03 "even if they
+        # decreased -1% do not sell, keep holding" / 2026-09-09 "PLEASE HOLD
+        # IT DO NOT SELL SKHYNIX"). The desk buys these two through the
+        # chatbot lane, so 알고2's ladder and guard were reaching them here
+        # even though NO_STOP and _NEVER_STOP both refuse to touch them.
+        # Neither the -1% guard nor the +1% rung may sell them; the 15:19
+        # bell below is a separate law and is left as it stands.
+        _patient9 = str(tk) in ("005930", "000660")
         # 🔔 THE BELL (boss 2026-08-26: "need to sell 15:20 ok" — chat lots keep
         # the desk's discipline): at 15:19, one minute before the closing
         # auction kills the live price, every managed chat lot goes flat.
@@ -522,7 +530,7 @@ def manage_chat_positions(db) -> list[dict]:
                 db.commit()
             continue
         # −1% guard (vs THIS lot's own buy price): sell the lot's remainder
-        if px <= base * 0.99:
+        if px <= base * 0.99 and not _patient9:
             r = place_order(db, tk, "SELL", remain, "market",
                             source="algo2-chat", direct=True)
             if r.get("ok"):
@@ -536,7 +544,7 @@ def manage_chat_positions(db) -> list[dict]:
             continue
         # +1% ladder rung vs the lot's own price (알고2 band +0.85/+1.85/...)
         lvl = base * (1 + ((k_up + 1) * 1.0 - 0.15) / 100)
-        if px >= lvl:
+        if px >= lvl and not _patient9:
             q9 = min(max(1, int(qty0 * 0.10)), remain)
             r = place_order(db, tk, "SELL", q9, "market",
                             source="algo2-chat", direct=True)
