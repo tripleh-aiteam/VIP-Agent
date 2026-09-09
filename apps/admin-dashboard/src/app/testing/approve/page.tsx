@@ -8,6 +8,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useLanguage } from "@/components/i18n";
 import { API } from "../../../components/api";
 import WhyNotPanel from "@/components/WhyNotPanel";
+import GateChartView, { GateVerdicts, type GateChart } from "@/components/GateChartView";
 
 type Zone = { pos: number; zone: "buy" | "sell" | "mid" } | null;
 type Room = { code: string; name: string; score?: number | null; price?: number | null;
@@ -45,12 +46,6 @@ type Feed = { ok: boolean; market_open: boolean; rooms: Room[]; pending: Sug[];
                                   stamp: string; title: string; qty: number;
                                   price?: number | null; gates_ok?: boolean | null;
                                   ko: string; en: string }[] } | null };
-type GateChart = { ok: boolean; code: string; tf: number;
-  bars: { t: string; o: number; h: number; l: number; c: number; v?: number }[];
-  ref?: number | null; low5?: number | null; ma20?: number | null;
-  gap_pct?: number | null; price?: number | null;
-  g1_back?: boolean; g2_ok?: boolean; g3_ok?: boolean;
-  vol_cum?: number; vol_avg5?: number | null; vol_pace?: number | null };
 type Step = { icon: string; t: string; d: string; t_en?: string; d_en?: string };
 
 const W2 = (n?: number | null) => (n == null ? "-" : "₩" + Math.round(n).toLocaleString());
@@ -123,6 +118,10 @@ export default function ApprovePage() {
   const [gcTf, setGcTf] = useState<1 | 15>(1);
   const [gc, setGc] = useState<GateChart | null>(null);
   const [gcBusy, setGcBusy] = useState(false);
+  // ⤢ the same chart, filling the screen (boss 2026-09-09). It is a VIEW of
+  // the popup, not a replacement: closing it returns to the card he was
+  // reading, with his edited price and quantity still standing.
+  const [gcFull, setGcFull] = useState(false);
   // 📜 PAST DAYS COME FROM THE ORDER BOOK (boss 2026-09-09: "in the trading
   // history it is considering only yesterday and today"). The log the panel
   // used to read is a 200-row window that a quiet morning's 보류 notes can
@@ -341,6 +340,15 @@ export default function ApprovePage() {
     const id = setInterval(() => loadGate(gc.code, gcTf), 5000);
     return () => clearInterval(id);
   }, [gcFor, gc?.code, gcTf, loadGate]);
+
+  useEffect(() => {
+    if (!gcFull) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setGcFull(false); };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [gcFull]);
+  // a closed chart can have no full screen over it
+  useEffect(() => { if (gcFor == null) setGcFull(false); }, [gcFor]);
 
   const zoneChip = (z?: Zone) => !z ? null : (
     <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8,
@@ -1576,56 +1584,20 @@ export default function ApprovePage() {
                   <span style={{ fontSize: 10.5, color: "#5b6570", marginLeft: "auto" }}>
                     {gcBusy ? t("불러오는 중…", "loading…") : t("5초마다 갱신", "refreshes every 5s")}</span>
                 </div>
-                {gc && gc.bars && gc.bars.length > 0 ? (() => {
-                  const bs = gc.bars.slice(-90);
-                  const lines = [gc.ref, gc.low5].filter((x): x is number => !!x);
-                  const hi = Math.max(...bs.map((b) => b.h), ...lines);
-                  const lo = Math.min(...bs.map((b) => b.l), ...lines);
-                  const H = 116, VH = 34, W = 300, pad = (hi - lo) * 0.06 || 1;
-                  const Y = (v: number) => H - ((v - lo + pad) / (hi - lo + pad * 2)) * H;
-                  const bw = W / bs.length;
-                  const vmax = Math.max(...bs.map((b) => b.v || 0), 1);
-                  return (
-                    <>
-                      <svg viewBox={`0 0 ${W} ${H + VH + 4}`} style={{ width: "100%", height: 168 }}>
-                        {gc.ref && <><line x1={0} x2={W} y1={Y(gc.ref)} y2={Y(gc.ref)}
-                            stroke="#e65100" strokeWidth={1} strokeDasharray="4 3" />
-                          <text x={2} y={Y(gc.ref) - 2} fontSize={7} fill="#e65100">
-                            {t("어제 19:59", "yest 19:59")} {Math.round(gc.ref).toLocaleString()}</text></>}
-                        {gc.low5 && <><line x1={0} x2={W} y1={Y(gc.low5)} y2={Y(gc.low5)}
-                            stroke="#2e7d32" strokeWidth={1} strokeDasharray="4 3" />
-                          <text x={2} y={Y(gc.low5) - 2} fontSize={7} fill="#2e7d32">
-                            {t("주간 최저", "week low")} {Math.round(gc.low5).toLocaleString()}</text></>}
-                        {bs.map((b, i) => {
-                          const up = b.c >= b.o, x = i * bw + bw / 2;
-                          const col = up ? "#e53935" : "#1e88e5";
-                          return (<g key={i}>
-                            <line x1={x} x2={x} y1={Y(b.h)} y2={Y(b.l)} stroke={col} strokeWidth={0.7} />
-                            <rect x={i * bw + bw * 0.18} width={Math.max(bw * 0.64, 0.8)}
-                                  y={Y(Math.max(b.o, b.c))}
-                                  height={Math.max(Math.abs(Y(b.o) - Y(b.c)), 0.8)} fill={col} />
-                            <rect x={i * bw + bw * 0.18} width={Math.max(bw * 0.64, 0.8)}
-                                  y={H + 4 + VH - ((b.v || 0) / vmax) * VH}
-                                  height={((b.v || 0) / vmax) * VH} fill={col} opacity={0.45} />
-                          </g>);
-                        })}
-                      </svg>
-                      <div style={{ display: "flex", justifyContent: "space-between",
-                                    fontSize: 9.5, color: "#5b6570", marginTop: -4 }}>
-                        <span>{bs[0]?.t}</span><span>{bs[bs.length - 1]?.t}</span></div>
-                      <div style={{ fontSize: 11, marginTop: 5, lineHeight: 1.6 }}>
-                        <div style={{ color: gc.g1_back ? "#2e7d32" : "#c62828", fontWeight: 700 }}>
-                          {gc.g1_back ? "✓" : "✗"} {t("① 갭상승", "① gap-up")} {gc.gap_pct != null ? `${gc.gap_pct >= 0 ? "+" : ""}${gc.gap_pct}%` : "-"}
-                          {" — "}{gc.g1_back ? t("어제 가격까지 내려왔습니다", "it came back to yesterday's price")
-                                             : t("아직 어제 가격까지 안 내려왔습니다", "not back to yesterday's price yet")}</div>
-                        <div style={{ color: gc.g2_ok ? "#2e7d32" : "#c62828", fontWeight: 700 }}>
-                          {gc.g2_ok ? "✓" : "✗"} {t("② 주간 위치", "② weekly position")} — {t("지금", "now")} {W2(gc.price)} / {t("주간 최저", "week low")} {W2(gc.low5)}</div>
-                        <div style={{ color: gc.g3_ok ? "#2e7d32" : "#c62828", fontWeight: 700 }}>
-                          {gc.g3_ok ? "✓" : "✗"} {t("③ 거래량", "③ volume")} {(gc.vol_cum || 0).toLocaleString()}{t("주", " sh")}
-                          {" · "}{t("주간 평균 대비", "vs week avg")} {gc.vol_pace ?? "-"}{t("배", "x")}</div>
-                      </div>
-                    </>);
-                })() : (
+                {/* CLICK IT AND IT FILLS THE SCREEN (boss 2026-09-09: "it is
+                    too small"). Same picture, same 5s refresh - the popup keeps
+                    the thumbnail, the screen gets the readable one. */}
+                {gc && gc.bars && gc.bars.length > 0 ? (
+                  <div onClick={() => setGcFull(true)} style={{ cursor: "zoom-in" }}
+                       title={t("클릭하면 전체 화면으로 크게 봅니다", "click to open it full screen")}>
+                    <GateChartView gc={gc} />
+                    <GateVerdicts gc={gc} />
+                    <div style={{ marginTop: 5, fontSize: 11, fontWeight: 800, color: "#1565c0",
+                                  textAlign: "center", padding: "4px 0", borderRadius: 6,
+                                  background: "rgba(21,101,192,0.08)" }}>
+                      ⤢ {t("클릭하면 전체 화면으로 크게 보기", "click to open full screen")}</div>
+                  </div>
+                ) : (
                   <div style={{ fontSize: 11.5, color: "#5b6570", padding: "10px 0" }}>
                     {gcBusy ? t("불러오는 중…", "loading…") : t("차트 데이터가 없습니다.", "no chart data.")}</div>)}
               </div>)}
@@ -1785,6 +1757,69 @@ export default function ApprovePage() {
           </div>)}
         {toast && <div style={{ borderRadius: 10, padding: "10px 12px", fontSize: 13,
                                 background: "#333", color: "#fff" }}>{toast}</div>}
+
+        {/* ⤢ THE CHART, FULL SCREEN (boss 2026-09-09: "it is too small - if we
+            click it should open with full screen ... and there is an x button
+            to quit and to back pop up message"). The popup stays mounted
+            underneath, so ✕ or ESC puts him back on the very card he was
+            reading - his edited price and quantity untouched. Same 5s refresh
+            keeps running, because it belongs to the chart, not to this view. */}
+        {gcFull && gc && gc.bars && gc.bars.length > 0 && (() => {
+          const sg = (feed?.pending || []).find((x) => x.id === gcFor);
+          return (
+          <div onClick={() => setGcFull(false)}
+               style={{ position: "fixed", inset: 0, zIndex: 10000,
+                        background: "rgba(0,0,0,0.82)", display: "flex",
+                        alignItems: "center", justifyContent: "center", padding: "2vh 1.5vw" }}>
+            <div onClick={(e) => e.stopPropagation()}
+                 style={{ width: "97vw", height: "96vh", display: "flex", flexDirection: "column",
+                          background: "#fff", color: "#22282f", borderRadius: 14,
+                          border: "2px solid #37474f", padding: "12px 16px 14px",
+                          boxShadow: "0 20px 70px rgba(0,0,0,0.55)" }}>
+              {/* header */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+                            paddingBottom: 9, borderBottom: "1px solid #dfe4e9" }}>
+                <b style={{ fontSize: 18 }}>
+                  📈 {sg ? sg.name : gc.code} <span style={{ fontWeight: 600, color: "#5b6570", fontSize: 14 }}>({gc.code})</span>
+                </b>
+                {sg && (
+                  <span style={{ fontSize: 12.5, fontWeight: 800, padding: "3px 10px", borderRadius: 999,
+                                 background: sg.side === "BUY" ? "#e53935" : "#1e88e5", color: "#fff" }}>
+                    {sg.side === "BUY" ? t("매수 제안", "BUY proposal") : t("매도 제안", "SELL proposal")}</span>)}
+                <span style={{ fontSize: 14, fontWeight: 800 }}>{W2(gc.price)}</span>
+                {gc.gap_pct != null && (
+                  <span style={{ fontSize: 12.5, fontWeight: 700,
+                                 color: gc.gap_pct >= 0 ? "#e53935" : "#1e88e5" }}>
+                    {t("갭상승", "gap")} {gc.gap_pct >= 0 ? "+" : ""}{gc.gap_pct}%</span>)}
+                <span style={{ display: "flex", gap: 6, marginLeft: 6 }}>
+                  {([1, 15] as const).map((tf) => (
+                    <button key={tf} onClick={() => { setGcTf(tf); loadGate(gc.code, tf); }}
+                      style={{ fontSize: 13, fontWeight: 800, padding: "5px 14px", borderRadius: 8,
+                               cursor: "pointer", border: "1.5px solid #9aa5b1",
+                               background: gcTf === tf ? "#1565c0" : "#fff",
+                               color: gcTf === tf ? "#fff" : "#37474f" }}>
+                      {tf}{t("분봉", "-min")}</button>))}
+                </span>
+                <span style={{ fontSize: 11.5, color: "#5b6570" }}>
+                  {gcBusy ? t("불러오는 중…", "loading…") : t("5초마다 자동 갱신", "auto-refreshes every 5s")}</span>
+                <button onClick={() => setGcFull(false)}
+                        style={{ marginLeft: "auto", fontSize: 13.5, fontWeight: 800,
+                                 padding: "7px 16px", borderRadius: 9, cursor: "pointer",
+                                 border: "2px solid #37474f", background: "#37474f", color: "#fff" }}>
+                  ✕ {t("닫기 — 팝업으로 돌아가기", "close — back to the popup")}</button>
+              </div>
+              {/* the chart fills whatever is left */}
+              <div style={{ flex: 1, minHeight: 0, paddingTop: 8 }}>
+                <GateChartView gc={gc} full />
+              </div>
+              <GateVerdicts gc={gc} big />
+              <div style={{ fontSize: 11.5, color: "#8a949e", marginTop: 8, textAlign: "center" }}>
+                {t("ESC 또는 바깥쪽을 클릭해도 닫힙니다 — 제안 팝업은 그대로 열려 있고, 수정하신 가격·수량도 그대로입니다.",
+                   "ESC or a click outside closes this too — the proposal popup stays open underneath, and your edited price and quantity are untouched.")}
+              </div>
+            </div>
+          </div>);
+        })()}
       </div>
       </div>
     </div>
