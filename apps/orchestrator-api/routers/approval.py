@@ -704,7 +704,9 @@ def whynot_at(code: str, hhmm: str, name: str = "") -> dict | None:
                     continue
     except Exception:
         pass
-    if _bad9:
+    if str(code) in _PGX9:
+        pass                       # news does not judge his two names
+    elif _bad9:
         _hm9 = str(_bad9.get("ts") or "")[11:16]
         _g(4, "news", False,
            f"그 시각 가격을 누르는 나쁜 뉴스가 살아 있었습니다 ({_hm9}): "
@@ -728,13 +730,15 @@ def whynot_at(code: str, hhmm: str, name: str = "") -> dict | None:
         _rk9 = _sc9 = None
     r["score"], r["rank"] = _sc9, _rk9
     if r["stopped_at"] is None:
+        # count what was actually judged - his two names have no news gate
+        _ng9 = len([g for g in r["gates"] if g.get("key") != "score"])
         _g(5, "score", True,
-           (f"그 시각 4관문이 모두 열려 있었습니다 — 오늘 점수 {_sc9}점"
+           (f"그 시각 {_ng9}개 관문이 모두 열려 있었습니다 — 오늘 점수 {_sc9}점"
             + (f"({_rk9}등)" if _rk9 else "") +
             ". 그런데도 안 샀다면: 통과 종목 중 최고 5종목 경쟁에서 밀렸거나, "
             "매수 신호(바닥 반등 확인)가 그 순간 켜지지 않았거나, 이미 보유/제안 중이었기 "
             "때문입니다 — 신호가 켜지는 순간에만 팝업이 갑니다."),
-           (f"All 4 gates were open at that minute — today's score {_sc9} pts"
+           (f"All {_ng9} gates were open at that minute — today's score {_sc9} pts"
             + (f" (rank {_rk9})" if _rk9 else "") +
             ". If it still was not bought: it lost the best-five score race among the "
             "passers, the entry signal (bottom-rebound confirmation) did not fire at "
@@ -1118,7 +1122,10 @@ def whynot(db: Session = Depends(get_db)):
         # WHOLE trading day's stamps, each line carrying its own clock)
         _sts = _fresh_stamps(code, limit=3, max_age_min=180 if mkt else 600)
         _bad = [s for s in _sts if str(s.get("stamp")) in ("위험", "악재")]
-        if _bad:
+        from services.kiwoom_rules import POS_GATE_EXEMPT as _PGX4
+        if str(code) in _PGX4:
+            pass                   # news does not judge his two names
+        elif _bad:
             _b0 = _bad[-1]
             _hm = str(_b0.get("ts") or "")[11:16]
             _gate(4, "news", False,
@@ -2241,7 +2248,8 @@ def _gates_after_gap(code: str, day: str, mkt: bool) -> tuple:
                 if str(s.get("stamp")) in ("위험", "악재")]
     except Exception:
         _bad = []
-    if _bad:
+    from services.kiwoom_rules import POS_GATE_EXEMPT as _PGX5
+    if _bad and str(code) not in _PGX5:
         _b0 = _bad[-1]
         _t0 = str(_b0.get("title"))[:44]
         return (False, "news",

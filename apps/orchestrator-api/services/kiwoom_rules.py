@@ -723,12 +723,12 @@ def pos_story(code: str, px: float, day: str, bar: float = 65.0,
     if exempt:
         rule_ko.append(f"⚖ 규칙: 이 종목은 회장님 지정 예외 2종목(SK하이닉스·삼성전자)입니다 — "
                        f"위치 점수 {score:.1f}%는 참고로만 보고, 위치로는 막지 않습니다. "
-                       f"갭상승 관문(어제 가격으로 돌아왔는가)·거래량·뉴스·반등 신호는 "
+                       f"갭상승 관문(어제 가격으로 돌아왔는가)·거래량·반등 신호는 "
                        f"그대로 지킵니다.")
         rule_en.append(f"⚖ Rule: this is one of the two EXEMPT names (SK hynix · Samsung "
                        f"Electronics) — its position score {score:.1f}% is shown for "
                        f"information only and never refuses the buy. Gate 1 (the gap and "
-                       f"the return to yesterday's price), volume, news and the turn "
+                       f"the return to yesterday's price), volume and the turn "
                        f"still apply.")
     elif context == "hold" and str(code) in POS_GATE_EXEMPT:
         # the -1% rule does NOT sell these two, so the holding card must not
@@ -960,12 +960,13 @@ def pos_story(code: str, px: float, day: str, bar: float = 65.0,
     if str(code) in POS_GATE_EXEMPT:
         sk = [f"ℹ️ 위치 점수 {score:.1f}% — 참고용입니다. SK하이닉스·삼성전자는 "
               f"위치로는 막지 않습니다 (기준 {bar:.0f}%를 넘어도 삽니다). 판단은 "
-              f"갭상승 · 반등 신호(하락이 멈추고 3번째 상승) · 거래량 · 뉴스, "
-              f"이 넷이 합니다."]
+              f"갭상승 · 반등 신호(하락이 멈추고 3번째 상승) · 거래량, "
+              f"이 셋이 합니다. 뉴스는 이 두 종목을 막지 않습니다."]
         se = [f"ℹ️ Position score {score:.1f}% — for information only. SK hynix / "
               f"Samsung Electronics are never refused on position (they buy even "
-              f"above the {bar:.0f}% bar). Four things decide instead: the gap-up, "
-              f"the turn signal (the fall stops, then the 3rd rise), volume and news."]
+              f"above the {bar:.0f}% bar). Three things decide instead: the gap-up, "
+              f"the turn signal (the fall stops, then the 3rd rise) and volume. "
+              f"News does not refuse these two."]
         if context == "hold":
             _hk2, _he2 = exempt_hold_line(code, px, day=day)
             sk.append(_hk2)

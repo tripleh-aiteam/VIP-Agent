@@ -690,7 +690,7 @@ def _enrich_log_rows(st: dict) -> None:
                     from services.kiwoom_tape import _day as _kd8x
                     _at8 = _disp_at(l)
                     if (_row_day(l) == _kd8x() and len(_at8) == 5
-                            and l.get("_gsnap_at") != _at8 + "|v2"):
+                            and l.get("_gsnap_at") != _at8 + "|v4"):
                         from routers.approval import whynot_at as _wna8
                         _wr8 = _wna8(code, _at8, name) or {}
                         _gs8 = _wr8.get("gates") or []
@@ -716,9 +716,24 @@ def _enrich_log_rows(st: dict) -> None:
                             # keep the 💬 header, drop the stale snapshot lines
                             _keepk = [x for x in (l.get("reasons") or [])[:1]]
                             _keepe = [x for x in (l.get("reasons_en") or [])[:1]]
+                            # HIS TWO NAMES WERE NOT AN EXPERIMENT (boss
+                            # 2026-09-09: "pLEASE REMOVE CHATBOT ORDER WORD").
+                            # SK하이닉스 / 삼성전자 buying on the 3rd rise after a
+                            # clean open IS the standing law he wrote this
+                            # morning; they only came through chat because the
+                            # desk had not shipped it yet. Calling that a
+                            # chatbot experiment misfiles his own rule.
+                            if code in POS_GATE_EXEMPT:
+                                _keepk, _keepe = [], []
+                                _rk8[0] = (f"✅ 회장님이 정하신 예외 규칙대로 산 자리입니다 "
+                                           f"— 갭상승이 없고, 하락이 멈춘 뒤 3번째 상승이 "
+                                           f"선 자리. {_at8} 그 시각의 관문:")
+                                _re8[0] = (f"✅ Bought by your standing rule for these two "
+                                           f"— no gap-up, and the 3rd rise standing after "
+                                           f"the fall stopped. The gates as of {_at8}:")
                             l["reasons"] = _keepk + _rk8
                             l["reasons_en"] = _keepe + _re8
-                            l["_gsnap_at"] = _at8 + "|v2"
+                            l["_gsnap_at"] = _at8 + "|v4"
                 except Exception:
                     pass
             # AND THE PAIR LEADS WITH THE GAP (boss 2026-09-09: "in the buying
@@ -1599,8 +1614,9 @@ def scan(db) -> dict:
                 from services.checklist_advice import _fresh_stamps
                 # the RISK veto keeps a wider 3h net — missing a danger story
                 # costs money, so the real-time display law does not thin it
-                if any(str(x.get("stamp")) in ("위험", "악재")
-                       for x in _fresh_stamps(code, limit=2, max_age_min=180)):
+                if (code not in POS_GATE_EXEMPT
+                        and any(str(x.get("stamp")) in ("위험", "악재")
+                                for x in _fresh_stamps(code, limit=2, max_age_min=180))):
                     continue            # danger news still vetoes, as before
             except Exception:
                 pass
