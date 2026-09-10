@@ -8,6 +8,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useLanguage } from "@/components/i18n";
 import { API } from "../../../components/api";
 import WhyNotPanel from "@/components/WhyNotPanel";
+import PriceThinking from "@/components/PriceThinking";
 import WaveLane from "@/components/WaveLane";
 import GateChartView, { GateVerdicts, GateChartFull, type GateChart } from "@/components/GateChartView";
 
@@ -829,6 +830,16 @@ export default function ApprovePage() {
           two sets of holdings and two histories on one screen is exactly the
           confusion he asked to end ("if I use auto it should open only auto").
           The lanes both keep RUNNING either way; only the view changes. ─ */}
+      {/* 🧠 HOW THE PRICE IS BEING CHOSEN — outside the lane switch on purpose
+          (boss 2026-09-10: "implement this in the menu 3 in both semi auto and
+          auto"). Follows the opened room, falling back to the first one so the
+          panel is never blank. */}
+      {(() => {
+        const tCode = open || feed?.rooms?.[0]?.code || "";
+        const tName = feed?.rooms?.find((r) => r.code === tCode)?.name;
+        return tCode ? <PriceThinking code={tCode} name={tName} /> : null;
+      })()}
+
       {lane === "semi" && (<>
       {/* ─ 📦 HOLDING LIST — always visible, even empty (boss 2026-09-02:
           "in any case please make a trading history and holding list") ─ */}

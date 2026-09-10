@@ -61,7 +61,7 @@ const pct = (n: number) => (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
     highest volume". A sell that must leave has one job - clear ahead of the
     thickest queue - and splitting it only leaves part of the position sitting
     above the wall it was meant to get in front of. */
-function sellPlan(code: string, qty: number, book: Book): Plan | null {
+export function sellPlan(code: string, qty: number, book: Book): Plan | null {
   const asks = (book.asks || []).filter(([p, q]) => p > 0 && q > 0);
   if (!asks.length) return null;
   const [wallPx, wallQty] = asks.reduce((a, b) => (b[1] > a[1] ? b : a));
@@ -87,7 +87,7 @@ function sellPlan(code: string, qty: number, book: Book): Plan | null {
 }
 
 /** BUY — priced from where this stock has actually traded for three months. */
-function buyPlan(code: string, qty: number, book: Book, bars: Bar[]): Plan | null {
+export function buyPlan(code: string, qty: number, book: Book, bars: Bar[]): Plan | null {
   const now = book.best_ask || book.last || 0;
   if (!now || bars.length < 20) return null;
 
