@@ -463,24 +463,53 @@ def tick_lane(bag: dict, code: str, name: str, lot: dict | None,
     return dec
 
 
-def reasons(dec: dict, name: str) -> tuple[list, list]:
+def reasons(dec: dict, name: str, code: str = "") -> tuple[list, list]:
     """The popup's lines, in his own vocabulary - Korean first, English beside."""
     from services import wave_rule as W
     tag = {"entry": "① 진입 — 3번째 양봉", "add": "② 추가 매수 — 하락이 멈춘 자리",
            "step": f"③ +{W.CFG['step']}% 구간 — {W.CFG['slice_pct']}% 익절",
            "drift": f"④ 고점에서 천천히 밀림 — {W.CFG['slice_pct']}% 정리",
            "stop": "⑤ 손절 −1%", "hardstop": "⑤ 손절 −2%",
+           "stoprung": f"⑤ −1% 구간 — {W.CFG['slice_pct']}% 정리 (하락 멈추면 처음 산 만큼 되사기)",
+           "cascade": f"⑤ 계단이 아닌 급락 — {W.CFG['slice_pct']}% 즉시 정리",
            "eod": "⑥ 장 마감 전 전량 정리"}.get(dec.get("tag") or "", "규칙")
     tag_en = {"entry": "① entry - the 3rd rising candle",
               "add": "② adding - the fall stopped",
               "step": f"③ +{W.CFG['step']}% rung - {W.CFG['slice_pct']}% off",
               "drift": f"④ rolling over slowly - {W.CFG['slice_pct']}% off",
               "stop": "⑤ stop -1%", "hardstop": "⑤ stop -2%",
+              "stoprung": f"⑤ the -1% rung - {W.CFG['slice_pct']}% off, bought back on the turn",
+              "cascade": f"⑤ a cascade, not a staircase - {W.CFG['slice_pct']}% off at once",
               "eod": "⑥ flat before the close"}.get(dec.get("tag") or "", "rule")
     ko = [f"🌊 {tag}", dec["ko"],
           f"거래량 x{dec.get('volx')} · 오늘 시가는 어제 종가 대비 {dec.get('gap', 0):+.2f}%"]
     en = [f"🌊 {tag_en}", dec["en"],
           f"volume x{dec.get('volx')} · today opened {dec.get('gap', 0):+.2f}% vs yesterday's last"]
+    # THE DESK'S OWN EVIDENCE, UNDER THE LADDER'S SENTENCE (boss 2026-09-10: "in
+    # both sides the buying/holding/selling explanations are too short - it should
+    # explain there is no 갭상승, then the position with all the formula like you
+    # have done on the semi auto, showing it like to an elementary school student,
+    # add the volume number at the buying time, then a 'there is no bad news' line,
+    # and lastly the 100 checklist clickable in the semi auto format").
+    #
+    # Every one of those already exists in approval_desk._why_buy - the 1-year
+    # zone with its percentage, the distance from the 1-month and 1-year averages,
+    # the volume with its number and its multiple, the true gap story, the news
+    # check. The ladder's own three lines say WHY IT FIRED; these say what the
+    # desk sees behind it. Written once, in one place, so the two lanes cannot
+    # tell him different stories about the same stock.
+    if code:
+        try:
+            from services import approval_desk as A
+            _bk, _be = A._why_buy(str(code), name, {"buy_t": dec.get("at")})
+            for _l in (_bk or []):
+                if _l not in ko:
+                    ko.append(_l)
+            for _l in (_be or []):
+                if _l not in en:
+                    en.append(_l)
+        except Exception as e:
+            log.debug(f"wave reasons {code}: {str(e)[:70]}")
     return ko, en
 
 
@@ -562,7 +591,7 @@ def run_all(db) -> dict:
                 dec = tick_lane(d, code, name, lot, follow_desk=True)
                 if not dec:
                     continue
-                ko, en = reasons(dec, name)
+                ko, en = reasons(dec, name, code)
                 price = _order_price(code, dec)
                 st = A._load()
                 sug = A._mk_sug(st, code, name, dec["side"], ko, price, dec["qty"],
@@ -715,6 +744,13 @@ def why(code: str, lane: str = "auto", db=None) -> dict:
             }
         except Exception as e:
             log.debug(f"wave why scorecard {code}: {str(e)[:80]}")
+    # the same evidence the semi card carries, so the two lanes tell one story
+    try:
+        _bk, _be = A._why_buy(code, name, {"buy_t": ex.get("at")})
+        ex["full_ko"], ex["full_en"] = _bk or [], _be or []
+    except Exception as e:
+        ex["full_ko"], ex["full_en"] = [], []
+        log.debug(f"wave why full {code}: {str(e)[:70]}")
     # what this lane has actually done in the stock today
     if lane == "auto":
         ex["trades"] = [t for t in ((d.get("auto") or {}).get("trades") or [])

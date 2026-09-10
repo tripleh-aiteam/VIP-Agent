@@ -41,7 +41,10 @@ type Score = { score?: number; max?: number; pct?: number; verdict_ok?: boolean;
                market_items?: { no?: number; ko?: string; en?: string; ok?: boolean | null }[] };
 type Why = { ok: boolean; code?: string; name?: string; verdict?: string; at?: string;
              px?: number; volx?: number; waiting_for?: string; gates?: Gate[];
-             position?: PosEx | null; scorecard?: Score; checklist?: { k?: string; v?: string }[] };
+             position?: PosEx | null; scorecard?: Score;
+             full_ko?: string[]; full_en?: string[];
+             checklist?: { k?: string; v?: string; s?: number | null; g?: string; bad?: boolean;
+                           en?: string; ven?: string }[] };
 type Book = { ok: boolean; day?: string; trades: Trade[]; stats: Stats;
               archived?: boolean; days?: DayRow[] };
 type DayRow = { day: string; n: number; pct?: number | null; live?: boolean };
@@ -58,10 +61,12 @@ const M = (n?: number | null) => {           // ₩ in 억/만 so nine digits st
 const TAG_KO: Record<string, string> = {
   entry: "진입 · 3번째 양봉", add: "추가 매수 · 하락 멈춤", step: "구간 익절",
   drift: "천천히 밀려 정리", stop: "손절 −1%", hardstop: "손절 −2%", eod: "마감 전 정리",
+  stoprung: "−1% 구간 · 20% 정리", cascade: "계단 아닌 급락 · 20% 정리",
 };
 const TAG_EN: Record<string, string> = {
   entry: "entry · 3rd rise", add: "adding · fall stopped", step: "profit rung",
   drift: "slow roll-over", stop: "stop −1%", hardstop: "stop −2%", eod: "closing flat",
+  stoprung: "−1% rung · 20% off", cascade: "cascade · 20% off",
 };
 
 export default function WaveLane({ marketOpen, view, onView, pendingN }: {
@@ -78,6 +83,7 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
   const [openTrip, setOpenTrip] = useState<string | null>(null);
   const [day, setDay] = useState("");            // "" = today's live book
   const [why, setWhy] = useState<Record<string, Why>>({});
+  const [chkOpen, setChkOpen] = useState<string | null>(null);
 
   const pull = useCallback(() => {
     fetch(`${base}/approval/wave/status`).then((r) => r.json())
@@ -429,16 +435,44 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
                                   {(w.gates || []).map((x, k) => (
                                     <div key={k} style={{ marginTop: 1, opacity: x.ok ? 0.9 : 1 }}>
                                       {x.ok ? "✅" : "⏳"} {lang === "ko" ? x.ko : x.en}</div>))}
+                                  {/* the desk's own evidence, line by line — the same
+                                      block the semi-auto card carries */}
+                                  {((lang === "ko" ? w.full_ko : w.full_en) || []).map((ln, k) => (
+                                    <div key={`f${k}`} style={{ marginTop: 1 }}>{ln}</div>))}
                                   {sc && sc.pct != null && (
                                     <div style={{ marginTop: 3 }}>
-                                      📋 {t("100문항 체크리스트", "100-item checklist")}:{" "}
-                                      <b>{sc.score}/{sc.max} ({sc.pct}%)</b>
-                                      {sc.verdict_ok ? ` · ${t("통과", "passes")}` : ` · ${t("미달", "below the bar")}`}
+                                      <span onClick={() => setChkOpen(chkOpen === g.code ? null : g.code)}
+                                            style={{ cursor: "pointer", textDecoration: "underline dotted",
+                                                     textUnderlineOffset: 3 }}>
+                                        📋 {t("100문항 체크리스트", "100-item checklist")}:{" "}
+                                        <b>{sc.score}/{sc.max} ({sc.pct}%)</b>
+                                        {sc.verdict_ok ? ` · ${t("통과", "passes")}` : ` · ${t("미달", "below the bar")}`}
+                                        {" "}{chkOpen === g.code ? "▲" : "▼"}</span>
                                       {!!sc.deal_breakers?.length && (
                                         <span style={{ color: "#c62828" }}>
                                           {" "}· {t("탈락 사유", "deal-breakers")}: {sc.deal_breakers.slice(0, 3).join(", ")}</span>)}
                                       {!!sc.unknown && <span style={{ opacity: 0.7 }}>
                                         {" "}· {t(`데이터 없음 ${sc.unknown}개`, `${sc.unknown} unknown`)}</span>}
+                                      {chkOpen === g.code && (
+                                        <div style={{ marginTop: 4, maxHeight: 260, overflowY: "auto",
+                                                      background: "rgba(128,128,128,0.07)", borderRadius: 6,
+                                                      padding: "6px 8px" }}>
+                                          {[...(sc.market_items || []), ...(sc.stock_items || [])]
+                                            .map((it: { no?: number; ko?: string; en?: string; ok?: boolean | null }, k2) => (
+                                            <div key={k2} style={{ fontSize: 11.6, padding: "1px 0" }}>
+                                              {it.ok === true ? "✅" : it.ok === false ? "❌" : "❓"}{" "}
+                                              <b style={{ opacity: 0.6 }}>{it.no ?? ""}</b>{" "}
+                                              {lang === "ko" ? (it.ko || it.en) : (it.en || it.ko)}</div>))}
+                                          {!!(w.checklist || []).length && (
+                                            <div style={{ marginTop: 5, paddingTop: 5,
+                                                          borderTop: "1px dashed rgba(128,128,128,.4)" }}>
+                                              {(w.checklist || []).map((c, k3) => (
+                                                <div key={`c${k3}`} style={{ fontSize: 11.6, padding: "1px 0",
+                                                                            color: c.bad ? "#c62828" : "inherit" }}>
+                                                  {c.bad ? "❌" : "•"} {lang === "ko" ? c.k : (c.en || c.k)}:{" "}
+                                                  {lang === "ko" ? c.v : (c.ven || c.v)}</div>))}
+                                            </div>)}
+                                        </div>)}
                                     </div>)}
                                 </div>);
                             })()}
