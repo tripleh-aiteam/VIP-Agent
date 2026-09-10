@@ -7613,6 +7613,45 @@ def _run_agent_impl(
                  f"go out; the verdict below is for the next session ({_when_en}), and the "
                  "prices and gates are as of the last trade."), True)
 
+    # === 🗄 DESK RECORD LANE (boss 2026-09-10: "our chatbot must know DB — how
+    # many stock, how many holding, how much we already sold out, when what time
+    # we sell or buy, and all information sitting inside our app").
+    #
+    # Measured on the live desk before writing a line: "현대차 언제 샀어?" was
+    # answered with a HIGH-PRICE FORECAST, "what time did we buy…" with a Menu 3
+    # gate verdict, the trade count was handed to an external agent that said it
+    # had no data, and the cash balance came back as "could not be read". Every
+    # one of those numbers was sitting in paper_desk_orders/_account the whole
+    # time. One SQL query each, no LLM, so none of it can be hallucinated.
+    #
+    # It stands HERE, before advice/forecast, because those are precisely the
+    # lanes that were stealing these questions. And unlike the chat-order lanes
+    # it reads EVERY order, whoever placed it — "how many times did we trade
+    # today" does not mean "how many times did I personally type an order".
+    if not confirmed_tool and not attachment_ids and transcript:
+        try:
+            from services import desk_facts as _df
+            _en_df = not _re.search(r"[가-힣]", transcript)
+            _r_df = None
+            if _df.is_when_traded(transcript):
+                _st_df = _all_stocks_in_query(transcript)
+                if _st_df:
+                    _r_df = _df.when_traded(db, _st_df[0][0], _st_df[0][1],
+                                            transcript, _en_df)
+            elif _df.is_trade_count(transcript):
+                _r_df = _df.trade_count(db, _en_df)
+            elif _df.is_who_traded(transcript):
+                _r_df = _df.who_traded(db, _en_df)
+            elif _df.is_cash_q(transcript):
+                _r_df = _df.cash_reply(db, _en_df)
+            if _r_df:
+                return {"intent": "desk_record", "language": lang, "reply": _r_df,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "desk_facts",
+                        "real_model": "deterministic (no LLM call)"}
+        except Exception as _e_df:
+            log.warning(f"desk-record lane failed: {str(_e_df)[:120]}")
+
     # === 🧭 MENU-3 ADVICE LANE — ONE VOICE (boss 2026-09-04 18:4x: "when it
     # advises it should talk with the Algo-3 rule (the currently running
     # rule); each question is answering differently; buying / selling /
