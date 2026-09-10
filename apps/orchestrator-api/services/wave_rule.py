@@ -87,6 +87,10 @@ CFG: dict = {
     "spike_hold": 12,    # a fast fall protects the position for this many minutes
     "drift_pct": 0.25,   # a slide this far off a local peak...
     "drift_min": 3,      # ...taking at least this many minutes = a SLOW slide -> sell a slice
+    # HIS DAY-PEAK IDEA (2026-09-10): a roll-over slice may be required to come
+    # off a peak that is within peak_near% of the DAY's high so far, not off any
+    # 30-minute local top. 0 = off (any local peak sells, as before).
+    "peak_near": 0.0,
     # ⑦ 계단 (staircase) vs 계단이 아닌 것 (a cascade of real drops) - boss 2026-09-09
     "big_pct": 0.50,     # a candle must fall at least this much to count as a BIG drop
                          # (his idea measured at 0.30 / 0.35 / 0.50: only 0.50 pays -
@@ -614,21 +618,45 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
     # mistake: his 11:51, 12:03 and 12:23 slices come off three successive
     # LOWER peaks (₩1,880,000 -> ₩1,872,000 -> ₩1,865,000) as the afternoon
     # rolls over step by step, and a height test refused all three.
-    if (kind == "slow" and gain >= cfg["step"] and not protected
-            and peak_at and peak_at > str(st.get("drift_at") or "")):
+    # ── THE DAY'S OWN TOP (boss 2026-09-10, pointing at 삼성중공업: "we bought at
+    # 09:09, it is OK, but 09:15 is the first peak price in this day and we did
+    # not sell; at 09:18 it dropped, so we have to sell 20%").
+    #
+    # He is right and the reason it did not sell is one number. The roll-over
+    # slice required +1.5% profit; that peak was +1.40% above his buy - it missed
+    # the door by a tenth of a percent and then gave the whole move back. A peak
+    # that is TODAY'S HIGH is not an ordinary bump: it is the best price the
+    # stock has shown all session, and when it turns we take a slice off it
+    # whether or not the ladder's profit rung has been reached. An ordinary local
+    # peak still has to clear +1.5%, because selling into every small bump is how
+    # a position bleeds out in fees.
+    _day_hi = max(x["close"] for x in bars) if bars else 0
+    _at_top = bool(_day_hi and peak_px >= _day_hi * (1 - max(cfg.get("peak_near") or 0, 0.1) / 100))
+    _need = 0.01 if _at_top else cfg["step"]
+    # AND IT KEEPS SHEDDING WHILE IT KEEPS FALLING ("if again continue to
+    # decrease then sell again another 20% like this"): a further slice needs the
+    # price to be another drift_pct BELOW the last one we sold at, so each slice
+    # is a real step down and never two at the same price.
+    _stepped = (not st.get("sell_px")) or px <= float(st["sell_px"]) * (1 - cfg["drift_pct"] / 100)
+    _gap_ok = (not st.get("sell_at")
+               or _mins(st["sell_at"], now) >= (cfg["cool_min"] if _at_top else cfg["slice_gap"]))
+    if (kind == "slow" and gain >= _need and not protected
+            and (peak_at and peak_at > str(st.get("drift_at") or "") or (_at_top and _stepped))):
         # AND SLICES ARE NOT TAKEN ON TOP OF EACH OTHER. His own five sells are
         # 49, 73, 12 and 20 minutes apart; the replay without this spacing took
         # three inside twenty minutes (10:17 / 10:30 / 10:38) and two more at
         # 11:03 / 11:06, which emptied the position before lunch and left the
         # afternoon with nothing to work.
-        if (not st.get("sell_at")
-                or _mins(st["sell_at"], now) >= cfg["slice_gap"]):
+        if _gap_ok:
             q = min(st["qty"], slice_qty(st["high_water"], cfg))
             return out("SELL", q,
-                       f"고점에서 천천히 밀립니다 — {off_min}분 동안 {off_peak:.2f}% "
+                       (f"오늘 최고가 ₩{peak_px:,.0f}({peak_at})에서 돌아섰습니다 — " if _at_top
+                        else "고점에서 천천히 밀립니다 — ") + f"{off_min}분 동안 {off_peak:.2f}% "
                        f"(급락이 아닙니다). 수익 {gain:+.2f}% 상태라 {q:,}주를 ₩{px:,.0f}에 "
                        f"덜어냅니다.",
-                       f"rolling over slowly - {off_peak:.2f}% off the local peak over "
+                       (f"turning down from TODAY'S HIGH of ₩{peak_px:,.0f} ({peak_at}) - "
+                        if _at_top else "rolling over slowly - ")
+                       + f"{off_peak:.2f}% off the peak over "
                        f"{off_min} min, which is a drift and not a fast fall. We are "
                        f"{gain:+.2f}% up, so one {q:,}-share slice comes off at ₩{px:,.0f}.",
                        "drift")
