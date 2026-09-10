@@ -78,17 +78,25 @@ def _price_at(code: str, day8: str, hhmm: str):
     return None
 
 
-def edit(day8: str, code: str, field: str, frm: str, to: str) -> None:
-    """Register one time override. field: buy_t | sell_t. frm may be '' =
-    the stock's first matching trip that day. The price at the NEW time is
-    resolved from that day's real data and rides along, so the displayed
-    price moves with the displayed time."""
+def edit(day8: str, code: str, field: str, frm: str, to: str,
+         px: Optional[float] = None) -> None:
+    """Register one override. field: buy_t | sell_t. frm may be '' = the
+    stock's first matching trip that day. The price at the NEW time is resolved
+    from that day's real data and rides along, so the displayed price moves with
+    the displayed time.
+
+    `px` overrides that lookup, which is how a PRICE correction is expressed
+    (boss 2026-09-10: "if I did some mistake for buying or selling or even stock
+    price... I may able to recover"): pass to == frm so the time does not move,
+    and the price alone is rewritten. The whole recompute below — entry, the
+    sell bases pointing at the old price, the money and the percentage — is the
+    same proven path, so a price fix can never disagree with the row it fixes."""
     items = [x for x in _load()
              if not (x.get("day") == day8 and x.get("code") == code
                      and x.get("field") == field and x.get("frm") == (frm or "")[:5])]
     items.append({"day": day8, "code": code, "field": field,
                   "frm": (frm or "")[:5], "to": (to or "")[:5],
-                  "px": _price_at(code, day8, (to or "")[:5])})
+                  "px": (float(px) if px else _price_at(code, day8, (to or "")[:5]))})
     _save(items[-200:])
 
 
@@ -115,17 +123,25 @@ def apply_rows(rows: list, day8: str) -> list:
         for e in eds:
             if str(r.get("code") or "") != e.get("code"):
                 continue
+            # buy_px / sell_px are PRICE-only corrections. They carry their own
+            # field name so a price fix and a time fix on the same leg can both
+            # stand — keyed on (day, code, field, frm), they used to collide and
+            # the second silently erased the first (2026-09-10).
             f = e.get("field") or "buy_t"
-            cur = str(r2.get(f) or "")
-            if cur and (not e.get("frm") or cur[:5] == e["frm"]):
-                r2 = {**r2, f: e["to"] + cur[5:]}
+            f_t = "buy_t" if f.startswith("buy") else "sell_t"
+            is_px = f.endswith("_px")
+            cur = str(r2.get(f_t) or "")
+            # a price-only edit leaves the clock alone: "" + cur[5:] would
+            # otherwise reduce the header time to its own seconds (":42").
+            if cur and e.get("to") and not is_px and (not e.get("frm") or cur[:5] == e["frm"]):
+                r2 = {**r2, f_t: e["to"] + cur[5:]}
             # the ▲/▼ leg lines inside parts — time moves, and when the edit
             # carries the real price at the new time, the price moves WITH it
             # (boss 2026-09-03 13:5x: "according to time, price also must be
             # changed automatically"); sell bases follow so every ▼ % and the
             # money column recompute against the new price.
             p = r2.get("parts")
-            key = "buys" if f == "buy_t" else "sells"
+            key = "buys" if f.startswith("buy") else "sells"
             arr = (p or {}).get(key) or []
             if arr:
                 px9 = e.get("px")
@@ -136,7 +152,8 @@ def apply_rows(rows: list, day8: str) -> list:
                     leg2 = list(leg)
                     tt = str(leg2[2]) if len(leg2) > 2 and leg2[2] else ""
                     if tt and (not e.get("frm") or tt[:5] == e["frm"]):
-                        leg2[2] = e["to"] + tt[5:]
+                        if e.get("to") and not is_px:   # price-only keeps the clock
+                            leg2[2] = e["to"] + tt[5:]
                         if px9:
                             old_px = float(leg2[0] or 0) or None
                             leg2[0] = float(px9)
@@ -146,7 +163,7 @@ def apply_rows(rows: list, day8: str) -> list:
                     p2 = {**p, key: new_arr}
                     r2 = {**r2, "parts": p2}
                     if px9 and old_px:
-                        if f == "buy_t":
+                        if f.startswith("buy"):
                             # entry + every sell base that pointed at the old
                             # buy price follow; realized money shifts by the
                             # per-share difference on the shares already sold

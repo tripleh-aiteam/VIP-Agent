@@ -8464,8 +8464,15 @@ def _run_agent_impl(
     _ed_verb = any(k in _t_ed for k in ("change", "modify", "바꿔", "수정", "고쳐", "변경"))
     _ed_restore = (any(k in _t_ed for k in ("restore", "복원", "취소", "되돌려", "undo"))
                    and any(k in _t_ed for k in ("수정", "edit", "time change", "변경")))
+    # A CORRECTION CAN ALSO BE ABOUT THE PRICE (boss 2026-09-10: "if I did some
+    # mistake for buying or selling or even stock price and volume using chatbot
+    # I may able to recover"). The guard used to demand a clock time, so
+    # "현대로템 매수 가격 123,000원으로 고쳐줘" reached no lane at all.
+    _ed_px = bool(_re.search(r"(가격|단가|price)", _t_ed)
+                  and _re.search(r"\d[\d,]{3,}", transcript or ""))
     if (not confirmed_tool and not attachment_ids and transcript
-            and (_ed_restore or (_ed_verb and _re.search(r"\d{1,2}:\d{2}", transcript)))):
+            and (_ed_restore
+                 or (_ed_verb and (_re.search(r"\d{1,2}:\d{2}", transcript) or _ed_px)))):
         try:
             from services import trip_editor as _tped
             from services.chat_trade import text_lang_en as _tle_ed
@@ -8488,8 +8495,39 @@ def _run_agent_impl(
                         "tool_used": "trip_editor"}
             _tm_ed = _re.findall(r"(\d{1,2}:\d{2})", transcript)
             _stk_ed = _all_stocks_in_query(transcript)
+            # ── PRICE ONLY: "현대로템 매수 가격 123,000원으로 고쳐줘" ──
+            # `to` stays empty so the clock is untouched; edit() takes the price
+            # verbatim and the row's entry, sell bases, money and percentage all
+            # recompute down the same path a time edit uses.
+            if _ed_px and _stk_ed and not _tm_ed:
+                _pm_ed = _re.search(r"(\d[\d,]{3,})\s*(?:원|won)?", transcript)
+                _px_ed = float(_pm_ed.group(1).replace(",", "")) if _pm_ed else 0.0
+                if _px_ed > 0:
+                    _fld_ed = ("sell_px" if _re.search(r"sell|매도|판|selling", _t_ed)
+                               and not _re.search(r"buy|매수|buying|산", _t_ed) else "buy_px")
+                    _c_ed, _n_ed = _stk_ed[0]
+                    _tped.edit(_day_ed, _c_ed, _fld_ed, "", "", px=_px_ed)
+                    _fko = "매수" if _fld_ed.startswith("buy") else "매도"
+                    _fen = "buy" if _fld_ed.startswith("buy") else "sell"
+                    return {"intent": "trip_edit", "language": lang,
+                            "reply": ((f"✏️ **{_n_ed}** — {_fko} 가격을 **₩{_px_ed:,.0f}** 로 "
+                                       f"두 메뉴에 표시합니다. 손익과 수익률도 이 가격으로 "
+                                       f"다시 계산됩니다 (기록 원본은 보존 · 되돌리려면 "
+                                       f"\"수정 복원\").") if not _en_ed else
+                                      (f"✏️ **{_n_ed}** — the {_fen} price now shows as "
+                                       f"**₩{_px_ed:,.0f}** on both menus, and the money and "
+                                       f"percentage recompute against it. The raw record is "
+                                       f"kept — say \"restore edits\" to undo.")),
+                            "action": None, "speak": True, "transcript": transcript,
+                            "tool_used": "trip_editor"}
+            # ── ONE TIME GIVEN: "change buying time at 09:09: 현대로템" ──
+            # He names where it should land, not where it is (boss 2026-09-10).
+            # An empty `frm` means "that stock's first trip today", which edit()
+            # has always supported — the lane simply never offered it.
+            if len(_tm_ed) == 1 and _stk_ed:
+                _tm_ed = ["", _tm_ed[0]]
             if len(_tm_ed) >= 2 and _stk_ed:
-                _frm_ed = _tm_ed[0].zfill(5)
+                _frm_ed = _tm_ed[0].zfill(5) if _tm_ed[0] else ""
                 _to_ed = _tm_ed[1].zfill(5)
                 _fld_ed = ("sell_t" if _re.search(r"sell|매도|판|selling", _t_ed)
                            and not _re.search(r"buy|매수|buying|산", _t_ed) else "buy_t")
@@ -8498,12 +8536,16 @@ def _run_agent_impl(
                 _fko = "매수" if _fld_ed == "buy_t" else "매도"
                 _fen = "buy" if _fld_ed == "buy_t" else "sell"
                 return {"intent": "trip_edit", "language": lang,
-                        "reply": ((f"✏️ **{_n_ed}** — {_fko} 시간 {_frm_ed} → **{_to_ed}** 로 "
-                                   f"두 메뉴에 표시됩니다 (기록 원본은 보존 · "
-                                   f"되돌리려면 \"시간 수정 복원\").") if not _en_ed else
-                                  (f"✏️ **{_n_ed}** — {_fen} time now shows as **{_to_ed}** "
-                                   f"(was {_frm_ed}) on both menus. The raw record is kept — "
-                                   f"say \"restore time edits\" to undo.")),
+                        "reply": ((f"✏️ **{_n_ed}** — {_fko} 시간을 "
+                                   + (f"{_frm_ed} → " if _frm_ed else "오늘 첫 거래 기준 ")
+                                   + f"**{_to_ed}** 로 두 메뉴에 표시합니다. 그 시각의 실제 "
+                                     f"가격으로 단가·손익도 함께 바뀝니다 (기록 원본은 보존 · "
+                                     f"되돌리려면 \"시간 수정 복원\").") if not _en_ed else
+                                  (f"✏️ **{_n_ed}** — the {_fen} time now shows as **{_to_ed}**"
+                                   + (f" (was {_frm_ed})" if _frm_ed else " (its first trip today)")
+                                   + " on both menus, and the price at that minute rides along, "
+                                     "so the money and percentage follow. The raw record is kept "
+                                     "— say \"restore time edits\" to undo.")),
                         "action": None, "speak": True, "transcript": transcript,
                         "tool_used": "trip_editor"}
             if _ed_verb and len(_tm_ed) >= 2:
