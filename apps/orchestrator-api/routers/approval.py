@@ -2517,6 +2517,15 @@ def wave_dial_clear(name: str = Query("")):
     return clear_dial(name)
 
 
+@router.post("/wave/sync-semi")
+def wave_sync_semi(upto: str = Query(""), db: Session = Depends(get_db)):
+    """One-off: mirror onto the semi/desk book exactly what the auto lane has
+    already done today. Stamped per leg, so it cannot double-count, and it
+    touches nothing after the moment it runs."""
+    from services.wave_desk import sync_semi
+    return sync_semi(db, upto)
+
+
 @router.get("/wave/why")
 def wave_why(code: str = Query(...), lane: str = Query("auto"),
              db: Session = Depends(get_db)):

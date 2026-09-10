@@ -753,6 +753,85 @@ def why_all(lane: str = "auto") -> dict:
     return {"ok": True, "lane": lane, "rows": rows}
 
 
+def sync_semi(db, upto: str = "") -> dict:
+    """ONE-OFF: put on the desk book exactly what the auto lane has already done.
+
+    Boss 2026-09-10, 09:1x: "they are working - I was looking at auto so I forgot
+    to click and approve in the semi auto side. So far, what we bought and sold,
+    please exactly do it in the semi auto side also - please ONLY so far, other
+    time I will watch and approve."
+
+    Every auto leg that has not been mirrored yet is replayed onto the desk in
+    the order it happened, through the same _mk_sug + decide chokepoint an
+    approval click uses - so the lot book, the log row and the fills are all
+    written by the code that always writes them. These carry `urgent`, which
+    sends the whole quantity at market instead of resting it across the five
+    history prices: the point is to MATCH a position that already exists, and a
+    ladder that half-fills would not match it.
+
+    HE OVERRULED THAT, AND HE IS RIGHT (2026-09-10 09:2x: "I found issue - so far
+    buying only one price, but our rule should buy 5 efficient price"). Matching
+    a share count is not worth breaking his pricing law: a BUY now goes out over
+    the five history-chosen prices like every other buy on this desk, with the
+    first slice at the dealing price so the position is opened, and the other
+    four resting below. It may therefore fill less than the auto lane holds -
+    that is the honest outcome of buying at prices we chose rather than at
+    whatever the screen says, and the reconciler picks up each resting slice as
+    it fills. Only SELLS stay whole-and-urgent: stock that has to leave, leaves.
+
+    Each leg is stamped, so calling this twice cannot double anything, and
+    nothing after this moment is touched - from here the cards wait for him."""
+    from services import approval_desk as A
+    d = _roll(_read())
+    book = d.get("auto") or {}
+    done = set(d.get("synced") or [])
+    out = {"ok": True, "placed": [], "skipped": 0, "errors": []}
+    for i, t in enumerate(book.get("trades") or []):
+        key = f"{book.get('day')}|{i}|{t.get('at')}|{t.get('code')}|{t.get('side')}|{t.get('qty')}"
+        if key in done:
+            out["skipped"] += 1
+            continue
+        if upto and str(t.get("at") or "") > upto:
+            continue
+        code, name, side = str(t["code"]), t.get("name") or t["code"], t["side"]
+        qty = int(t["qty"])
+        try:
+            st0 = A._load()
+            lot = next((h for h in (st0.get("held") or []) if h["code"] == code), None)
+            if side == "SELL":
+                have = int((lot or {}).get("qty") or 0)
+                if have <= 0:
+                    out["errors"].append(f"{code} {t['at']} SELL skipped - desk holds none")
+                    done.add(key)
+                    continue
+                qty = min(qty, have)
+            ko = [f"🔁 자동 레인 따라잡기 — {t['at']}에 자동이 {('산' if side == 'BUY' else '판')} "
+                  f"{int(t['qty']):,}주를 반자동 장부에도 같은 수량으로 맞춥니다.",
+                  (t.get("ko") or ""),
+                  "사장님 요청(09:1x): 지금까지의 자동 거래만 반영하고, 이후에는 직접 승인하십니다."]
+            en = [f"🔁 catching the semi book up to the auto lane - it {('bought' if side == 'BUY' else 'sold')} "
+                  f"{int(t['qty']):,} sh at {t['at']}, and the same quantity goes on this book now.",
+                  (t.get("en") or ""),
+                  "His request: mirror what auto has done SO FAR; every later card waits for his click."]
+            st = A._load()
+            sug = A._mk_sug(st, code, name, side, ko, float(t["px"]), qty, None, reasons_en=en)
+            sug["wave"] = t.get("tag")
+            # a BUY keeps the five prices (his law); only a SELL goes whole at market
+            sug["urgent"] = (side == "SELL")
+            sug["catchup"] = True
+            A._save(st)
+            res = A.decide(db, sug["id"], True)
+            out["placed"].append({"at": t["at"], "code": code, "name": name, "side": side,
+                                  "qty": qty, "ok": bool(res.get("ok")),
+                                  "fill": res.get("fill"), "error": res.get("error")})
+            done.add(key)
+        except Exception as e:
+            out["errors"].append(f"{code} {t.get('at')}: {str(e)[:80]}")
+    d["synced"] = sorted(done)[-500:]
+    _write(d)
+    return out
+
+
 def status() -> dict:
     from services import wave_rule as W
     d = _roll(_read())

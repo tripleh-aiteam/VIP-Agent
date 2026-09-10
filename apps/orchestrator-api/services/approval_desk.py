@@ -1256,7 +1256,21 @@ def _check_items(code: str, hhmm: str | None = None, day8: str | None = None) ->
 
 
 def _mk_sug(st, code, name, side, reasons, price, qty, score, reasons_en=None):
-    st["seq"] = int(st.get("seq") or 0) + 1
+    # AN ID MUST BE UNIQUE EVEN WHEN TWO WRITERS RACE (found live 2026-09-10
+    # 09:1x: the pending list held id 176 twice - 한화시스템 and 현대로템 - and 177
+    # twice). The counter lived in the state file, so the ladder lane's thread
+    # and the scanner could both load the same copy, both allocate the same
+    # number, and both save. decide() then matches on id: approving 176 would
+    # have acted on one stock and silently dropped the other's card. The number
+    # is now taken from the highest id ANYWHERE in the file, so a racing writer
+    # can at worst repeat work, never collide.
+    _mx9 = int(st.get("seq") or 0)
+    for _row9 in (st.get("pending") or []) + (st.get("log") or []):
+        try:
+            _mx9 = max(_mx9, int(_row9.get("id") or 0))
+        except Exception:
+            pass
+    st["seq"] = _mx9 + 1
     _hh9 = _hhmm()
     sug = {"id": st["seq"], "ts": time.time(), "hhmm": _hh9, "code": code,
            "name": name, "side": side, "reasons": reasons,
