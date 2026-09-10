@@ -59,26 +59,31 @@ function Line({ on, ko, en, val }: { on: boolean; ko: string; en: string; val: s
   );
 }
 
-export default function PriceThinking({ code, name, qty = 100 }:
-  { code: string; name?: string; qty?: number }) {
+export default function PriceThinking({ code, name, qty = 100, book: bookIn }:
+  { code: string; name?: string; qty?: number; book?: Book | null }) {
   const { t } = useLanguage();
-  const [book, setBook] = useState<Book | null>(null);
+  const [bookOwn, setBookOwn] = useState<Book | null>(null);
   const [bars, setBars] = useState<Bar[] | null>(null);
   const [step, setStep] = useState(0);
+  // A parent that already polls this stock's book hands it down (LiveBookTape
+  // does) — otherwise we fetch our own. Two components polling the same 3s
+  // endpoint for the same code is pure waste, and the desk is rate-limited.
+  const owns = bookIn === undefined;
+  const book = owns ? bookOwn : (bookIn || null);
 
   // the book drives everything on the sell side — 3s, same clock as Menu 1
   useEffect(() => {
-    if (!code) return;
+    if (!code || !owns) return;
     let dead = false;
-    setBook(null);
+    setBookOwn(null);
     const pull = () => fetch(`${API}/paper-desk/live/book?code=${code}`, { cache: "no-store" })
       .then((r) => r.json())
-      .then((b) => { if (!dead && b?.asks) setBook(b); })
+      .then((b) => { if (!dead && b?.asks) setBookOwn(b); })
       .catch(() => {});
     pull();
     const iv = setInterval(pull, 3000);
     return () => { dead = true; clearInterval(iv); };
-  }, [code]);
+  }, [code, owns]);
 
   // the 3-month habit drives the buy side — 30s; a daily bar cannot move faster
   useEffect(() => {

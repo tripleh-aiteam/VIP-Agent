@@ -19,7 +19,8 @@
 import { useEffect, useState } from "react";
 import { api } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
-import PricePlan, { ProcessSteps, type Plan } from "@/components/PricePlan";
+import PricePlan, { type Plan } from "@/components/PricePlan";
+import PriceThinking from "@/components/PriceThinking";
 
 const RED = "#d32f2f";
 const BLUE = "#1565c0";
@@ -258,8 +259,14 @@ export default function LiveBookTape({ code, tapeHeight = 300 }:
         </div>
       </div>
 
-      {/* 🧠 the work, directly under the tape, in the same column */}
-      <ProcessSteps steps={steps} step={pstep} />
+      {/* 🧠 the work, directly under the tape, in the same column.
+          Boss 2026-09-10 moved it here from the top of Menu 3: "I think best
+          place is Why Not Buying Yet — proof of the gates... there is a button
+          live book & tape, so if we click it it should show this instead."
+          The old ProcessSteps narrated only whichever side PricePlan's switch
+          was on; this shows BUY and SELL reasoning side by side. The book is
+          handed down rather than re-fetched — one 3s poll for this code, not two. */}
+      <PriceThinking code={code} book={book} />
       </div>
     </div>
   );
