@@ -2494,6 +2494,23 @@ def wave_dial_clear(name: str = Query("")):
     return clear_dial(name)
 
 
+@router.get("/wave/why")
+def wave_why(code: str = Query(...), lane: str = Query("auto"),
+             db: Session = Depends(get_db)):
+    """Why this stock is being bought, held, sold - or why it is NOT being bought:
+    the ladder's reading of the tape, the position in words, the desk's 100-item
+    checklist for this minute, and what the lane has done in it today."""
+    from services.wave_desk import why
+    return why(code, lane, db)
+
+
+@router.get("/wave/why-all")
+def wave_why_all(lane: str = Query("auto")):
+    """The same question for every watched stock, one line each."""
+    from services.wave_desk import why_all
+    return why_all(lane)
+
+
 @router.get("/wave/auto-book")
 def wave_auto_book(limit: int = Query(400), day: str = Query("")):
     """🤖 The auto lane's own trading history and scoreboard: every buy and sell

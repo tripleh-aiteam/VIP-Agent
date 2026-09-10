@@ -31,6 +31,17 @@ type Status = { ok: boolean; lanes: Lanes; acts: Act[]; positions: Pos[]; cfg: C
 type Trade = { at: string; code: string; name: string; side: "BUY" | "SELL"; qty: number;
                px: number; tag: string; pnl?: number | null; pnl_pct?: number | null;
                fee?: number; src?: string; ko: string; en: string };
+type Gate = { ok: boolean; ko: string; en: string };
+type PosEx = { qty: number; avg: number; pnl: number; gain: number; steps: number;
+               stop_steps: number; slice: number; next_up: number; next_dn: number;
+               protected: boolean; ko: string; en: string };
+type Score = { score?: number; max?: number; pct?: number; verdict_ok?: boolean;
+               deal_breakers?: string[]; unknown?: number;
+               stock_items?: { no?: number; ko?: string; en?: string; ok?: boolean | null }[];
+               market_items?: { no?: number; ko?: string; en?: string; ok?: boolean | null }[] };
+type Why = { ok: boolean; code?: string; name?: string; verdict?: string; at?: string;
+             px?: number; volx?: number; waiting_for?: string; gates?: Gate[];
+             position?: PosEx | null; scorecard?: Score; checklist?: { k?: string; v?: string }[] };
 type Book = { ok: boolean; day?: string; trades: Trade[]; stats: Stats;
               archived?: boolean; days?: DayRow[] };
 type DayRow = { day: string; n: number; pct?: number | null; live?: boolean };
@@ -66,6 +77,7 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
   const [showRule, setShowRule] = useState(false);
   const [openTrip, setOpenTrip] = useState<string | null>(null);
   const [day, setDay] = useState("");            // "" = today's live book
+  const [why, setWhy] = useState<Record<string, Why>>({});
 
   const pull = useCallback(() => {
     fetch(`${base}/approval/wave/status`).then((r) => r.json())
@@ -91,6 +103,21 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
     fetch(`${base}/approval/wave/lane?name=${name}&on=${next}`, { method: "POST" })
       .then((r) => r.json()).then(() => pull()).finally(() => setBusy(""));
   };
+
+  /* WHY THIS STOCK IS BEING BOUGHT, HELD, SOLD - OR IS NOT (boss 2026-09-10:
+     "in the buying, selling, holding, why-not-buying we have to add explanations,
+     including 100 checklist, and also the explanation about positions"). Pulled
+     for whichever trip he has opened, refreshed while it stays open. */
+  useEffect(() => {
+    if (!openTrip) return;
+    const code = openTrip.split("|")[0];
+    const pull1 = () => fetch(`${base}/approval/wave/why?code=${code}`)
+      .then((r) => r.json()).then((d) => { if (d?.ok) setWhy((m) => ({ ...m, [code]: d })); })
+      .catch(() => {});
+    pull1();
+    const i = setInterval(pull1, 10000);
+    return () => clearInterval(i);
+  }, [base, openTrip]);
 
   const C = s?.cfg;
   const st = book?.stats || s?.auto_stats;
@@ -379,6 +406,42 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
                         </tr>
                         {isOpen && (
                           <tr><td colSpan={4} style={{ padding: "4px 6px 9px" }}>
+                            {/* 🧭 what the rule sees in this stock RIGHT NOW - the
+                                position in words, every gate, and the 100-item
+                                checklist behind it */}
+                            {(() => {
+                              const w = why[g.code];
+                              if (!w) return null;
+                              const sc = w.scorecard;
+                              return (
+                                <div style={{ borderLeft: "3px solid #6a1b9a", borderRadius: 6,
+                                              background: "rgba(106,27,154,0.06)", padding: "7px 10px",
+                                              fontSize: 12, lineHeight: 1.6, marginBottom: 6 }}>
+                                  <b style={{ color: "#6a1b9a" }}>
+                                    🧭 {t("지금 이 종목", "this stock right now")}
+                                    {w.at ? ` (${w.at})` : ""} — {
+                                      w.verdict === "holding" ? t("보유 중", "holding")
+                                      : w.verdict === "ready to buy" ? t("살 준비 완료", "ready to buy")
+                                      : t("안 사는 중", "not buying")}</b>
+                                  {w.position && (
+                                    <div style={{ marginTop: 2 }}>
+                                      📦 {lang === "ko" ? w.position.ko : w.position.en}</div>)}
+                                  {(w.gates || []).map((x, k) => (
+                                    <div key={k} style={{ marginTop: 1, opacity: x.ok ? 0.9 : 1 }}>
+                                      {x.ok ? "✅" : "⏳"} {lang === "ko" ? x.ko : x.en}</div>))}
+                                  {sc && sc.pct != null && (
+                                    <div style={{ marginTop: 3 }}>
+                                      📋 {t("100문항 체크리스트", "100-item checklist")}:{" "}
+                                      <b>{sc.score}/{sc.max} ({sc.pct}%)</b>
+                                      {sc.verdict_ok ? ` · ${t("통과", "passes")}` : ` · ${t("미달", "below the bar")}`}
+                                      {!!sc.deal_breakers?.length && (
+                                        <span style={{ color: "#c62828" }}>
+                                          {" "}· {t("탈락 사유", "deal-breakers")}: {sc.deal_breakers.slice(0, 3).join(", ")}</span>)}
+                                      {!!sc.unknown && <span style={{ opacity: 0.7 }}>
+                                        {" "}· {t(`데이터 없음 ${sc.unknown}개`, `${sc.unknown} unknown`)}</span>}
+                                    </div>)}
+                                </div>);
+                            })()}
                             {/* 🔴 why it bought — the rule's own sentence, per buy */}
                             {g.legs.filter((x) => x.kind === "B").map((x, k) => (
                               <div key={`b${k}`} style={{ borderLeft: "3px solid #e53935",

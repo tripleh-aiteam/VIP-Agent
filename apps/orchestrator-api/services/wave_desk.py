@@ -663,6 +663,96 @@ def _day_list(d: dict) -> list:
     return out
 
 
+def why(code: str, lane: str = "auto", db=None) -> dict:
+    """EVERY EXPLANATION THE DESK HAS, FOR ONE STOCK, IN ONE ANSWER (boss
+    2026-09-10: "in the buying, selling, holding, why-not-buying we have to add
+    explanations, including the 100 checklist, and also the explanation about
+    positions").
+
+    The ladder's own reading of the tape (wave_rule.explain), the desk's
+    100-item checklist for this minute, and the position - whichever lane he is
+    looking at, because the two lanes hold different books and a story about the
+    wrong one would be worse than none."""
+    from services import wave_rule as W
+    from services import approval_desk as A
+    code = str(code or "").strip().zfill(6)
+    d = _roll(_read())
+    bag = d.get("auto") if lane == "auto" else d
+    st = ((bag or {}).get("state") or {}).get(code) or W.new_state(code, code)
+    name = st.get("name") or code
+    try:
+        bars = W.minute_bars(code)
+    except Exception:
+        bars = []
+    gap = None
+    if bars:
+        ref = W.prev_last(code)
+        gap = ((bars[0]["open"] / ref - 1) * 100) if ref else 0.0
+    ex = W.explain(bars, st, dials() or None, gap)
+    ex["lane"] = lane
+    ex["name"] = name
+    # the desk's own inspection rows for this minute - the same ones the approval
+    # card unfolds
+    try:
+        ex["checklist"] = A._check_items(code, A._hhmm()) or []
+    except Exception as e:
+        ex["checklist"] = []
+        log.debug(f"wave why checklist {code}: {str(e)[:60]}")
+    # AND THE REAL 100-ITEM CHECKLIST (boss 2026-09-10: "including 100 checklist
+    # also"). checklist_engine.stock_scorecard is the one that answers all 100 -
+    # the market layer and the per-stock layer, with the deal-breakers named.
+    if db is not None:
+        try:
+            from services.checklist_engine import stock_scorecard
+            sc = stock_scorecard(db, code)
+            ex["scorecard"] = {
+                "score": sc.get("score"), "max": sc.get("max"), "pct": sc.get("pct"),
+                "verdict_ok": sc.get("verdict_ok"),
+                "deal_breakers": sc.get("deal_breakers") or [],
+                "unknown": len(sc.get("unknown") or []),
+                "stock_items": (sc.get("stock") or {}).get("items") or [],
+                "market_items": (sc.get("market") or {}).get("items") or [],
+            }
+        except Exception as e:
+            log.debug(f"wave why scorecard {code}: {str(e)[:80]}")
+    # what this lane has actually done in the stock today
+    if lane == "auto":
+        ex["trades"] = [t for t in ((d.get("auto") or {}).get("trades") or [])
+                        if t.get("code") == code]
+    else:
+        ex["trades"] = [a for a in (d.get("acts") or []) if a.get("code") == code]
+    return ex
+
+
+def why_all(lane: str = "auto") -> dict:
+    """One line per watched stock: what the lane is doing, or what it waits for.
+    This is his "why not buying" list for the ladder - the same question the
+    desk's cascade answers for its own gates."""
+    from services import approval_desk as A
+    rows = []
+    try:
+        universe = list(A.desk_codes())
+        seen = {c for c, _n, _s in universe}
+        for e in (A._brain_rows() or []):
+            c = str(e.get("code") or "")
+            if c and c not in seen:
+                universe.append((c, e.get("name") or c, e.get("score")))
+                seen.add(c)
+    except Exception:
+        universe = []
+    for code, name, _s in universe:
+        try:
+            w = why(code, lane)
+            rows.append({"code": code, "name": name or w.get("name"),
+                         "verdict": w.get("verdict"), "waiting_for": w.get("waiting_for"),
+                         "gates": w.get("gates") or [], "position": w.get("position"),
+                         "n_trades": len(w.get("trades") or [])})
+        except Exception as e:
+            rows.append({"code": code, "name": name, "verdict": "error",
+                         "waiting_for": str(e)[:80]})
+    return {"ok": True, "lane": lane, "rows": rows}
+
+
 def status() -> dict:
     from services import wave_rule as W
     d = _roll(_read())

@@ -806,3 +806,119 @@ def replay(code: str, name: str = "", day: str = "", cfg: dict | None = None,
             "realised": round(realised), "open": round(open_pnl),
             "pnl_pct": round((realised + open_pnl) / spent * 100, 3),
             "left": pos}
+
+
+# ── WHY, IN WORDS, AT ANY MINUTE ─────────────────────────────────────────────
+def explain(bars: list[dict], st: dict, cfg: dict | None = None,
+            gap: float | None = None) -> dict:
+    """What the rule sees in this stock right now, and what it is waiting for.
+
+    Boss 2026-09-10: "in the buying, selling, holding, why-not-buying, we have to
+    add explanations, including the 100 checklist, and also the explanation about
+    positions."
+
+    decide() answers with a trade or with None, and None is silent - it never
+    said WHICH condition was missing. This runs the same tests in the same order
+    and reports them instead of acting on them, so a person can read the rule's
+    mind at any minute without waiting for it to do something. It has no side
+    effects: nothing here writes to state.
+    """
+    cfg = {**CFG, **(cfg or {})}
+    out = {"ok": True, "code": st.get("code"), "name": st.get("name"),
+           "gates": [], "position": None, "waiting_for": None, "verdict": ""}
+    if not bars:
+        out["verdict"] = "tape has not started"
+        return out
+    b = bars[-1]
+    now = str(b.get("hhmm") or "")[:5]
+    px = float(b.get("close") or 0)
+    volx = _vol_x(bars, cfg)
+    kind, off_peak, off_min, peak_px, peak_at = _fall_speed(bars, cfg)
+    shape, n_big, off_win = _drop_shape(bars, cfg)
+    ok_turn, third = _turn(bars, cfg)
+    qty = int(st.get("qty") or 0)
+    exempt = str(st.get("code") or "") in tuple(cfg.get("exempt") or TAUGHT_ON)
+    protected = bool(exempt and st.get("spike_at")
+                     and _mins(st["spike_at"], now) <= cfg["spike_hold"])
+
+    def g(ok, ko, en):
+        out["gates"].append({"ok": bool(ok), "ko": ko, "en": en})
+
+    # ① the day gate
+    if gap is None:
+        gap = 0.0
+    if gap > cfg["gap_tol"]:
+        ref = bars[0]["open"] / (1 + gap / 100) if gap > -100 else 0
+        back = bool(ref and min(x["low"] for x in bars) <= ref)
+        g(back,
+          f"갭상승 +{gap:.2f}% — 어제 마지막 가격 ₩{ref:,.0f}까지 "
+          + ("내려왔습니다. 이제 규칙대로 살 수 있습니다." if back
+             else f"아직 안 내려왔습니다 (오늘 저가 ₩{min(x['low'] for x in bars):,.0f}). 기다립니다."),
+          f"gap-up +{gap:.2f}% — price has "
+          + ("come back to yesterday's last ₩%s, so buying is open again" % f"{ref:,.0f}"
+             if back else "NOT come back to yesterday's last ₩%s yet — waiting" % f"{ref:,.0f}"))
+    else:
+        g(True, f"갭상승 아님 — 시가가 어제 종가 대비 {gap:+.2f}%입니다.",
+          f"no gap-up — the open was {gap:+.2f}% against yesterday's last")
+
+    # ② the turn
+    g(ok_turn,
+      (f"3번째 양봉이 {third}에 섰습니다 — 살 자리입니다." if ok_turn
+       else f"아직 3번째 양봉이 안 섰습니다 (최소 {cfg['dip_pct']}% 눌림 뒤 3연속 상승 필요)."),
+      (f"the 3rd rising candle stood at {third} — this is a buy" if ok_turn
+       else f"the 3rd rise has not stood yet (needs a dip of at least {cfg['dip_pct']}%, "
+            f"then three rises)"))
+
+    # ③ the shape of any fall in progress
+    if kind or shape:
+        g(shape != "cascade",
+          (f"급락(계단) — 최근 고점 대비 {off_peak:.2f}%, {off_min}분. "
+           + ("계단식이라 기다립니다 (보호 " + str(cfg["spike_hold"]) + "분)." if shape == "stair"
+              else f"계단이 아닙니다 — 큰 음봉 {n_big}개. 기다리지 않고 {cfg['slice_pct']}% 덜어냅니다.")
+           if kind == "fast" else
+           f"천천히 밀리는 중 — 고점 대비 {off_peak:.2f}%, {off_min}분."),
+          (f"a fast fall — {off_peak:.2f}% off the recent high over {off_min} min; "
+           + ("a staircase, so we wait it out" if shape == "stair"
+              else f"NOT a staircase — {n_big} big candles, so a {cfg['slice_pct']}% slice comes off")
+           if kind == "fast" else
+           f"drifting down — {off_peak:.2f}% off the high over {off_min} min"))
+
+    # ④ the position, in his words
+    if qty > 0:
+        pnl = (px / st["avg_px"] - 1) * 100 if st.get("avg_px") else 0.0
+        gain = (px / st["first_px"] - 1) * 100 if st.get("first_px") else 0.0
+        rung = cfg["step"] * (int(st.get("steps") or 0) + 1)
+        nxt_up = st["first_px"] * (1 + rung / 100) if st.get("first_px") else 0
+        nxt_dn = st["avg_px"] * (1 - cfg["stop_step"] * (int(st.get("stop_steps") or 0) + 1) / 100)
+        out["position"] = {
+            "qty": qty, "avg": round(st.get("avg_px") or 0), "first_px": round(st.get("first_px") or 0),
+            "first_qty": int(st.get("first_qty") or 0), "pnl": round(pnl, 2), "gain": round(gain, 2),
+            "steps": int(st.get("steps") or 0), "stop_steps": int(st.get("stop_steps") or 0),
+            "sold": int(st.get("sold") or 0), "protected": protected,
+            "next_up": round(nxt_up), "next_dn": round(nxt_dn),
+            "slice": slice_qty(int(st.get("high_water") or qty), cfg),
+            "ko": (f"{qty:,}주 보유 · 평균 ₩{st['avg_px']:,.0f} · 현재 {pnl:+.2f}%. "
+                   f"다음 익절은 ₩{nxt_up:,.0f}(+{rung:.1f}%)에서 {cfg['slice_pct']}%, "
+                   f"다음 손절 구간은 ₩{nxt_dn:,.0f}에서 {cfg['slice_pct']}%입니다."
+                   + (" 지금은 급락 보호 중이라 팔지 않습니다." if protected else "")),
+            "en": (f"holding {qty:,} sh at an average of ₩{st['avg_px']:,.0f}, {pnl:+.2f}% now. "
+                   f"The next profit slice comes at ₩{nxt_up:,.0f} (+{rung:.1f}%), the next "
+                   f"{cfg['slice_pct']}% rung down at ₩{nxt_dn:,.0f}."
+                   + (" Fast-fall protection is on, so nothing sells right now." if protected else "")),
+        }
+
+    # ⑤ the verdict
+    blocked = next((x for x in out["gates"] if not x["ok"]), None)
+    if qty > 0:
+        out["verdict"] = "holding"
+        out["waiting_for"] = out["position"]["en"]
+    elif blocked:
+        out["verdict"] = "not buying"
+        out["waiting_for"] = blocked["en"]
+    else:
+        out["verdict"] = "ready to buy"
+        out["waiting_for"] = "all gates pass - the next 3rd rising candle buys"
+    out["volx"] = volx
+    out["px"] = px
+    out["at"] = now
+    return out
