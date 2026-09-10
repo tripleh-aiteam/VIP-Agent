@@ -1302,10 +1302,33 @@ def whynot(db: Session = Depends(get_db)):
             r["verdict_en"] = ("All gates opened today, but the entry signal (bottom "
                                "rebound confirmation) never fired — so it was not bought.")
         else:
-            r["verdict_ko"] = ("모든 관문 통과 — 매수 신호(바닥 반등 확인)를 기다리는 중입니다. "
-                               "신호가 켜지면 곧 팝업이 옵니다.")
+            # AND SAY WHOSE SIGNAL IT IS (boss 2026-09-10, at the open: "the
+            # dashboard is showing some of them ready to buy, but in semi-auto no
+            # popup is coming"). This panel proves the DESK's four gates, and it
+            # used to end "the popup comes the moment it fires" - true when the
+            # desk raised its own popups. The ladder lane owns them now, and it
+            # asks for one more thing on top of these gates: a fall of at least
+            # dip_pct that STOPS, and then the 3rd rising candle. A stock can sit
+            # here with every gate green for an hour because it has not dipped.
+            _lad9 = ""
+            _lke9 = ""
+            try:
+                from services.wave_desk import lane_on as _ln9
+                from services.wave_rule import CFG as _WC9
+                if _ln9("semi") or _ln9("auto"):
+                    _lad9 = (f" 이제 매수 카드는 사다리 규칙이 냅니다 — "
+                             f"{_WC9['dip_pct']}% 이상 눌렸다가 멈추고 "
+                             f"{_WC9['ups']}번째 양봉이 서는 순간 카드가 나갑니다.")
+                    _lke9 = (f" The ladder rule raises the cards now: it needs a dip of at "
+                             f"least {_WC9['dip_pct']}% that STOPS, and then the "
+                             f"{_WC9['ups']}rd rising candle - that is the moment the card goes out.")
+            except Exception:
+                pass
+            r["verdict_ko"] = ("모든 관문 통과 — 매수 신호(바닥 반등 확인)를 기다리는 중입니다."
+                               + (_lad9 or " 신호가 켜지면 곧 팝업이 옵니다."))
             r["verdict_en"] = ("ALL gates passed — waiting for the entry signal (bottom "
-                               "rebound confirmation). The popup comes the moment it fires.")
+                               "rebound confirmation)."
+                               + (_lke9 or " The popup comes the moment it fires."))
     _hh9 = _t.strftime("%H:%M", _t.gmtime(_t.time() + 9 * 3600))
     # THE MENU ALWAYS STARTS WITH SK하이닉스 AND 삼성전자 (boss 2026-09-07:
     # "inside the app this menu should always start from SK hynix and
