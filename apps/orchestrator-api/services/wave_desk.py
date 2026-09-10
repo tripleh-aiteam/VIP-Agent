@@ -500,14 +500,16 @@ def reasons(dec: dict, name: str, code: str = "") -> tuple[list, list]:
     # tell him different stories about the same stock.
     if code:
         try:
-            from services import approval_desk as A
-            _bk, _be = A._why_buy(str(code), name, {"buy_t": dec.get("at")})
-            for _l in (_bk or []):
-                if _l not in ko:
-                    ko.append(_l)
-            for _l in (_be or []):
-                if _l not in en:
-                    en.append(_l)
+            from services import wave_why as WW
+            from db.base import SessionLocal
+            _db = SessionLocal()
+            try:
+                b = WW.blocks(str(code), name, _db, gap=dec.get("gap"),
+                              side=dec.get("side"), dec=dec)
+            finally:
+                _db.close()
+            ko += b.get("ko") or []
+            en += b.get("en") or []
         except Exception as e:
             log.debug(f"wave reasons {code}: {str(e)[:70]}")
     return ko, en
@@ -746,8 +748,11 @@ def why(code: str, lane: str = "auto", db=None) -> dict:
             log.debug(f"wave why scorecard {code}: {str(e)[:80]}")
     # the same evidence the semi card carries, so the two lanes tell one story
     try:
-        _bk, _be = A._why_buy(code, name, {"buy_t": ex.get("at")})
-        ex["full_ko"], ex["full_en"] = _bk or [], _be or []
+        from services import wave_why as WW
+        b = WW.blocks(code, name, db, bars=bars, st=st, gap=gap)
+        ex["full_ko"], ex["full_en"] = b.get("ko") or [], b.get("en") or []
+        if b.get("scorecard"):
+            ex["scorecard"] = b["scorecard"]
     except Exception as e:
         ex["full_ko"], ex["full_en"] = [], []
         log.debug(f"wave why full {code}: {str(e)[:70]}")

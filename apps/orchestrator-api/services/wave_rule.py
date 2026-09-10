@@ -666,7 +666,14 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
     # example tops out at 1,000 + 1,000), and a slice is only bought back BELOW
     # the price it was sold at - a ladder that buys its slices back higher is
     # just paying for the privilege of trading.
-    cap = cfg["max_lots"] * base_lot(px, st.get("code"), bars, cfg)
+    # THE CEILING MUST NOT SHRINK UNDER A POSITION WE ALREADY HOLD. base_lot is
+    # market-aware now, so a stock that goes quiet at lunch sizes smaller - and
+    # the ceiling built from it was truncating the buy-back that his rule says
+    # must be the FIRST lot (삼성중공업 10:49 bought 8,000 where 10,000 was owed).
+    # The ceiling is measured from the larger of today's lot and the lot this
+    # campaign actually opened with.
+    cap = cfg["max_lots"] * max(base_lot(px, st.get("code"), bars, cfg),
+                                int(st.get("first_qty") or 0))
     if st["adds"] < cfg["max_adds"] and st["qty"] < cap:
         ok, third = _turn(bars, cfg)
         if ok and (not st.get("last_at") or _mins(st["last_at"], now) >= cfg["cool_min"]):

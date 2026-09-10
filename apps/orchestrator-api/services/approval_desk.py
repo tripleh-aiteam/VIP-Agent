@@ -2550,15 +2550,16 @@ def _daily3(code: str, days: int = 60) -> list[dict]:
         conn = get_conn()
         cur = conn.cursor()
         try:
-            cur.execute("""SELECT open,high,low,volume FROM raw_daily_prices
+            cur.execute("""SELECT open,high,low,close,volume FROM raw_daily_prices
                            WHERE ticker=%s ORDER BY date DESC LIMIT %s""",
                         (str(code), int(days)))
             rows = cur.fetchall() or []
         finally:
             cur.close()
             conn.close()
-        return [{"o": float(o), "h": float(h), "l": float(l), "v": float(v or 0)}
-                for o, h, l, v in rows if o and h and l]
+        return [{"o": float(o), "h": float(h), "l": float(l),
+                 "c": float(c or 0) or None, "v": float(v or 0)}
+                for o, h, l, c, v in rows if o and h and l]
     except Exception as e:
         log.debug(f"daily3 {code}: {str(e)[:60]}")
         return []

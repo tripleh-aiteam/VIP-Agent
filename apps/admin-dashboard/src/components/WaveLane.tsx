@@ -37,8 +37,10 @@ type PosEx = { qty: number; avg: number; pnl: number; gain: number; steps: numbe
                protected: boolean; ko: string; en: string };
 type Score = { score?: number; max?: number; pct?: number; verdict_ok?: boolean;
                deal_breakers?: string[]; unknown?: number;
-               stock_items?: { no?: number; ko?: string; en?: string; ok?: boolean | null }[];
-               market_items?: { no?: number; ko?: string; en?: string; ok?: boolean | null }[] };
+               rank?: number | null; of?: number | null;
+               stock_items?: ChkItem[]; market_items?: ChkItem[] };
+type ChkItem = { no?: number; q?: string; q_en?: string; ko?: string; en?: string;
+                 ok?: boolean | null; detail?: string; category?: string };
 type Why = { ok: boolean; code?: string; name?: string; verdict?: string; at?: string;
              px?: number; volx?: number; waiting_for?: string; gates?: Gate[];
              position?: PosEx | null; scorecard?: Score;
@@ -446,6 +448,7 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
                                                      textUnderlineOffset: 3 }}>
                                         📋 {t("100문항 체크리스트", "100-item checklist")}:{" "}
                                         <b>{sc.score}/{sc.max} ({sc.pct}%)</b>
+                                        {sc.rank ? ` · ${t(`${sc.of}개 중 ${sc.rank}위`, `#${sc.rank} of ${sc.of}`)}` : ""}
                                         {sc.verdict_ok ? ` · ${t("통과", "passes")}` : ` · ${t("미달", "below the bar")}`}
                                         {" "}{chkOpen === g.code ? "▲" : "▼"}</span>
                                       {!!sc.deal_breakers?.length && (
@@ -458,11 +461,14 @@ export default function WaveLane({ marketOpen, view, onView, pendingN }: {
                                                       background: "rgba(128,128,128,0.07)", borderRadius: 6,
                                                       padding: "6px 8px" }}>
                                           {[...(sc.market_items || []), ...(sc.stock_items || [])]
-                                            .map((it: { no?: number; ko?: string; en?: string; ok?: boolean | null }, k2) => (
+                                            .map((it: ChkItem, k2) => (
                                             <div key={k2} style={{ fontSize: 11.6, padding: "1px 0" }}>
                                               {it.ok === true ? "✅" : it.ok === false ? "❌" : "❓"}{" "}
                                               <b style={{ opacity: 0.6 }}>{it.no ?? ""}</b>{" "}
-                                              {lang === "ko" ? (it.ko || it.en) : (it.en || it.ko)}</div>))}
+                                              {lang === "ko" ? (it.q || it.q_en || it.ko)
+                                                             : (it.q_en || it.q || it.en)}
+                                              {it.detail ? <span style={{ opacity: 0.65 }}> — {it.detail}</span> : null}
+                                            </div>))}
                                           {!!(w.checklist || []).length && (
                                             <div style={{ marginTop: 5, paddingTop: 5,
                                                           borderTop: "1px dashed rgba(128,128,128,.4)" }}>
