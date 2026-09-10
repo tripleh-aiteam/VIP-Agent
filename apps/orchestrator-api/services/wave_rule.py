@@ -73,7 +73,11 @@ CFG: dict = {
     "turn_win": 30,      # minutes the shape is read over
     # ③ the ladder
     "step": 1.5,         # sell a slice at every +1.5% (his number)
-    "slice_pct": 20,     # ...and a slice is 20% of the base position (his number)
+    "slice_pct": 20,     # a SELL slice is 20% of the base position (his number) - a BUY
+                         # is never a slice: it is always the size the first buy took
+                         # (boss 2026-09-10: "for selling 20% is OK, but for buying we
+                         # should buy how much we bought in the first time - instead of
+                         # 200 we should buy 1000")
     "max_lots": 2,       # the position never grows past 2 base lots (his 1,000 + 1,000)
     "max_adds": 6,       # and never more than this many decisions to build it
     # ④ fast fall vs slow slide
@@ -698,17 +702,18 @@ def decide(bars: list[dict], st: dict, cfg: dict | None = None,
                       f"candle stood at {third}. We buy back what the first buy took, "
                       f"{q:,} sh at ₩{px:,.0f} (volume x{volx}).")
             elif st["sold"] > 0:
-                q = min(slice_qty(st["high_water"], cfg), cap - st["qty"])
+                q = min(int(st.get("first_qty") or 0) or base_lot(px, st.get("code"), bars, cfg),
+                        cap - st["qty"])
                 ko = (f"되사기 — 하락이 멈추고 {third}에 3번째 양봉이 섰습니다. "
-                      f"덜어낸 {cfg['slice_pct']}%인 {q:,}주를 ₩{px:,.0f}에 되삽니다 "
-                      f"(거래량 x{volx}).")
-                en = (f"buying the slice back - the fall stopped and the 3rd rising candle "
-                      f"stood at {third}. {q:,} sh at ₩{px:,.0f}, the same {cfg['slice_pct']}% "
-                      f"we sold (volume x{volx}).")
+                      f"처음 샀던 만큼인 {q:,}주를 ₩{px:,.0f}에 되삽니다 (거래량 x{volx}).")
+                en = (f"buying back - the fall stopped and the 3rd rising candle stood at "
+                      f"{third}. {q:,} sh at ₩{px:,.0f} - the size the FIRST buy took, not a "
+                      f"slice (volume x{volx}).")
             elif _plain:
-                q = min(slice_qty(st["high_water"], cfg), cap - st["qty"])
+                q = min(int(st.get("first_qty") or 0) or base_lot(px, st.get("code"), bars, cfg),
+                        cap - st["qty"])
                 ko = (f"보유 중 눌림 매수 — 내리다가 멈추고 {third}에 3번째 양봉이 "
-                      f"섰습니다. 들고 있는 자리에서 {q:,}주를 ₩{px:,.0f}에 더 삽니다 "
+                      f"섰습니다. 처음 샀던 만큼인 {q:,}주를 ₩{px:,.0f}에 더 삽니다 "
                       f"(평균 ₩{st['avg_px']:,.0f} 대비 {pnl:+.2f}%, 거래량 x{volx}).")
                 en = (f"adding into a pullback while holding - the fall stopped and the 3rd "
                       f"rising candle stood at {third}. {q:,} sh more at ₩{px:,.0f} "
