@@ -909,7 +909,31 @@ def explain(bars: list[dict], st: dict, cfg: dict | None = None,
        else f"the 3rd rise has not stood yet (needs a dip of at least {cfg['dip_pct']}%, "
             f"then three rises)"))
 
-    # ③ the shape of any fall in progress
+    # ③ VOLUME, SAID OUT LOUD (boss 2026-09-10: "did you put volume line or not
+    # — please make it exactly volume word"). _vol_x has been measured on every
+    # decision since it was written and stored in out["volx"], but no gate line
+    # ever rendered it, so the one number he asked to be checked was the one
+    # number the explanation never mentioned.
+    #
+    # It is REPORTED, never a veto — his own five buy marks came in at 0.29-0.82×
+    # the trailing average, so a volume floor would have refused every buy he
+    # named. The tick therefore stays green and the WORDS carry the reading, so a
+    # thin tape is visible without pretending the rule blocked on it.
+    _vw = int(cfg.get("vol_win") or 0)
+    if volx > 0:
+        _hi = volx >= 1.0
+        g(True,
+          f"거래량 {volx:.2f}배 — 직전 {_vw}분 평균 대비 "
+          + ("평소보다 많습니다." if _hi else "평소보다 적습니다.")
+          + " (참고용이며 매수를 막지 않습니다)",
+          f"volume {volx:.2f}× its own trailing {_vw}-minute average — "
+          + ("heavier than usual" if _hi else "thinner than usual")
+          + " (reported, never a veto)")
+    else:
+        g(True, f"거래량 — 아직 평균을 낼 만큼 분봉이 쌓이지 않았습니다.",
+          "volume — not enough minutes on the tape yet to average against")
+
+    # ④ the shape of any fall in progress
     if kind or shape:
         g(shape != "cascade",
           (f"급락(계단) — 최근 고점 대비 {off_peak:.2f}%, {off_min}분. "
@@ -923,7 +947,7 @@ def explain(bars: list[dict], st: dict, cfg: dict | None = None,
            if kind == "fast" else
            f"drifting down — {off_peak:.2f}% off the high over {off_min} min"))
 
-    # ④ the position, in his words
+    # ⑤ the position, in his words
     if qty > 0:
         pnl = (px / st["avg_px"] - 1) * 100 if st.get("avg_px") else 0.0
         gain = (px / st["first_px"] - 1) * 100 if st.get("first_px") else 0.0
